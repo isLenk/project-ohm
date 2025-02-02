@@ -3,25 +3,16 @@ import threading
 from RealtimeSTT import AudioToTextRecorder
 
 class STTModule:
-    def __init__(self):
-        self.audioToTextRecorder = AudioToTextRecorder()
+    def __init__(self, *args, **kwargs):
+        self.recorder = AudioToTextRecorder(*args)
         self.listening = False
         self.stream = None
         self.audio_interface = pyaudio.PyAudio()
-
-    def start_listening(self):
-        self.listening = True
-        self.stream = self.audio_interface.open(format=pyaudio.paInt16,
-                                                channels=1,
-                                                rate=16000,
-                                                input=True,
-                                                frames_per_buffer=1024)
-        threading.Thread(target=self._listen).start()
-
+        
     def _listen(self):
         while self.listening:
             data = self.stream.read(1024)
-            self.audioToTextRecorder.record(data)
+            self.recorder.record(data)
 
     def stop_listening(self):
         self.listening = False

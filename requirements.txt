@@ -1,1 +1,7 @@
 RealtimeSTT
+python-dotenv
+discord.py
+openai
+discord-ext-voice-recv
+numpy
+asyncio

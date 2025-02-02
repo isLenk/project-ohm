@@ -10,7 +10,7 @@ Machine Specs I used:
 - Ryzen 5 5600
 - 32GB DDR4 3600MHz CL18
 - Win11
-- Cuda 12.8
+- Cuda 12.1 (Last available CUDA version compatible with DeepSpeed that I could find)
 - Python 3.12
 
 ---

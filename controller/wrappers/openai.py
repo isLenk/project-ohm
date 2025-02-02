@@ -1,0 +1,83 @@
+# Text Generation Web UI Handler
+import openai
+
+SHARED_CONTEXT = """If the request possibly contains a command, add the string '[INTENT]' to the start of the message. Otherwise, do not add the string"""
+
+class OpenAIModel:
+    client: openai.OpenAI
+    model: str
+    system: str
+    max_tokens: int
+    temperature: float
+    top_p: float
+
+    def __init__(self, model, api_key, endpoint):
+        self.name = model["name"]
+        self.model = model["model"]
+        self.system = model["personality"]
+        # If there is a "configs" key in the model, set the values
+        # Not all configs are required
+        for key in model["configs"]:
+            setattr(self, key, model["configs"][key])
+        
+        # Print all the attributes
+        print(f"Loaded OpenAI Model ({self.name}):")
+        for key in self.__dict__:
+            print(f"{key}: {self.__dict__[key]}")
+        self.client = openai.OpenAI(
+            base_url=endpoint,
+            api_key=api_key
+        )
+
+    def get_intent(self, prompt, responses: list):
+        # Get the intent from the user's response
+        intents = ", ".join(responses)
+        print("Possible Intents:", intents)
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "Classify the user's intent (and only respond with the intent) as one of the following (or None if there is no intent): " + intents},
+                {"role": "user", "content": prompt}
+            ],
+            **self._get_configs(),
+            temperature=0.1 # Make deterministic
+        )
+
+        # Get the intent from the response
+        intent = response.choices[0].message.content
+        print("Raw Intent Reading:", intent)
+        # If the intent is not in the list of possible intents, return None
+        if intent not in responses:
+            return None
+    
+        return intent
+
+    def _get_configs(self):
+        configs = {}
+        if hasattr(self, "max_tokens"):
+            configs["max_tokens"] = self.max_tokens
+        if hasattr(self, "temperature"):
+            configs["temperature"] = self.temperature
+        if hasattr(self, "top_p"):
+            configs["top_p"] = self.top_p
+        return configs
+    
+    def generate_text(self, prompt):
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self.system + SHARED_CONTEXT},
+                {"role": "user", "content": prompt}
+            ],
+            **self._get_configs(),
+            temperature=1
+        )
+
+        print("Raw response:", response)
+        contains_intent = "[INTENT]" in response.choices[0].message.content
+
+        # If the response contains the string '[INTENT]', remove it
+        if contains_intent:
+            response.choices[0].message.content = response.choices[0].message.content.replace("[INTENT]", "")
+
+        return (response.choices[0].message.content, contains_intent)
