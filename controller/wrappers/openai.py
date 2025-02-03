@@ -1,7 +1,7 @@
 # Text Generation Web UI Handler
 import openai
 
-SHARED_CONTEXT = """If the request possibly contains a command, add the string '[INTENT]' to the start of the message. Otherwise, do not add the string"""
+SHARED_CONTEXT = """If the request possibly contains a command, add the string '[INTENT]' to the start of the message. Otherwise, do not add the string. Use the past conversation as context for the response."""
 
 class OpenAIModel:
     client: openai.OpenAI
@@ -10,6 +10,8 @@ class OpenAIModel:
     max_tokens: int
     temperature: float
     top_p: float
+
+    memory: str
 
     def __init__(self, model, api_key, endpoint):
         self.name = model["name"]
@@ -28,6 +30,7 @@ class OpenAIModel:
             base_url=endpoint,
             api_key=api_key
         )
+        self.memory = ""
 
     def get_intent(self, prompt, responses: list):
         # Get the intent from the user's response
@@ -62,11 +65,14 @@ class OpenAIModel:
             configs["top_p"] = self.top_p
         return configs
     
-    def generate_text(self, prompt):
+    def generate_text(self, prompt, user="user"):
+        data = "Chat History:" + self.memory
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": self.system + SHARED_CONTEXT},
+                {"role": "system", 
+                 "content": "Generate a response to the user's message with the following context: " + data + "\n" + self.system + " " + SHARED_CONTEXT},
+                {"role": "assistant", "content": "aight lol"},
                 {"role": "user", "content": prompt}
             ],
             **self._get_configs(),
@@ -80,4 +86,6 @@ class OpenAIModel:
         if contains_intent:
             response.choices[0].message.content = response.choices[0].message.content.replace("[INTENT]", "")
 
+        # Add the response to the memory
+        self.memory = (self.memory + f"\n[{user}]: {prompt} [System]: {response.choices[0].message.content}\n")[:2500]
         return (response.choices[0].message.content, contains_intent)

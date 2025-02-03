@@ -1,32 +1,33 @@
 from modules.discord.DiscordClient import DiscordClient
 from controller.model import ModelObject
 from config import constants
-import signal
 
 import os
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
-def main():
-    default_handler = signal.getsignal(signal.SIGINT)
-    token = os.getenv('DISCORD_TOKEN')
 
+def main(discord_client: DiscordClient):
+    discord_client.run(token)
+
+if __name__ == '__main__':
+    token = os.getenv('DISCORD_TOKEN')
+    
     # ! TEMP
     target_model = constants.models["ohm"]
 
+    loop = asyncio.get_event_loop_policy().get_event_loop()
     # Load the model
     model = ModelObject(target_model)
+    discord_client = DiscordClient.initialize(model)
 
-    discordClient = DiscordClient.initialize(model)
-    discordClient.run(token)
-
-    def on_shutdown(sig, frame):
+    try:
+        # loop.run_until_complete(main(discord_client=discord_client))
+        main(discord_client=discord_client)
+    except KeyboardInterrupt:
         print("Shutting down...")
-        discordClient.voice.shutdown()
-        default_handler(sig, frame)
-
-    signal.signal(signal.SIGINT, on_shutdown)
-
-
-if __name__ == '__main__':
-    main()
+        # loop.run_until_complete(discord_client.voice.shutdown())
+        # loop.run_until_complete(discord_client.close())
+        # loop.run_until_complete(asyncio.sleep(1))
+        # loop.close()

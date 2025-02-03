@@ -19,8 +19,8 @@ class ModelObject:
         
         self.model = OpenAIModel(model, self.api_key, self.endpoint)
 
-    def generate_text(self, prompt) -> tuple[str, bool]:
-        return self.model.generate_text(prompt)
+    def generate_text(self, prompt, user="user") -> tuple[str, bool]:
+        return self.model.generate_text(prompt, user)
     
     def get_intent(self, prompt, responses) -> str:
         return self.model.get_intent(prompt, responses)

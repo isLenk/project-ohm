@@ -1,7 +1,9 @@
 RealtimeSTT
 python-dotenv
 discord.py
+discord.py[voice]
 openai
 discord-ext-voice-recv
 numpy
 asyncio
+realtimetts[all]

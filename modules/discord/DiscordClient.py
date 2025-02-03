@@ -5,6 +5,7 @@
 import discord
 from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
+import asyncio
 
 testing_channel = 1335351030308802630
 voice_channel = 1335374964445941812
@@ -13,6 +14,9 @@ class DiscordClient(discord.Client):
     possible_intents = ["join", "leave"]
     model: ModelObject
     logging_channel: int
+
+    def add_task(self, func, *args, **kwargs):
+        self.loop.create_task(func(*args, **kwargs))
 
     @staticmethod
     def initialize(model: ModelObject, testing_channel=testing_channel):
@@ -33,6 +37,20 @@ class DiscordClient(discord.Client):
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
 
+        vc = await self.join_testing_channel(vc=True)
+        await self.voice.say("Whats up my bruddah. We got a lot of shit to do so lets get right into this. Anyways, here is some lorem ipsum for you to read.", vc)
+
+    async def join_testing_channel(self, vc=False):
+
+        channel_id = [testing_channel, voice_channel][bool(vc)]
+        channel = self.get_channel(channel_id)
+        print(channel)
+        print("Joining channel...")
+
+        vc = await channel.connect()
+        print("Joined channel")
+        return vc
+    
     def log(self, message):
         channel = self.get_channel(self.logging_channel)
         channel.send(message)
@@ -42,7 +60,7 @@ class DiscordClient(discord.Client):
 
     def make_response(self, message):
 
-        response, contains_intent = self.model.generate_text(message.content)
+        response, contains_intent = self.model.generate_text(message.content, user=message.author.name)
 
         # If response contains it's name at the start, remove it
         if response.startswith(self.model.name + ":"):
@@ -59,22 +77,18 @@ class DiscordClient(discord.Client):
                 return
             
         elif source == "voice":
-            FFMPEG_OPTS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
-
-            # Stream the message content
-            self.voice.vc.play(discord.FFmpegPCMAudio(message.content))
-            self.voice.vc.is_playing()
             return
         
         response, contains_intent = self.make_response(message)
 
-        await message.channel.send(response)
+        # await message.channel.send(response)
+        # Reply
+        await message.reply(response)
 
         if contains_intent:
             intent = self.model.get_intent(response, self.possible_intents)
 
             channel = "None" if source == "voice" else message.channel
-            return
             match intent:
                 case "join":
                     if source == "voice": return

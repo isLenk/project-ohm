@@ -5,6 +5,8 @@ import numpy as np
 import discord
 import subprocess
 import asyncio
+import io
+import aiohttp
 
 class DiscordVoice:
     def __init__(self, client, discordClient):
@@ -51,26 +53,22 @@ class DiscordVoice:
     def on_text(self, text):
         message = {}
         message["content"] = text
-        print("Text:", text)
-        # self.discordClient.on_message(message, source="voice")
-        FFMPEG_OPTIONS = {
-            'options': '-re'  # Ensures real-time streaming
-        }
-
         response, contains_intent = self.discordClient.model.generate_text(text)
 
-        # Play the audio locally as well
-        stream = self.tts.get_stream(response)
-        # Play the audio as it streams
-        if stream.status_code != 200:
-            print("Error getting stream")
-            return
-        
+        self.discordClient.add_task(self.say, response)
 
-        with open("output.wav", "wb") as f:
-            for chunk in stream.iter_content(chunk_size=512):
-                if chunk:
-                    f.write(chunk)
-     
-        self.vc.play(discord.FFmpegPCMAudio("output.wav"))
-        self.vc.is_playing()
+    async def say(self, text, out=None):
+        if out is None:
+            out = self.vc
+        stream_url = await self.tts.get_stream(text)
+
+        ffmpeg_options = {
+            'options': '-vn'
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(stream_url) as stream:
+                chunk = await stream.content.read()
+                out.play(discord.FFmpegPCMAudio(io.BytesIO(chunk), **ffmpeg_options, pipe=True))
+                while out.is_playing() or out.is_paused():
+                    await asyncio.sleep(0.1)
