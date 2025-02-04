@@ -1,6 +1,7 @@
-from RealtimeTTS import TextToAudioStream, SystemEngine
+from RealtimeTTS import TextToAudioStream, CoquiEngine
 
-engine = SystemEngine() # replace with your TTS engine
-stream = TextToAudioStream(engine)
-stream.feed("This is an insanely long sentence about the state of the art.")
-stream.play()
+if __name__ == "__main__":
+    engine = CoquiEngine(model_name="xtts_v2", voice="janiston.wav") # replace with your TTS engine
+    stream = TextToAudioStream(engine)
+    stream.feed("""adwad""")
+    stream.play()

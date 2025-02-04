@@ -7,3 +7,6 @@ discord-ext-voice-recv
 numpy
 asyncio
 realtimetts[all]
+fastapi
+fastapi[standard]
+websockets

@@ -1,8 +1,6 @@
 # Text Generation Web UI Handler
 import openai
 
-SHARED_CONTEXT = """If the request possibly contains a command, add the string '[INTENT]' to the start of the message. Otherwise, do not add the string. Use the past conversation as context for the response."""
-
 class OpenAIModel:
     client: openai.OpenAI
     model: str
@@ -65,27 +63,26 @@ class OpenAIModel:
             configs["top_p"] = self.top_p
         return configs
     
-    def generate_text(self, prompt, user="user"):
-        data = "Chat History:" + self.memory
-        response = self.client.chat.completions.create(
+    def create(self, prompt, user, **kwargs):
+        return self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", 
-                 "content": "Generate a response to the user's message with the following context: " + data + "\n" + self.system + " " + SHARED_CONTEXT},
+                {"role": "system", "content": self.system},
                 {"role": "assistant", "content": "aight lol"},
                 {"role": "user", "content": prompt}
             ],
+            temperature=1,
             **self._get_configs(),
-            temperature=1
+            **kwargs
         )
 
-        print("Raw response:", response)
+    def generate_stream_text(self, prompt, user="user"):
+        response = self.create(prompt, user,  stream=True)
+
+        return response
+    
+    def generate_text(self, prompt, user="user"):
+        response = self.create(prompt, user)
+
         contains_intent = "[INTENT]" in response.choices[0].message.content
-
-        # If the response contains the string '[INTENT]', remove it
-        if contains_intent:
-            response.choices[0].message.content = response.choices[0].message.content.replace("[INTENT]", "")
-
-        # Add the response to the memory
-        self.memory = (self.memory + f"\n[{user}]: {prompt} [System]: {response.choices[0].message.content}\n")[:2500]
         return (response.choices[0].message.content, contains_intent)

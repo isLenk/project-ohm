@@ -24274,3 +24274,245 @@ RuntimeError: FFmpeg extension is not available.
 2025-02-03 21:53:14.077 - RealTimeSTT: discord.voice_state - INFO - Starting voice handshake... (connection attempt 1)
 2025-02-03 21:53:14.189 - RealTimeSTT: discord.voice_state - INFO - Voice handshake complete. Endpoint found: us-central659.discord.media
 2025-02-03 21:53:14.339 - RealTimeSTT: discord.voice_state - INFO - Voice connection complete.
+2025-02-03 21:58:11.691 - RealTimeSTT: discord.ext.voice_recv.reader - INFO - Received packet for unknown ssrc 0:
+<RTPPacket ssrc=0, sequence=0, timestamp=0, size=20, ext=set()>
+2025-02-03 21:58:11.691 - RealTimeSTT: discord.ext.voice_recv.reader - WARNING - Unknown ssrc 0
+2025-02-03 21:58:11.704 - RealTimeSTT: discord.ext.voice_recv.reader - INFO - Received packet for unknown ssrc 0:
+<RTPPacket ssrc=0, sequence=0, timestamp=0, size=20, ext=set()>
+2025-02-03 21:58:11.708 - RealTimeSTT: discord.ext.voice_recv.reader - INFO - Received packet for unknown ssrc 0:
+<RTPPacket ssrc=0, sequence=0, timestamp=0, size=20, ext=set()>
+2025-02-03 21:58:11.714 - RealTimeSTT: discord.ext.voice_recv.reader - INFO - Received packet for unknown ssrc 0:
+<RTPPacket ssrc=0, sequence=0, timestamp=0, size=20, ext=set()>
+2025-02-03 21:58:11.915 - RealTimeSTT: discord.ext.voice_recv.reader - WARNING - Unknown ssrc 0
+2025-02-03 22:03:10.364 - RealTimeSTT: discord.voice_state - INFO - The voice handshake is being terminated for Channel ID 1335374964445941812 (Guild ID 888240234951737344)
+2025-02-03 22:03:10.376 - RealTimeSTT: root - DEBUG - Receive from stdout pipe
+2025-02-03 22:04:53.841 - RealTimeSTT: root - INFO - Starting RealTimeSTT
+2025-02-03 22:04:53.860 - RealTimeSTT: root - INFO - Initializing WebRTC voice with Sensitivity 3
+2025-02-03 22:04:53.861 - RealTimeSTT: root - DEBUG - WebRTC VAD voice activity detection engine initialized successfully
+2025-02-03 22:04:54.148 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg6
+2025-02-03 22:04:54.150 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg6 extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 108, in _find_versionsed_ffmpeg_extension
+    _load_lib(lib)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 94, in _load_lib
+    torch.ops.load_library(path)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torch\_ops.py", line 1350, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module 'C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\lib\libtorio_ffmpeg6.pyd' (or one of its dependencies). Try using the full path with constructor syntax.
+2025-02-03 22:04:54.151 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg5
+2025-02-03 22:04:54.152 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg5 extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 108, in _find_versionsed_ffmpeg_extension
+    _load_lib(lib)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 94, in _load_lib
+    torch.ops.load_library(path)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torch\_ops.py", line 1350, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module 'C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\lib\libtorio_ffmpeg5.pyd' (or one of its dependencies). Try using the full path with constructor syntax.
+2025-02-03 22:04:54.153 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg4
+2025-02-03 22:04:54.154 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg4 extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 108, in _find_versionsed_ffmpeg_extension
+    _load_lib(lib)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 94, in _load_lib
+    torch.ops.load_library(path)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torch\_ops.py", line 1350, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module 'C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\lib\libtorio_ffmpeg4.pyd' (or one of its dependencies). Try using the full path with constructor syntax.
+2025-02-03 22:04:54.154 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg
+2025-02-03 22:04:54.154 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 106, in _find_versionsed_ffmpeg_extension
+    raise RuntimeError(f"FFmpeg{version} extension is not available.")
+RuntimeError: FFmpeg extension is not available.
+2025-02-03 22:04:54.294 - RealTimeSTT: root - DEBUG - Silero VAD voice activity detection engine initialized successfully
+2025-02-03 22:04:54.295 - RealTimeSTT: root - DEBUG - Starting realtime worker
+2025-02-03 22:04:54.295 - RealTimeSTT: root - DEBUG - Waiting for main transcription model to start
+2025-02-03 22:04:58.866 - RealTimeSTT: root - DEBUG - Main transcription model ready
+2025-02-03 22:04:58.867 - RealTimeSTT: root - DEBUG - RealtimeSTT initialization completed successfully
+2025-02-03 22:04:58.979 - RealTimeSTT: discord.voice_state - INFO - Connecting to voice...
+2025-02-03 22:04:58.979 - RealTimeSTT: discord.voice_state - INFO - Starting voice handshake... (connection attempt 1)
+2025-02-03 22:04:59.058 - RealTimeSTT: discord.voice_state - INFO - Voice handshake complete. Endpoint found: us-central659.discord.media
+2025-02-03 22:04:59.204 - RealTimeSTT: discord.voice_state - INFO - Voice connection complete.
+2025-02-03 22:05:04.276 - RealTimeSTT: asyncio - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-13' coro=<DiscordVoice.listen_worker() done, defined at C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\modules\discord\DiscordVoice.py:25> exception=QueueEmpty()>
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\modules\discord\DiscordVoice.py", line 38, in listen_worker
+    more_text = self.audio_queue.get_nowait()
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\asyncio\queues.py", line 181, in get_nowait
+    raise QueueEmpty
+asyncio.queues.QueueEmpty
+2025-02-03 22:05:22.847 - RealTimeSTT: discord.voice_state - INFO - The voice handshake is being terminated for Channel ID 1335374964445941812 (Guild ID 888240234951737344)
+2025-02-03 22:05:22.877 - RealTimeSTT: root - DEBUG - Receive from stdout pipe
+2025-02-03 22:05:45.783 - RealTimeSTT: root - INFO - Starting RealTimeSTT
+2025-02-03 22:05:45.802 - RealTimeSTT: root - INFO - Initializing WebRTC voice with Sensitivity 3
+2025-02-03 22:05:45.803 - RealTimeSTT: root - DEBUG - WebRTC VAD voice activity detection engine initialized successfully
+2025-02-03 22:05:46.075 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg6
+2025-02-03 22:05:46.077 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg6 extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 108, in _find_versionsed_ffmpeg_extension
+    _load_lib(lib)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 94, in _load_lib
+    torch.ops.load_library(path)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torch\_ops.py", line 1350, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module 'C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\lib\libtorio_ffmpeg6.pyd' (or one of its dependencies). Try using the full path with constructor syntax.
+2025-02-03 22:05:46.078 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg5
+2025-02-03 22:05:46.079 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg5 extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 108, in _find_versionsed_ffmpeg_extension
+    _load_lib(lib)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 94, in _load_lib
+    torch.ops.load_library(path)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torch\_ops.py", line 1350, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module 'C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\lib\libtorio_ffmpeg5.pyd' (or one of its dependencies). Try using the full path with constructor syntax.
+2025-02-03 22:05:46.079 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg4
+2025-02-03 22:05:46.080 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg4 extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 108, in _find_versionsed_ffmpeg_extension
+    _load_lib(lib)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 94, in _load_lib
+    torch.ops.load_library(path)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torch\_ops.py", line 1350, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module 'C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\lib\libtorio_ffmpeg4.pyd' (or one of its dependencies). Try using the full path with constructor syntax.
+2025-02-03 22:05:46.080 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg
+2025-02-03 22:05:46.080 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 106, in _find_versionsed_ffmpeg_extension
+    raise RuntimeError(f"FFmpeg{version} extension is not available.")
+RuntimeError: FFmpeg extension is not available.
+2025-02-03 22:05:46.210 - RealTimeSTT: root - DEBUG - Silero VAD voice activity detection engine initialized successfully
+2025-02-03 22:05:46.211 - RealTimeSTT: root - DEBUG - Starting realtime worker
+2025-02-03 22:05:46.211 - RealTimeSTT: root - DEBUG - Waiting for main transcription model to start
+2025-02-03 22:05:50.370 - RealTimeSTT: root - DEBUG - Main transcription model ready
+2025-02-03 22:05:50.371 - RealTimeSTT: root - DEBUG - RealtimeSTT initialization completed successfully
+2025-02-03 22:05:50.479 - RealTimeSTT: discord.voice_state - INFO - Connecting to voice...
+2025-02-03 22:05:50.480 - RealTimeSTT: discord.voice_state - INFO - Starting voice handshake... (connection attempt 1)
+2025-02-03 22:05:50.576 - RealTimeSTT: discord.voice_state - INFO - Voice handshake complete. Endpoint found: us-central659.discord.media
+2025-02-03 22:05:50.696 - RealTimeSTT: discord.voice_state - INFO - Voice connection complete.
+2025-02-03 22:06:00.815 - RealTimeSTT: discord.voice_state - INFO - The voice handshake is being terminated for Channel ID 1335374964445941812 (Guild ID 888240234951737344)
+2025-02-03 22:06:15.895 - RealTimeSTT: root - INFO - Starting RealTimeSTT
+2025-02-03 22:06:15.915 - RealTimeSTT: root - INFO - Initializing WebRTC voice with Sensitivity 3
+2025-02-03 22:06:15.915 - RealTimeSTT: root - DEBUG - WebRTC VAD voice activity detection engine initialized successfully
+2025-02-03 22:06:16.089 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg6
+2025-02-03 22:06:16.091 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg6 extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 108, in _find_versionsed_ffmpeg_extension
+    _load_lib(lib)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 94, in _load_lib
+    torch.ops.load_library(path)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torch\_ops.py", line 1350, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module 'C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\lib\libtorio_ffmpeg6.pyd' (or one of its dependencies). Try using the full path with constructor syntax.
+2025-02-03 22:06:16.091 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg5
+2025-02-03 22:06:16.093 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg5 extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 108, in _find_versionsed_ffmpeg_extension
+    _load_lib(lib)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 94, in _load_lib
+    torch.ops.load_library(path)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torch\_ops.py", line 1350, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module 'C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\lib\libtorio_ffmpeg5.pyd' (or one of its dependencies). Try using the full path with constructor syntax.
+2025-02-03 22:06:16.093 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg4
+2025-02-03 22:06:16.094 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg4 extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 108, in _find_versionsed_ffmpeg_extension
+    _load_lib(lib)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 94, in _load_lib
+    torch.ops.load_library(path)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torch\_ops.py", line 1350, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module 'C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\lib\libtorio_ffmpeg4.pyd' (or one of its dependencies). Try using the full path with constructor syntax.
+2025-02-03 22:06:16.095 - RealTimeSTT: torio._extension.utils - DEBUG - Loading FFmpeg
+2025-02-03 22:06:16.095 - RealTimeSTT: torio._extension.utils - DEBUG - Failed to load FFmpeg extension.
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 116, in _find_ffmpeg_extension
+    ext = _find_versionsed_ffmpeg_extension(ffmpeg_ver)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\torio\_extension\utils.py", line 106, in _find_versionsed_ffmpeg_extension
+    raise RuntimeError(f"FFmpeg{version} extension is not available.")
+RuntimeError: FFmpeg extension is not available.
+2025-02-03 22:06:16.236 - RealTimeSTT: root - DEBUG - Silero VAD voice activity detection engine initialized successfully
+2025-02-03 22:06:16.238 - RealTimeSTT: root - DEBUG - Starting realtime worker
+2025-02-03 22:06:16.238 - RealTimeSTT: root - DEBUG - Waiting for main transcription model to start
+2025-02-03 22:06:20.521 - RealTimeSTT: root - DEBUG - Main transcription model ready
+2025-02-03 22:06:20.522 - RealTimeSTT: root - DEBUG - RealtimeSTT initialization completed successfully
+2025-02-03 22:06:20.629 - RealTimeSTT: discord.voice_state - INFO - Connecting to voice...
+2025-02-03 22:06:20.630 - RealTimeSTT: discord.voice_state - INFO - Starting voice handshake... (connection attempt 1)
+2025-02-03 22:06:20.711 - RealTimeSTT: discord.voice_state - INFO - Voice handshake complete. Endpoint found: us-central659.discord.media
+2025-02-03 22:06:20.836 - RealTimeSTT: discord.voice_state - INFO - Voice connection complete.
+2025-02-03 22:06:26.989 - RealTimeSTT: asyncio - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-13' coro=<DiscordVoice.listen_worker() done, defined at C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\modules\discord\DiscordVoice.py:25> exception=AttributeError("'DiscordVoice' object has no attribute 'tts'")>
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\modules\discord\DiscordVoice.py", line 47, in listen_worker
+    await self.say("Whats up bitches")
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\modules\discord\DiscordVoice.py", line 91, in say
+    stream_url = await self.tts.get_stream(text)
+                       ^^^^^^^^
+AttributeError: 'DiscordVoice' object has no attribute 'tts'
+2025-02-03 22:06:37.841 - RealTimeSTT: discord.voice_state - INFO - The voice handshake is being terminated for Channel ID 1335374964445941812 (Guild ID 888240234951737344)
+2025-02-03 22:06:37.860 - RealTimeSTT: root - DEBUG - Receive from stdout pipe

@@ -15,6 +15,7 @@ class DiscordClient(discord.Client):
     possible_intents = ["join", "leave"]
     model: ModelObject
     logging_channel: int
+    voice: DiscordVoice
 
     def add_task(self, func, *args, **kwargs):
         """Add a task to the event loop"""
@@ -35,13 +36,35 @@ class DiscordClient(discord.Client):
         client.logging_channel = testing_channel
 
         return client
+    
+    # ? Temporarily Stripped froom tts_api/runner.py
+    def _openai_generator(self, gen_stream):
+        """Generator for OpenAI streaming API.
+        Yields sentences as they are completed."""
+        payload = ""
+        for chunk in gen_stream:
+            if (content := chunk.choices[0].delta.content) is not None:
+                print(content, end="-")
+                ends = ["?", ".", "!"]
+                results = [end in content for end in ends]
+                if any(results):
+                    payload += content
+                    # Get index of last found end in content
+                    last = max([payload.rindex(ends[i]) for i, x in enumerate(results) if x])
+                    feed, payload = payload[:last+1], payload[last+1:]
+                        
+                    yield feed
+                else:
+                    payload += content
+
+        if payload.strip() != "":
+            yield payload
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
 
         vc = await self.join_testing_channel(vc=True)
         
-
     async def join_testing_channel(self, vc=False):
         channel_id = [testing_channel, voice_channel][bool(vc)]
         channel = self.get_channel(channel_id)
@@ -50,6 +73,23 @@ class DiscordClient(discord.Client):
 
         vc = await self.voice.join_channel(channel)
         print("Joined channel")
+
+        # Make pseudo-message
+        class Message:
+            def __init__(self, content, author):
+                self.content = content
+                self.author = author
+
+        class Author:
+            def __init__(self, name):
+                self.name = name
+        author = Author("user")
+        message = Message("Hello. Tell me a paragraph story about ducks taking over the world.", author)
+        res = self.make_stream_response(message)
+
+        for chunk in self._openai_generator(res):
+            self.add_task(self.voice.tts.send_request, chunk)
+            
         return vc
     
     def log(self, message):
@@ -60,7 +100,6 @@ class DiscordClient(discord.Client):
         return super().get_channel(id)
 
     def make_response(self, message):
-
         response, contains_intent = self.model.generate_text(message.content, user=message.author.name)
 
         # If response contains it's name at the start, remove it
@@ -68,6 +107,9 @@ class DiscordClient(discord.Client):
             response = response[len(self.model.name)+1:]
         
         return response, contains_intent
+    
+    def make_stream_response(self, message):
+        return self.model.generate_stream_text(message.content, user=message.author.name)
     
     async def on_message(self, message, source="message"):
         if source == "message":

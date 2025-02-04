@@ -22,5 +22,8 @@ class ModelObject:
     def generate_text(self, prompt, user="user") -> tuple[str, bool]:
         return self.model.generate_text(prompt, user)
     
+    def generate_stream_text(self, prompt, user="user") -> str:
+        return self.model.generate_stream_text(prompt, user)
+    
     def get_intent(self, prompt, responses) -> str:
         return self.model.get_intent(prompt, responses)
