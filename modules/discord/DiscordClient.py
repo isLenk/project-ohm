@@ -7,6 +7,7 @@ from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
 import asyncio
 
+
 testing_channel = 1335351030308802630
 voice_channel = 1335374964445941812
 
@@ -16,6 +17,7 @@ class DiscordClient(discord.Client):
     logging_channel: int
 
     def add_task(self, func, *args, **kwargs):
+        """Add a task to the event loop"""
         self.loop.create_task(func(*args, **kwargs))
 
     @staticmethod
@@ -38,16 +40,15 @@ class DiscordClient(discord.Client):
         print(f'Logged on as {self.user}!')
 
         vc = await self.join_testing_channel(vc=True)
-        await self.voice.say("Whats up my bruddah. We got a lot of shit to do so lets get right into this. Anyways, here is some lorem ipsum for you to read.", vc)
+        
 
     async def join_testing_channel(self, vc=False):
-
         channel_id = [testing_channel, voice_channel][bool(vc)]
         channel = self.get_channel(channel_id)
         print(channel)
         print("Joining channel...")
 
-        vc = await channel.connect()
+        vc = await self.voice.join_channel(channel)
         print("Joined channel")
         return vc
     
@@ -81,11 +82,12 @@ class DiscordClient(discord.Client):
         
         response, contains_intent = self.make_response(message)
 
-        # await message.channel.send(response)
-        # Reply
         await message.reply(response)
-
+        return
         if contains_intent:
+            self.parse_intent(message, response, source)
+        
+    async def parse_intent(self, message, response, source):
             intent = self.model.get_intent(response, self.possible_intents)
 
             channel = "None" if source == "voice" else message.channel
@@ -109,7 +111,7 @@ class DiscordClient(discord.Client):
                         return
                     
                     # Join the voice channel
-                    await self.voice.join_channel(message)
+                    await self.voice.join_channel(message.author.voice.channel)
 
                 case "leave":
                     if source == "voice": return
@@ -117,4 +119,3 @@ class DiscordClient(discord.Client):
                     print("Leaving voice channel")
                 case _:
                     print(f'Intent: {intent}')
-        

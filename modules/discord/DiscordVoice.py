@@ -7,21 +7,31 @@ import subprocess
 import asyncio
 import io
 import aiohttp
+import utils.AudioFix as AudioFix
+import json
+# DISCORD_SAMPLE_RATE = 48000
+DISCORD_SAMPLE_RATE = 44100
 
 class DiscordVoice:
-    def __init__(self, client, discordClient):
+    audio_queue: asyncio.Queue
+    listener_worker: asyncio.Task
+
+    def __init__(self, client, discord_client):
         self.client = client
-        self.discordClient = discordClient
+        self.discord_client = discord_client
         self.tts = TTSModule()
+        self.audio_queue = asyncio.Queue()
     
+
     def shutdown(self):
         self.stt.shutdown()
 
-    async def join_channel(self, message):
+    async def join_channel(self, channel):
         self.stt = STTModule(use_microphone=False)
 
-        self.vc = await message.author.voice.channel.connect(cls=voice_recv.VoiceRecvClient)
+        self.vc = await channel.connect(cls=voice_recv.VoiceRecvClient)
         await self.listen()
+        return self.vc
 
     async def leave_channel(self, message):
         try:
@@ -32,30 +42,22 @@ class DiscordVoice:
 
             await message.guild.voice_client.disconnect()
 
-    
-    async def listen(self):
-        self.vc.listen(voice_recv.BasicSink(self.on_listen))
-
-    def on_listen(self, user, data: voice_recv.VoiceData):
-        # print("Message from", user)
-        # print(data)
+    def got_text(self, user, text):
+        # If text is empty, return
+        if text.strip() == "":
+            return
         
-        # Convert the raw PCM audio data to a numpy array
-        pcm_data = np.frombuffer(data.pcm, dtype=np.int16)
+        print(f"Recognized text from {user}: {text}")
 
-        # Feed the audio data to RealtimeSTT
-        self.stt.recorder.feed_audio(pcm_data.tobytes())
-
-        # print("Audio data:", pcm_data)
-        # Print parsed audio data
-        self.stt.recorder.text(self.on_text)
+    async def listen(self):
+        self.vc.listen(voice_recv.extras.SpeechRecognitionSink(default_recognizer="whisper", text_cb=self.got_text))
 
     def on_text(self, text):
         message = {}
         message["content"] = text
-        response, contains_intent = self.discordClient.model.generate_text(text)
+        response, contains_intent = self.discord_client.model.generate_text(text)
 
-        self.discordClient.add_task(self.say, response)
+        self.discord_client.add_task(self.say, response)
 
     async def say(self, text, out=None):
         if out is None:
