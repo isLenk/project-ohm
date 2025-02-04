@@ -6,12 +6,13 @@ import os
 from dotenv import load_dotenv
 import asyncio
 
+from typing import Union
+from fastapi import FastAPI
+from fastapi import Body
+
 load_dotenv()
 
-def main(discord_client: DiscordClient):
-    discord_client.run(token)
-
-if __name__ == '__main__':
+def main():
     token = os.getenv('DISCORD_TOKEN')
     
     # ! TEMP
@@ -22,12 +23,7 @@ if __name__ == '__main__':
     model = ModelObject(target_model)
     discord_client = DiscordClient.initialize(model)
 
-    try:
-        # loop.run_until_complete(main(discord_client=discord_client))
-        main(discord_client=discord_client)
-    except KeyboardInterrupt:
-        print("Shutting down...")
-        # loop.run_until_complete(discord_client.voice.shutdown())
-        # loop.run_until_complete(discord_client.close())
-        # loop.run_until_complete(asyncio.sleep(1))
-        # loop.close()
+    discord_client.run(token)
+
+if __name__ == '__main__':
+    main()

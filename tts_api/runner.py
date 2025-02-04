@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import Union
 from fastapi import FastAPI
 from fastapi import Body
+from fastapi import BackgroundTasks
 import sys
 
 def cprint(color="default", *args):
@@ -172,9 +173,9 @@ async def post_unload_engine():
     return {"status": "success"}
 
 @app.post("/api/v1/tts/feed_input")
-async def post_feed_input(input: str = Body(..., embed=True)):
-
-    response = engine.feed_input(input)
+async def post_feed_input(background_tasks: BackgroundTasks, input: str = Body(..., embed=True)):
+    background_tasks.add_task(engine.feed_input, input)
+    # response = engine.feed_input(input)
     return {"status": "success"}
 
 @app.post("/api/v1/tts/feed_stream")

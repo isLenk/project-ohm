@@ -6,7 +6,7 @@ import discord
 from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
 import asyncio
-
+import threading
 
 testing_channel = 1335351030308802630
 voice_channel = 1335374964445941812
@@ -52,7 +52,7 @@ class DiscordClient(discord.Client):
                     # Get index of last found end in content
                     last = max([payload.rindex(ends[i]) for i, x in enumerate(results) if x])
                     feed, payload = payload[:last+1], payload[last+1:]
-                        
+                    print("EOL")
                     yield feed
                 else:
                     payload += content
@@ -66,13 +66,13 @@ class DiscordClient(discord.Client):
         vc = await self.join_testing_channel(vc=True)
         
     async def join_testing_channel(self, vc=False):
-        channel_id = [testing_channel, voice_channel][bool(vc)]
-        channel = self.get_channel(channel_id)
-        print(channel)
-        print("Joining channel...")
+        # channel_id = [testing_channel, voice_channel][bool(vc)]
+        # channel = self.get_channel(channel_id)
+        # print(channel)
+        # print("Joining channel...")
 
-        vc = await self.voice.join_channel(channel)
-        print("Joined channel")
+        # vc = await self.voice.join_channel(channel)
+        # print("Joined channel")
 
         # Make pseudo-message
         class Message:
@@ -87,9 +87,11 @@ class DiscordClient(discord.Client):
         message = Message("Hello. Tell me a paragraph story about ducks taking over the world.", author)
         res = self.make_stream_response(message)
 
+        self.loop.create_task(self.voice.tts.request_worker())
         for chunk in self._openai_generator(res):
-            self.add_task(self.voice.tts.send_request, chunk)
-            
+            # threading.Thread(target=self.voice.tts.send_request, args=(chunk,)).start()
+            self.voice.tts.send_request(chunk)
+
         return vc
     
     def log(self, message):
