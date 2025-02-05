@@ -66,13 +66,13 @@ class DiscordClient(discord.Client):
         vc = await self.join_testing_channel(vc=True)
         
     async def join_testing_channel(self, vc=False):
-        # channel_id = [testing_channel, voice_channel][bool(vc)]
-        # channel = self.get_channel(channel_id)
-        # print(channel)
-        # print("Joining channel...")
+        channel_id = [testing_channel, voice_channel][bool(vc)]
+        channel = self.get_channel(channel_id)
+        print(channel)
+        print("Joining channel...")
 
-        # vc = await self.voice.join_channel(channel)
-        # print("Joined channel")
+        vc = await self.voice.join_channel(channel)
+        print("Joined channel")
 
         # Make pseudo-message
         class Message:
@@ -85,13 +85,19 @@ class DiscordClient(discord.Client):
                 self.name = name
         author = Author("user")
         message = Message("Hello. Tell me a paragraph story about ducks taking over the world.", author)
-        res = self.make_stream_response(message)
-
-        self.loop.create_task(self.voice.tts.request_worker())
-        for chunk in self._openai_generator(res):
+        print("MAKING STREAM")
+        stream_response = self.make_stream_response(message)
+        print("STREAM MADE")
+        
+        get_stream = True
+        for chunk in self._openai_generator(stream_response):
             # threading.Thread(target=self.voice.tts.send_request, args=(chunk,)).start()
-            self.voice.tts.send_request(chunk)
+            if get_stream:
+                self.add_task(self.voice.process_audio_stream, chunk)
+            else:
+                await self.voice.tts.send_request(chunk)
 
+            get_stream = False
         return vc
     
     def log(self, message):

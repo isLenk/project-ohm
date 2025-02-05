@@ -5,6 +5,9 @@ from typing import Union
 from fastapi import FastAPI
 from fastapi import Body
 from fastapi import BackgroundTasks
+from fastapi.responses import StreamingResponse
+from asyncio import Queue
+
 import sys
 
 def cprint(color="default", *args):
@@ -24,15 +27,23 @@ def log(*args, **kwargs):
     if not DEBUG_LOGS_ENABLED: return
     print("->", *args, **kwargs)
 
+import wave
+import io
+
+
 class TTSEngine:
     stream: str
     engine_stream: TextToAudioStream
+    audio_chunks: Queue
+    chunks_received: int
 
     def load_engine(self, model_name="xtts_v2", voice="voices/lance.wav", overwrite=False, *args, **kwargs):
         if hasattr(self, "engine") and overwrite == False and self.engine.model_name == model_name: 
             cprint("red", "Model already loaded.")
             return "Model already loaded."
         self.unload_engine()
+        self.audio_chunks = Queue()
+        self.chunks_received = 0
         self.engine = CoquiEngine(model_name=model_name, voice=voice, *args, **kwargs)
         self.engine_stream = TextToAudioStream(self.engine)
         cprint("blue", "Model Loaded")
@@ -56,6 +67,15 @@ class TTSEngine:
             return func(self, *args, **kwargs)
         return wrapper
     
+    def _on_audio_chunk(self, chunk):
+        """Callback for handling audio chunks"""
+        print(".", end="")
+        self.chunks_received += 1
+        try:
+            self.audio_chunks.put_nowait(chunk)
+        except Exception as e:
+            cprint("red", e)
+            
     @staticmethod
     def _openai_generator(gen_stream):
         """Generator for OpenAI streaming API.
@@ -82,6 +102,7 @@ class TTSEngine:
 
         log("Generator finished.")
 
+    # ? UNUSED ATM
     @_ensure_engine
     def feed_stream(self, url):
         """Designed for feeding a text streaming generation API"""
@@ -92,15 +113,45 @@ class TTSEngine:
             engine.engine_stream.play()
     
     @_ensure_engine
-    def feed_input(self, input):
+    def feed_input(self, input, muted=True):
         """Play input text directly"""
         self.engine_stream.feed(input)
-        self.engine_stream.play()
+        self.engine_stream.play(muted=muted, on_audio_chunk=self._on_audio_chunk)
+        self.audio_chunks.put_nowait(None)
 
     @_ensure_engine
     def stop_stream(self):
         """Cancels the current stream"""
         pass
+
+    async def audio_stream(self):
+        """Generator for audio stream"""
+        chunks_processed = -1
+        print("Audio Stream Job Started")
+        first_chunk = False
+        while True:
+            print("Chunks Received:", self.chunks_received, "Chunks Processed:", chunks_processed)
+            try:
+                chunk = await self.audio_chunks.get()
+                if chunk is None:
+                    break
+
+                if first_chunk:
+                    first_chunk = True
+                    # Read wav header
+                    print(self.engine.get_stream_info())
+                
+                yield chunk
+                print("Processed chunk no.", chunks_processed)
+                chunks_processed += 1
+            except Exception as e:
+                cprint("red", e)
+                break
+        print("Audio Stream Finished")
+        self.audio_chunks = Queue()
+        self.chunks_received = 0
+
+        
 
 import openai
 
@@ -173,9 +224,12 @@ async def post_unload_engine():
     return {"status": "success"}
 
 @app.post("/api/v1/tts/feed_input")
-async def post_feed_input(background_tasks: BackgroundTasks, input: str = Body(..., embed=True)):
-    background_tasks.add_task(engine.feed_input, input)
-    # response = engine.feed_input(input)
+async def post_feed_input(background_tasks: BackgroundTasks, input: str = Body(..., embed=True), muted: bool = True, stream: bool = False):
+    background_tasks.add_task(engine.feed_input, input, muted)
+
+    print("Get Stream:", stream)
+    if stream:
+        return StreamingResponse(engine.audio_stream(), media_type="audio/wav")
     return {"status": "success"}
 
 @app.post("/api/v1/tts/feed_stream")
