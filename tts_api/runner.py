@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from asyncio import Queue
 
 import sys
-
+#  https://github.com/KoljaB/RealtimeTTS/tree/master/example_fast_api
 def cprint(color="default", *args):
     def get_color(color="default"):
         match color:
@@ -18,6 +18,7 @@ def cprint(color="default", *args):
             case "blue":
                 return '\033[44m'
             case _:
+                # gray
                 return '\033[0m'
     print(get_color(color), *args, get_color())
 
@@ -46,6 +47,11 @@ class TTSEngine:
         self.chunks_received = 0
         self.engine = CoquiEngine(model_name=model_name, voice=voice, *args, **kwargs)
         self.engine_stream = TextToAudioStream(self.engine)
+
+        formatting, channel, sample_rate = self.engine.get_stream_info()
+        cprint("blue", f"Model: {model_name}, Voice: {voice}")
+        cprint("blue", f"Format: {formatting}, Channels: {channel}, Sample Rate: {sample_rate}")
+        # Read the 
         cprint("blue", "Model Loaded")
 
     def unload_engine(self):
@@ -69,7 +75,6 @@ class TTSEngine:
     
     def _on_audio_chunk(self, chunk):
         """Callback for handling audio chunks"""
-        print(".", end="")
         self.chunks_received += 1
         try:
             self.audio_chunks.put_nowait(chunk)
@@ -117,6 +122,11 @@ class TTSEngine:
         """Play input text directly"""
         self.engine_stream.feed(input)
         self.engine_stream.play(muted=muted, on_audio_chunk=self._on_audio_chunk)
+        # self.audio_chunks.put_nowait(None)
+
+    @_ensure_engine
+    def finish_input(self):
+        """Finish the input stream"""
         self.audio_chunks.put_nowait(None)
 
     @_ensure_engine
@@ -124,34 +134,47 @@ class TTSEngine:
         """Cancels the current stream"""
         pass
 
-    async def audio_stream(self):
-        """Generator for audio stream"""
-        chunks_processed = -1
-        print("Audio Stream Job Started")
+    def audio_stream(self):
+        """Generator for audio chunks"""
         first_chunk = False
-        while True:
-            print("Chunks Received:", self.chunks_received, "Chunks Processed:", chunks_processed)
-            try:
-                chunk = await self.audio_chunks.get()
-                if chunk is None:
-                    break
+        try:
+            while True:
+                print("o", end="")
+                chunk = self.audio_chunks.get()
+                print("k", end="")
 
-                if first_chunk:
-                    first_chunk = True
-                    # Read wav header
-                    print(self.engine.get_stream_info())
-                
+                if chunk is None:
+                    print("End of Stream.")
+                    break
                 yield chunk
-                print("Processed chunk no.", chunks_processed)
-                chunks_processed += 1
-            except Exception as e:
-                cprint("red", e)
-                break
-        print("Audio Stream Finished")
-        self.audio_chunks = Queue()
-        self.chunks_received = 0
+        except Exception as e:
+            cprint("red", f"Error during streaming: {str(e)}")
 
         
+
+def create_wave_header_for_engine(engine):
+    _, _, sample_rate = engine.get_stream_info()
+
+    num_channels = 1
+    sample_width = 2
+    frame_rate = sample_rate
+
+    wav_header = io.BytesIO()
+    with wave.open(wav_header, "wb") as wav_file:
+        wav_file.setnchannels(num_channels)
+        wav_file.setsampwidth(sample_width)
+        wav_file.setframerate(frame_rate)
+
+    wav_header.seek(0)
+    wave_header_bytes = wav_header.read()
+    wav_header.close()
+
+    # Create a new BytesIO with the correct MIME type for Firefox
+    final_wave_header = io.BytesIO()
+    final_wave_header.write(wave_header_bytes)
+    final_wave_header.seek(0)
+
+    return final_wave_header.getvalue()
 
 import openai
 
@@ -189,7 +212,7 @@ async def lifespan(app: FastAPI):
 
     engine.load_engine()
 
-    char_iterator = iter("Audio Test")
+    char_iterator = iter("Audio Loaded")
     engine.engine_stream.feed(char_iterator)
     engine.engine_stream.play()
     yield
@@ -207,6 +230,12 @@ async def boom():
 @app.get("/")
 async def get_homepage():
     return {"Hello."}
+
+@app.get("/api/v1/health")
+async def get_health():
+    import datetime
+    # returns time in utc
+    return {"status": "ok", "timestamp": datetime.datetime.now(datetime.timezone.utc)}
 
 @app.get("/api/v1/tts")
 async def get_tts():
@@ -226,8 +255,6 @@ async def post_unload_engine():
 @app.post("/api/v1/tts/feed_input")
 async def post_feed_input(background_tasks: BackgroundTasks, input: str = Body(..., embed=True), muted: bool = True, stream: bool = False):
     background_tasks.add_task(engine.feed_input, input, muted)
-
-    print("Get Stream:", stream)
     if stream:
         return StreamingResponse(engine.audio_stream(), media_type="audio/wav")
     return {"status": "success"}
@@ -240,6 +267,11 @@ async def post_feed_stream(url: str = Body(..., embed=True)):
 @app.post("/api/v1/tts/stop_stream")
 async def post_stop_stream():
     engine.stop_stream()
+    return {"status": "success"}
+
+@app.post("/api/v1/tts/finish_input")
+async def post_finish_input():
+    engine.finish_input()
     return {"status": "success"}
 
 @app.post("/shutdown")

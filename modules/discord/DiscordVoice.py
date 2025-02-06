@@ -81,8 +81,8 @@ class DiscordVoice:
                 await asyncio.sleep(0.1)
             print("Playing audio file")
             
-            formatted = discord.FFmpegPCMAudio(audio_file, **ffmpeg_options, pipe=True)
-            # self.vc.play(discord.FFmpegPCMAudio("dry-fart.mp3"))
+            sampled_audio = AudioFix.decode_and_resample(audio_file.read(), 16000, 24000)
+            formatted = discord.FFmpegPCMAudio(sampled_audio, **ffmpeg_options, pipe=True)
             self.vc.play(formatted)
 
     
@@ -108,6 +108,7 @@ class DiscordVoice:
         # If text is empty, return
         if text.strip() == "":
             return
+        
         print(text, end=" | ")
         self.audio_queue.put_nowait(f"{user}: {text}")
 
@@ -159,7 +160,9 @@ class DiscordVoice:
                 print("\n------------- EOS -------------\n")
                 break
         print("Chunks Read:", chunks_read)
-            # await asyncio.sleep(0.1)
+
+        await self.tts.finish_input()
+        # await asyncio.sleep(0.1)
         self.currently_processing = None
         print("Done processing audio stream")
 

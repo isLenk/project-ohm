@@ -37,8 +37,9 @@ class TTSModule:
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, params={"stream": "true"}) as response:
-                    first_chunk = True
-                    async for chunk in response.content.iter_chunks():
+                    
+                    async for chunk in response.content.iter_any():
+                        print("Chunk:", chunk)
                         yield chunk
 
                     # response.content.rea
@@ -55,5 +56,14 @@ class TTSModule:
         try:
             async with aiohttp.ClientSession() as session:
                 return await session.post(url, json=data)
+        except requests.exceptions.ConnectionError:
+            pass
+
+    async def finish_input(self):
+        """Finish the input stream"""
+        url = f"http://{DOMAIN}:{PORT}/api/v1/tts/finish_input"
+        try:
+            async with aiohttp.ClientSession() as session:
+                return await session.post(url)
         except requests.exceptions.ConnectionError:
             pass

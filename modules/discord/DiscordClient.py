@@ -98,6 +98,9 @@ class DiscordClient(discord.Client):
                 await self.voice.tts.send_request(chunk)
 
             get_stream = False
+        
+        print("Stream sent")
+        await self.voice.tts.finish_input()
         return vc
     
     def log(self, message):
