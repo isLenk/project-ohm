@@ -17,4 +17,3 @@ Machine Specs I used:
 
 Additional Packages:
 - ffmpeg
-- 
