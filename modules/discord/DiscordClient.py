@@ -50,7 +50,7 @@ class DiscordClient(discord.Client):
         payload = ""
         for chunk in gen_stream:
             if (content := chunk.choices[0].delta.content) is not None:
-                print(content, end="-")
+                # print(content, end="-")
                 ends = ["?", ".", "!"]
                 results = [end in content for end in ends]
                 if any(results):
@@ -58,7 +58,7 @@ class DiscordClient(discord.Client):
                     # Get index of last found end in content
                     last = max([payload.rindex(ends[i]) for i, x in enumerate(results) if x])
                     feed, payload = payload[:last+1], payload[last+1:]
-                    print("EOL")
+                    # print("EOL")
                     yield feed
                 else:
                     payload += content
@@ -90,23 +90,16 @@ class DiscordClient(discord.Client):
         
         # Propmt
         text_stream = self.make_stream_response(message)
-            
-        chunk_count = 1
-        chunk_counter = 0
-        chunks = np.array([])
-        audio_buffer = io.BytesIO()
 
         for index, text in enumerate(self._openai_generator(text_stream)):
             print("Feeding ->", text)
-            await asyncio.gather(self.voice.handle_request_stream("This is a test message which will be streamed."))
-            
-            # if index == 0:
-            #     await asyncio.gather(self.voice.handle_request_stream(text))
-            # else:
-            #     await asyncio.gather(self.voice.handle_request_stream(text))
+            if index == 0:
+                await asyncio.gather(self.voice.handle_request_stream(text))
+            else:
+                await asyncio.gather(self.voice.handle_request_stream(text))
             # Poll while audio is being played
-            while self.voice.vc.is_playing():
-                await asyncio.sleep(0.1)
+            while self.voice.vc.is_playing() or self.voice.is_playing:
+                await asyncio.sleep(0.5)
         return "Okey deoky"
     
     async def test_audio_no_model(self, vc, message):
@@ -121,9 +114,6 @@ class DiscordClient(discord.Client):
         with wave.open(wav_file, "rb") as f:
 
             sample_rate = f.getframerate()
-            num_channels = f.getnchannels()
-            sample_width = f.getsampwidth()
-
             chunk = f.readframes(sample_rate * 1)
 
             while chunk:

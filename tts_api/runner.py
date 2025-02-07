@@ -42,14 +42,14 @@ class TTSEngine:
     audio_queue: Queue
     chunks_received: int
 
-    def load_engine(self, model_name="xtts_v2", voice="../voices/lance.wav", overwrite=False, *args, **kwargs):
+    def load_engine(self, model_name="xtts_v2", voice="voices/lance.wav", overwrite=False, *args, **kwargs):
         if hasattr(self, "engine") and overwrite == False and self.engine.model_name == model_name: 
             cprint("red", "Model already loaded.")
             return "Model already loaded."
         self.unload_engine()
         self.audio_queue = Queue()
         self.chunks_received = 0
-        self.engine = CoquiEngine(model_name=model_name, voice=voice, full_sentences=True, *args, **kwargs)
+        self.engine = CoquiEngine(model_name=model_name, voice=voice, *args, **kwargs)
         self.engine_stream = TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop)
 
         formatting, channel, sample_rate = self.engine.get_stream_info()
@@ -125,8 +125,10 @@ class TTSEngine:
     def feed_input(self, input, muted=True):
         """Play input text directly"""
         print(f"Feeding input: {input}")
+        self.audio_queue = Queue()
         self.engine_stream.feed(input)
-        self.engine_stream.play(muted=muted, on_audio_chunk=self._on_audio_chunk)
+        self.engine_stream.play(muted=True,
+                                on_audio_chunk=self._on_audio_chunk)
         # self.audio_queue.put(None)
         # self.audio_queue.put_nowait(None)
 
@@ -162,7 +164,7 @@ class TTSEngine:
                 if not first_chunk:
                     if send_wave_headers:
                         print("Sending wave header")
-                        # yield create_wave_header_for_engine(self.engine)
+                        yield create_wave_header_for_engine(self.engine)
                     first_chunk = True
                 yield chunk
         except Exception as e:

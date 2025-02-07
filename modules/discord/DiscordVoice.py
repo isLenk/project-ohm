@@ -9,11 +9,12 @@ import io
 import aiohttp
 import utils.AudioFix as AudioFix
 import json
+import os
 # DISCORD_SAMPLE_RATE = 48000
 DISCORD_SAMPLE_RATE = 44100
 import logging
 logger = logging.getLogger(__name__)
-
+import wave
 class DiscordVoice:
     audio_queue: asyncio.Queue
     # Audio chunks that are ready to be played (16000 Hz, 16-bit signed PCM, 1 channel)
@@ -22,6 +23,7 @@ class DiscordVoice:
     output_worker: asyncio.Task
     channel: discord.VoiceChannel
     vc: discord.VoiceClient
+    is_playing: bool
 
     def __init__(self, client, discord_client):
         self.client = client
@@ -72,7 +74,7 @@ class DiscordVoice:
             ffmpeg_options = {
                 'options': '-vn'
             }
-
+            audio_file = None
             try:
                 audio_file = await self.audio_out_queue.get()
             except asyncio.QueueEmpty:
@@ -84,9 +86,14 @@ class DiscordVoice:
                 await asyncio.sleep(0.1)
             print("Playing audio file")
             
-            sampled_audio = audio_file
-            formatted = discord.FFmpegPCMAudio(sampled_audio, **ffmpeg_options, pipe=True)
+            # sampled_audio = audio_file
+            # Convert to 16-bit signed PCM
+            self.is_playing = True
+            formatted = discord.FFmpegPCMAudio(audio_file, **ffmpeg_options, pipe=True)
             self.vc.play(formatted)
+            while self.vc.is_playing():
+                await asyncio.sleep(1)
+            self.is_playing = False
 
     
     def shutdown(self):
@@ -134,28 +141,20 @@ class DiscordVoice:
         print("Handling request stream")
 
         # 24000 to 8000
-        sample_rate = 8000
-        min_buffer_size = sample_rate * 24
-        chunks = np.array([])
-        TARGET_SAMPLE_RATE = 24000
-
+        sample_rate = 24000
+        min_buffer_size = sample_rate * 5
+        out_buffer = io.BytesIO()
+        self.is_playing = True
+        
         async for chunk in self.tts.get_request_stream(text):
-            chunks = np.append(chunks, chunk)
+            out_buffer.write(chunk)
 
-            if len(chunks) > min_buffer_size:
+            if out_buffer.tell() >= min_buffer_size:
+                out_buffer.seek(0)
                 print("Filling buffer")
-                chunks, leftover = chunks[:min_buffer_size], chunks[min_buffer_size:]
+                await self.audio_out_queue.put(io.BytesIO(out_buffer.getvalue()))
+                out_buffer = io.BytesIO()                
 
-                # chunks = AudioFix.decode_and_resample(chunks, sample_rate, TARGET_SAMPLE_RATE)
-                buffer = AudioFix.fill_wav_buffer(io.BytesIO(), chunks, sample_rate=TARGET_SAMPLE_RATE)
-                await self.audio_out_queue.put(buffer)
-                
-                chunks = leftover
         print("Finished loading")
-        if len(chunks) > 0:
-            # chunks = AudioFix.decode_and_resample(chunks, sample_rate, TARGET_SAMPLE_RATE)
-            buffer = AudioFix.fill_wav_buffer(io.BytesIO(), chunks, sample_rate=TARGET_SAMPLE_RATE)
-            await self.audio_out_queue.put(buffer)
-
-
-
+        if out_buffer.tell() > 0:
+            await self.audio_out_queue.put(io.BytesIO(out_buffer.getvalue()))

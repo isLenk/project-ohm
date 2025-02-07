@@ -16,7 +16,7 @@ def decode_and_resample(audio_data, original_sample_rate, target_sample_rate) ->
 def fill_wav_buffer(buffer, 
                     chunks,
                     num_channels=1,
-                    sample_rate=22050,
+                    sample_rate=24000,
                     sample_width=2) -> None:
     with wave.open(buffer, "wb") as buf:
         buf.setnchannels(num_channels)
