@@ -1,6 +1,7 @@
 import requests
 from urllib.parse import urlencode
 import aiohttp
+import asyncio
 VOICE = "Morgan_Freeman CC3.wav"
 ENDPOINT = "http://localhost:7851/api/tts-generate-streaming"
 
@@ -11,39 +12,17 @@ class TTSModule:
 
     def __init__(self):
         self.voice = VOICE
-
-    async def alltalk_tts_get_stream(self, text):
-        print(f"Speaking: {text}")
-
-        payload = {
-            "text": text,
-            "voice": self.voice,
-            "language": "en",
-            "output_file": "output.wav"
-        }
-
-        url = f"{ENDPOINT}?{urlencode(payload)}"
-
-        return url
-    
-    def get_wav(self, text):
-        response = self.get_stream(text)
-        return response
     
     async def get_request_stream(self, text):
         url = f"http://{DOMAIN}:{PORT}/api/v1/tts/feed_input"
         data = {"input": text}
         try:
-            
+            print("Sending request")
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, params={"stream": "true"}) as response:
-                    
+                    print("Request sent")
                     async for chunk in response.content.iter_any():
-                        print("Chunk:", chunk)
                         yield chunk
-
-                    # response.content.rea
-                    # yield await response.content.()
 
                 print("End of Stream.")
         except requests.exceptions.ConnectionError:

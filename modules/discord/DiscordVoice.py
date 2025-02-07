@@ -11,6 +11,8 @@ import utils.AudioFix as AudioFix
 import json
 # DISCORD_SAMPLE_RATE = 48000
 DISCORD_SAMPLE_RATE = 44100
+import logging
+logger = logging.getLogger(__name__)
 
 class DiscordVoice:
     audio_queue: asyncio.Queue
@@ -70,6 +72,7 @@ class DiscordVoice:
             ffmpeg_options = {
                 'options': '-vn'
             }
+
             try:
                 audio_file = await self.audio_out_queue.get()
             except asyncio.QueueEmpty:
@@ -81,7 +84,7 @@ class DiscordVoice:
                 await asyncio.sleep(0.1)
             print("Playing audio file")
             
-            sampled_audio = AudioFix.decode_and_resample(audio_file.read(), 16000, 24000)
+            sampled_audio = audio_file
             formatted = discord.FFmpegPCMAudio(sampled_audio, **ffmpeg_options, pipe=True)
             self.vc.play(formatted)
 
@@ -123,61 +126,36 @@ class DiscordVoice:
     def on_text(self, text):
         print("Generating | Prompt:", text)
         return ""
-        response, contains_intent = self.discord_client.model.generate_text(text)
+        # response, contains_intent = self.discord_client.model.generate_text(text)
 
-        self.discord_client.add_task(self.say, response)
+        # self.discord_client.add_task(self.say, response)
 
-    currently_processing = None
-    async def process_audio_stream(self, first_chunk):
-        if self.currently_processing:
-            print("Already processing audio stream")
-            return
-        
-        self.currently_processing = True
-        
-        chunks_collected = np.array([])
-        chunks_per_push = 500
-        chunks_count = 0
-        chunks_read = 0
-        async for chunk in self.tts.get_request_stream(first_chunk):
-            chunk_data, end_of_stream = chunk
-            # self.audio_out_queue.put_nowait(io.BytesIO(chunk_data))
+    async def handle_request_stream(self, text):
+        print("Handling request stream")
 
-            # Append the chunk to the array
-            chunks_collected = np.append(chunks_collected, chunk_data)
-            chunks_count += 1
-            chunks_read += 1
+        # 24000 to 8000
+        sample_rate = 8000
+        min_buffer_size = sample_rate * 24
+        chunks = np.array([])
+        TARGET_SAMPLE_RATE = 24000
 
-            if (chunks_read % 250) == 0:
-                print("CHUNKS-", chunks_read)
-            # If we have enough chunks, push them to the audio queue
-            if chunks_count >= chunks_per_push or end_of_stream:
-                self.audio_out_queue.put_nowait(io.BytesIO(chunks_collected))
-                chunks_collected = np.array([])
-                chunks_count = 0
+        async for chunk in self.tts.get_request_stream(text):
+            chunks = np.append(chunks, chunk)
 
-            if end_of_stream:
-                print("\n------------- EOS -------------\n")
-                break
-        print("Chunks Read:", chunks_read)
+            if len(chunks) > min_buffer_size:
+                print("Filling buffer")
+                chunks, leftover = chunks[:min_buffer_size], chunks[min_buffer_size:]
 
-        await self.tts.finish_input()
-        # await asyncio.sleep(0.1)
-        self.currently_processing = None
-        print("Done processing audio stream")
+                # chunks = AudioFix.decode_and_resample(chunks, sample_rate, TARGET_SAMPLE_RATE)
+                buffer = AudioFix.fill_wav_buffer(io.BytesIO(), chunks, sample_rate=TARGET_SAMPLE_RATE)
+                await self.audio_out_queue.put(buffer)
+                
+                chunks = leftover
+        print("Finished loading")
+        if len(chunks) > 0:
+            # chunks = AudioFix.decode_and_resample(chunks, sample_rate, TARGET_SAMPLE_RATE)
+            buffer = AudioFix.fill_wav_buffer(io.BytesIO(), chunks, sample_rate=TARGET_SAMPLE_RATE)
+            await self.audio_out_queue.put(buffer)
 
-    async def say(self, text, out=None):
-        if out is None:
-            out = self.vc
-        stream_url = await self.tts.get_stream(text)
 
-        ffmpeg_options = {
-            'options': '-vn'
-        }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(stream_url) as stream:
-                chunk = await stream.content.read()
-                out.play(discord.FFmpegPCMAudio(io.BytesIO(chunk), **ffmpeg_options, pipe=True))
-                while out.is_playing() or out.is_paused():
-                    await asyncio.sleep(0.1)

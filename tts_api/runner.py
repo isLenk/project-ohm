@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from fastapi import Body
 from fastapi import BackgroundTasks
 from fastapi.responses import StreamingResponse
-from asyncio import Queue
-
+from queue import Queue
+import threading
 import sys
 #  https://github.com/KoljaB/RealtimeTTS/tree/master/example_fast_api
 def cprint(color="default", *args):
@@ -32,21 +32,25 @@ import wave
 import io
 
 
+play_tts_semaphore = threading.Semaphore(1)
+tts_lock = threading.Lock()
+
+
 class TTSEngine:
     stream: str
     engine_stream: TextToAudioStream
-    audio_chunks: Queue
+    audio_queue: Queue
     chunks_received: int
 
-    def load_engine(self, model_name="xtts_v2", voice="voices/lance.wav", overwrite=False, *args, **kwargs):
+    def load_engine(self, model_name="xtts_v2", voice="../voices/lance.wav", overwrite=False, *args, **kwargs):
         if hasattr(self, "engine") and overwrite == False and self.engine.model_name == model_name: 
             cprint("red", "Model already loaded.")
             return "Model already loaded."
         self.unload_engine()
-        self.audio_chunks = Queue()
+        self.audio_queue = Queue()
         self.chunks_received = 0
-        self.engine = CoquiEngine(model_name=model_name, voice=voice, *args, **kwargs)
-        self.engine_stream = TextToAudioStream(self.engine)
+        self.engine = CoquiEngine(model_name=model_name, voice=voice, full_sentences=True, *args, **kwargs)
+        self.engine_stream = TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop)
 
         formatting, channel, sample_rate = self.engine.get_stream_info()
         cprint("blue", f"Model: {model_name}, Voice: {voice}")
@@ -77,7 +81,7 @@ class TTSEngine:
         """Callback for handling audio chunks"""
         self.chunks_received += 1
         try:
-            self.audio_chunks.put_nowait(chunk)
+            self.audio_queue.put(chunk)
         except Exception as e:
             cprint("red", e)
             
@@ -120,14 +124,22 @@ class TTSEngine:
     @_ensure_engine
     def feed_input(self, input, muted=True):
         """Play input text directly"""
+        print(f"Feeding input: {input}")
         self.engine_stream.feed(input)
         self.engine_stream.play(muted=muted, on_audio_chunk=self._on_audio_chunk)
-        # self.audio_chunks.put_nowait(None)
+        # self.audio_queue.put(None)
+        # self.audio_queue.put_nowait(None)
+
+    @_ensure_engine
+    def on_audio_stream_stop(self):
+        """Callback for when the audio stream stops"""
+        print("Audio stream stopped.")
+        self.audio_queue.put(None)
 
     @_ensure_engine
     def finish_input(self):
         """Finish the input stream"""
-        self.audio_chunks.put_nowait(None)
+        self.audio_queue.put(None)
 
     @_ensure_engine
     def stop_stream(self):
@@ -136,20 +148,25 @@ class TTSEngine:
 
     def audio_stream(self):
         """Generator for audio chunks"""
+        pass
+
+    def audio_chunk_generator(self, send_wave_headers=True):
         first_chunk = False
         try:
             while True:
-                print("o", end="")
-                chunk = self.audio_chunks.get()
-                print("k", end="")
-
+                print(".", end="")
+                chunk = self.audio_queue.get()
                 if chunk is None:
-                    print("End of Stream.")
+                    print("Terminating stream")
                     break
+                if not first_chunk:
+                    if send_wave_headers:
+                        print("Sending wave header")
+                        # yield create_wave_header_for_engine(self.engine)
+                    first_chunk = True
                 yield chunk
         except Exception as e:
-            cprint("red", f"Error during streaming: {str(e)}")
-
+            print(f"Error during streaming: {str(e)}")
         
 
 def create_wave_header_for_engine(engine):
@@ -254,10 +271,18 @@ async def post_unload_engine():
 
 @app.post("/api/v1/tts/feed_input")
 async def post_feed_input(background_tasks: BackgroundTasks, input: str = Body(..., embed=True), muted: bool = True, stream: bool = False):
-    background_tasks.add_task(engine.feed_input, input, muted)
-    if stream:
-        return StreamingResponse(engine.audio_stream(), media_type="audio/wav")
-    return {"status": "success"}
+    # background_tasks.add_task(engine.feed_input, input, muted)
+    with tts_lock:
+        if play_tts_semaphore.acquire(blocking=False):
+            try:
+                threading.Thread(target=engine.feed_input, args=(input, muted), daemon=True).start()
+            finally:
+                play_tts_semaphore.release()
+
+        if stream:
+            print("Streaming response")
+            return StreamingResponse(engine.audio_chunk_generator(), media_type="audio/wav")
+        return {"status": "success"}
 
 @app.post("/api/v1/tts/feed_stream")
 async def post_feed_stream(url: str = Body(..., embed=True)):

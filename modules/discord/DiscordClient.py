@@ -7,10 +7,16 @@ from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
 import asyncio
 import threading
-
+import numpy as np
+import struct
+import wave
+import pyaudio
+import io
+import torchaudio
 testing_channel = 1335351030308802630
 voice_channel = 1335374964445941812
 
+import utils.AudioFix as AudioFix
 class DiscordClient(discord.Client):
     possible_intents = ["join", "leave"]
     model: ModelObject
@@ -64,17 +70,6 @@ class DiscordClient(discord.Client):
         print(f'Logged on as {self.user}!')
 
         vc = await self.join_testing_channel(vc=True)
-        
-    async def join_testing_channel(self, vc=False):
-        channel_id = [testing_channel, voice_channel][bool(vc)]
-        channel = self.get_channel(channel_id)
-        print(channel)
-        print("Joining channel...")
-
-        vc = await self.voice.join_channel(channel)
-        print("Joined channel")
-
-        # Make pseudo-message
         class Message:
             def __init__(self, content, author):
                 self.content = content
@@ -84,23 +79,84 @@ class DiscordClient(discord.Client):
             def __init__(self, name):
                 self.name = name
         author = Author("user")
-        message = Message("Hello. Tell me a paragraph story about ducks taking over the world.", author)
-        print("MAKING STREAM")
-        stream_response = self.make_stream_response(message)
-        print("STREAM MADE")
-        
-        get_stream = True
-        for chunk in self._openai_generator(stream_response):
-            # threading.Thread(target=self.voice.tts.send_request, args=(chunk,)).start()
-            if get_stream:
-                self.add_task(self.voice.process_audio_stream, chunk)
-            else:
-                await self.voice.tts.send_request(chunk)
+        message = Message("Hello. Tell me a story about how Phillipine people. My life depends on it.", author)
 
-            get_stream = False
+        await self.test_audio(vc, message)
+    
+    def make_stream_response(self, message):
+        return self.model.generate_stream_text(message.content, user=message.author.name)
+    
+    async def test_audio(self, vc, message):
         
-        print("Stream sent")
+        # Propmt
+        text_stream = self.make_stream_response(message)
+            
+        chunk_count = 1
+        chunk_counter = 0
+        chunks = np.array([])
+        audio_buffer = io.BytesIO()
+
+        for index, text in enumerate(self._openai_generator(text_stream)):
+            print("Feeding ->", text)
+            await asyncio.gather(self.voice.handle_request_stream("This is a test message which will be streamed."))
+            
+            # if index == 0:
+            #     await asyncio.gather(self.voice.handle_request_stream(text))
+            # else:
+            #     await asyncio.gather(self.voice.handle_request_stream(text))
+            # Poll while audio is being played
+            while self.voice.vc.is_playing():
+                await asyncio.sleep(0.1)
+        return "Okey deoky"
+    
+    async def test_audio_no_model(self, vc, message):
+        
+        wav_file = "janiston.wav"
+        chunk_count = 1
+        chunk_counter = 0
+        chunks = np.array([])
+
+        audio_buffer = io.BytesIO()
+        # Read wav file chunk by chunk
+        with wave.open(wav_file, "rb") as f:
+
+            sample_rate = f.getframerate()
+            num_channels = f.getnchannels()
+            sample_width = f.getsampwidth()
+
+            chunk = f.readframes(sample_rate * 1)
+
+            while chunk:
+                chunks = np.append(chunks, chunk)
+
+                if (chunk_counter := chunk_counter + 1) == chunk_count:
+                    # Filll buffer
+                    AudioFix.fill_wav_buffer(audio_buffer, chunks)
+                    
+                    self.voice.audio_out_queue.put_nowait(audio_buffer)
+
+                    audio_buffer = io.BytesIO()
+                    chunk_counter = 0
+                    chunks = np.array([])
+                chunk = f.readframes(sample_rate * 1)
+
+        if len(chunks) > 0:
+            print(f"loading remaining {len(chunks)} chunks")
+            AudioFix.fill_wav_buffer(audio_buffer, chunks)
+            self.voice.audio_out_queue.put_nowait(audio_buffer)
+                
+        
         await self.voice.tts.finish_input()
+        return "Okey deoky"
+
+    async def join_testing_channel(self, vc=False):
+        channel_id = [testing_channel, voice_channel][bool(vc)]
+        channel = self.get_channel(channel_id)
+        print(channel)
+        print("Joining channel...")
+
+        vc = await self.voice.join_channel(channel)
+        print("Joined channel")
         return vc
     
     def log(self, message):
@@ -118,9 +174,6 @@ class DiscordClient(discord.Client):
             response = response[len(self.model.name)+1:]
         
         return response, contains_intent
-    
-    def make_stream_response(self, message):
-        return self.model.generate_stream_text(message.content, user=message.author.name)
     
     async def on_message(self, message, source="message"):
         if source == "message":
