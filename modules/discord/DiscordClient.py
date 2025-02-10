@@ -29,7 +29,6 @@ class DiscordClient(discord.Client):
 
     @staticmethod
     def initialize(model: ModelObject, testing_channel=testing_channel):
-        # intents = discord.Intents.default()
         intents = discord.Intents.all()
         intents.message_content = True
         
@@ -70,75 +69,22 @@ class DiscordClient(discord.Client):
         print(f'Logged on as {self.user}!')
 
         vc = await self.join_testing_channel(vc=True)
-        class Message:
-            def __init__(self, content, author):
-                self.content = content
-                self.author = author
+        # class Message:
+        #     def __init__(self, content, author):
+        #         self.content = content
+        #         self.author = author
 
-        class Author:
-            def __init__(self, name):
-                self.name = name
-        author = Author("user")
-        message = Message("Hello. Tell me a story about how Phillipine people. My life depends on it.", author)
+        # class Author:
+        #     def __init__(self, name):
+        #         self.name = name
+        # author = Author("user")
+        # message = Message("Hello. Tell me a story about how Phillipine people. My life depends on it.", author)
 
-        await self.test_audio(vc, message)
+        # await self.test_audio(vc, message)
     
     def make_stream_response(self, message):
         return self.model.generate_stream_text(message.content, user=message.author.name)
     
-    async def test_audio(self, vc, message):
-        
-        # Propmt
-        text_stream = self.make_stream_response(message)
-
-        for index, text in enumerate(self._openai_generator(text_stream)):
-            print("Feeding ->", text)
-            if index == 0:
-                await asyncio.gather(self.voice.handle_request_stream(text))
-            else:
-                await asyncio.gather(self.voice.handle_request_stream(text))
-            # Poll while audio is being played
-            while self.voice.vc.is_playing() or self.voice.is_playing:
-                await asyncio.sleep(0.5)
-        return "Okey deoky"
-    
-    async def test_audio_no_model(self, vc, message):
-        
-        wav_file = "janiston.wav"
-        chunk_count = 1
-        chunk_counter = 0
-        chunks = np.array([])
-
-        audio_buffer = io.BytesIO()
-        # Read wav file chunk by chunk
-        with wave.open(wav_file, "rb") as f:
-
-            sample_rate = f.getframerate()
-            chunk = f.readframes(sample_rate * 1)
-
-            while chunk:
-                chunks = np.append(chunks, chunk)
-
-                if (chunk_counter := chunk_counter + 1) == chunk_count:
-                    # Filll buffer
-                    AudioFix.fill_wav_buffer(audio_buffer, chunks)
-                    
-                    self.voice.audio_out_queue.put_nowait(audio_buffer)
-
-                    audio_buffer = io.BytesIO()
-                    chunk_counter = 0
-                    chunks = np.array([])
-                chunk = f.readframes(sample_rate * 1)
-
-        if len(chunks) > 0:
-            print(f"loading remaining {len(chunks)} chunks")
-            AudioFix.fill_wav_buffer(audio_buffer, chunks)
-            self.voice.audio_out_queue.put_nowait(audio_buffer)
-                
-        
-        await self.voice.tts.finish_input()
-        return "Okey deoky"
-
     async def join_testing_channel(self, vc=False):
         channel_id = [testing_channel, voice_channel][bool(vc)]
         channel = self.get_channel(channel_id)
@@ -184,34 +130,34 @@ class DiscordClient(discord.Client):
             self.parse_intent(message, response, source)
         
     async def parse_intent(self, message, response, source):
-            intent = self.model.get_intent(response, self.possible_intents)
+        intent = self.model.get_intent(response, self.possible_intents)
 
-            channel = "None" if source == "voice" else message.channel
-            match intent:
-                case "join":
-                    if source == "voice": return
-                    print("Joining voice channel")
-                    # Ensure the author is in a voice channel
-                    # Ensure that the channel is allowed to be joined
-                    if message.author.voice is None or message.author.voice.channel is None:
-                        await channel.send("You need to be in a voice channel to use this command.")
-                        return
-                    
-                    if not message.author.voice.channel.permissions_for(message.guild.me).connect:
-                        await channel.send("I don't have permission to join your voice channel.")
-                        return
-                    
-                    # Ensure channel id is correct
-                    if message.author.voice.channel.id != voice_channel:
-                        await channel.send("No. I can't join that channel.")
-                        return
-                    
-                    # Join the voice channel
-                    await self.voice.join_channel(message.author.voice.channel)
+        channel = "None" if source == "voice" else message.channel
+        match intent:
+            case "join":
+                if source == "voice": return
+                print("Joining voice channel")
+                # Ensure the author is in a voice channel
+                # Ensure that the channel is allowed to be joined
+                if message.author.voice is None or message.author.voice.channel is None:
+                    await channel.send("You need to be in a voice channel to use this command.")
+                    return
+                
+                if not message.author.voice.channel.permissions_for(message.guild.me).connect:
+                    await channel.send("I don't have permission to join your voice channel.")
+                    return
+                
+                # Ensure channel id is correct
+                if message.author.voice.channel.id != voice_channel:
+                    await channel.send("No. I can't join that channel.")
+                    return
+                
+                # Join the voice channel
+                await self.voice.join_channel(message.author.voice.channel)
 
-                case "leave":
-                    if source == "voice": return
-                    await self.voice.leave_channel(message)
-                    print("Leaving voice channel")
-                case _:
-                    print(f'Intent: {intent}')
+            case "leave":
+                if source == "voice": return
+                await self.voice.leave_channel(message)
+                print("Leaving voice channel")
+            case _:
+                print(f'Intent: {intent}')

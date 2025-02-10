@@ -158,3 +158,9 @@ class DiscordVoice:
         print("Finished loading")
         if out_buffer.tell() > 0:
             await self.audio_out_queue.put(io.BytesIO(out_buffer.getvalue()))
+
+        while self.is_playing:
+            await asyncio.sleep(0.1)
+        print("Finished playing")
+        
+        
