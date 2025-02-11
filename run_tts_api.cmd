@@ -1,4 +1,5 @@
 call Scripts\activate
 cd tts_api
-fastapi dev runner.py
+echo Loading Runner
+python main.py
 pause
