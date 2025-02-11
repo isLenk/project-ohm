@@ -41,48 +41,15 @@ class DiscordClient(discord.Client):
         client.logging_channel = testing_channel
 
         return client
-    
-    # ? Temporarily Stripped froom tts_api/runner.py
-    def _openai_generator(self, gen_stream):
-        """Generator for OpenAI streaming API.
-        Yields sentences as they are completed."""
-        payload = ""
-        for chunk in gen_stream:
-            if (content := chunk.choices[0].delta.content) is not None:
-                # print(content, end="-")
-                ends = ["?", ".", "!"]
-                results = [end in content for end in ends]
-                if any(results):
-                    payload += content
-                    # Get index of last found end in content
-                    last = max([payload.rindex(ends[i]) for i, x in enumerate(results) if x])
-                    feed, payload = payload[:last+1], payload[last+1:]
-                    # print("EOL")
-                    yield feed
-                else:
-                    payload += content
-
-        if payload.strip() != "":
-            yield payload
+     
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
 
         vc = await self.join_testing_channel(vc=True)
-        # class Message:
-        #     def __init__(self, content, author):
-        #         self.content = content
-        #         self.author = author
-
-        # class Author:
-        #     def __init__(self, name):
-        #         self.name = name
-        # author = Author("user")
-        # message = Message("Hello. Tell me a story about how Phillipine people. My life depends on it.", author)
-
-        # await self.test_audio(vc, message)
     
     def make_stream_response(self, message):
+        """Generate a response for a stream"""
         return self.model.generate_stream_text(message.content, user=message.author.name)
     
     async def join_testing_channel(self, vc=False):

@@ -127,7 +127,7 @@ class TTSEngine:
         print(f"Feeding input: {input}")
         self.audio_queue = Queue()
         self.engine_stream.feed(input)
-        self.engine_stream.play(muted=True,
+        self.engine_stream.play(muted=False,
                                 on_audio_chunk=self._on_audio_chunk)
         # self.audio_queue.put(None)
         # self.audio_queue.put_nowait(None)

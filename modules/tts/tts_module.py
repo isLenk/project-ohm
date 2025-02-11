@@ -17,14 +17,11 @@ class TTSModule:
         url = f"http://{DOMAIN}:{PORT}/api/v1/tts/feed_input"
         data = {"input": text}
         try:
-            print("Sending request")
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=data, params={"stream": "true"}) as response:
-                    print("Request sent")
                     async for chunk in response.content.iter_any():
                         yield chunk
 
-                print("End of Stream.")
         except requests.exceptions.ConnectionError:
             print("Crash!")
 
