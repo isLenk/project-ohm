@@ -99,7 +99,7 @@ class TTSEngine:
         print(f"Feeding input: {input}")
         self.audio_queue = Queue()
         self.engine_stream.feed(input)
-        self.engine_stream.play(muted=False,
+        self.engine_stream.play(muted=muted,
                                 on_audio_chunk=self._on_audio_chunk)
         # self.audio_queue.put(None)
         # self.audio_queue.put_nowait(None)
@@ -128,7 +128,6 @@ class TTSEngine:
         first_chunk = False
         try:
             while True:
-                print(".", end="")
                 chunk = self.audio_queue.get()
                 if chunk is None:
                     print("Terminating stream")
