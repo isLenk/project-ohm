@@ -8,21 +8,30 @@ The project uses three models.
 2. TTS
 3. MLLM for Computer Vision
 
-Discord Integration
-
+### Features:
+- Discord Integration
+- Text-To-Speech: RealtimeTTS
+- Voice-To-Text: FasterWhisper / Whisper on Discord
+- Modularization: Toggleable abilities
+- Vision: miniCPM
 
 ---
-### Machine Specs used:
+# Machine Specs used:
+
+### Main PC
 - RTX 3090
 - Ryzen 5 5600
 - 32GB DDR4 3600MHz CL18
 - Win11
-- Cuda 12.1 (Last available CUDA version compatible with DeepSpeed that I could find)
+- Cuda 12.1 (Last available CUDA versions compatible with DeepSpeed that I could find)
 - Python 3.12
 
-
-Linux compatibility pending... available once I get a second machine capable of
-running this.
+### RAG PC
+Running on the UGREEN NASync DXP4800
+- 8GB DDR5
+- Intel N100 Quad-Core
+- 1TB NVME
+> Hosting qdrant on main PC ended up having issues with HTTP timeout.
 
 ---
 

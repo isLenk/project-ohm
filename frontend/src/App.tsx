@@ -1,20 +1,19 @@
-import Box from "./components/Box";
-import EventLog from "./components/EventLog";
-import Header from "./components/Header";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Dashboard from "./pages/Dashboard";
+import Characters from "./pages/Characters";
+import Template from "./pages/Template";
 
 function App() {
 	return (
-		<div className="bg-[#2B2B2B] w-full h-full absolute py-8 px-14">
-			<Header />
-			<br />
-			<Box>
-				<ul>
-					<li>Active</li>
-				</ul>
-			</Box>
-			<br />
-			<EventLog />
-		</div>
+		<BrowserRouter>
+			<Routes>
+				<Route path="/" element={<Template />}>
+					<Route path="/" element={<Dashboard />} />
+					<Route path="/characters" element={<Characters />} />
+					<Route path="*" element={<h1>Not Found</h1>} />
+				</Route>
+			</Routes>
+		</BrowserRouter>
 	);
 }
 
