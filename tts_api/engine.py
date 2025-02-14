@@ -13,6 +13,7 @@ class TTSEngine:
     engine_stream: TextToAudioStream
     audio_queue: Queue
     chunks_received: int
+    pending_feed: Queue
 
     def load_engine(self, model_name="xtts_v2", voice="voices/lance.wav", overwrite=False, *args, **kwargs):
         if hasattr(self, "engine") and overwrite == False and self.engine.model_name == model_name: 
@@ -23,6 +24,7 @@ class TTSEngine:
         self.chunks_received = 0
         self.engine = CoquiEngine(model_name=model_name, voice=voice, *args, **kwargs)
         self.engine_stream = TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop)
+        self.pending_feed = Queue() 
 
         formatting, channel, sample_rate = self.engine.get_stream_info()
         cprint("blue", f"Model: {model_name}, Voice: {voice}")
@@ -88,14 +90,28 @@ class TTSEngine:
     def feed_stream(self, url):
         """Designed for feeding a text streaming generation API"""
         log("Retrieved stream", url)
-        for chunk in TTSEngine._openai_generator(url):
-            print(chunk)
-            self.engine_stream.feed(chunk)
-            self.engine_stream.play()
+        text_stream = TTSEngine._openai_generator(url)
+        self.engine_stream.feed(text_stream)
+        self.engine_stream.play()
+        # for chunk in TTSEngine._openai_generator(url):
+        #     print(chunk)
+        #     self.engine_stream.feed(chunk)
+        #     self.engine_stream.play()
+
+    @_ensure_engine
+    def push_to_feed_queue(self, text: str):
+        """Push text to the engine feed queue"""
+        self.pending_feed.put(text)
     
     @_ensure_engine
     def feed_input(self, input, muted=True):
         """Play input text directly"""
+        # If stream is playing, add to queue
+        if self.engine_stream.is_playing():
+            log("Adding to queue")
+            self.pending_feed.put(input)
+            return
+        
         print(f"Feeding input: {input}")
         self.audio_queue = Queue()
         self.engine_stream.feed(input)
@@ -108,12 +124,21 @@ class TTSEngine:
     def on_audio_stream_stop(self):
         """Callback for when the audio stream stops"""
         print("Audio stream stopped.")
+        # Check if there are pending feeds
+        if not self.pending_feed.empty():
+            print("Pending feed detected.")
+            self.feed_input(self.pending_feed.get())
+            return
+        else:
+            print("No pending feed.")
+
         self.audio_queue.put(None)
 
     @_ensure_engine
     def finish_input(self):
         """Finish the input stream"""
         self.audio_queue.put(None)
+        self.pending_feed = Queue()
 
     @_ensure_engine
     def stop_stream(self):
