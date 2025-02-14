@@ -1,4 +1,5 @@
 # Text Generation Web UI Handler
+# Implements the OpenAI API for LlamaChat 
 import openai
 
 class OpenAIModel:

@@ -18,7 +18,6 @@ def main():
     # ! TEMP
     target_model = constants.models["ohm"]
 
-    loop = asyncio.get_event_loop_policy().get_event_loop()
     # Load the model
     model = ModelObject(target_model)
     discord_client = DiscordClient.initialize(model)
