@@ -25,6 +25,8 @@ class OpenAIModel:
         print(f"Loaded OpenAI Model ({self.name}):")
         for key in self.__dict__:
             print(f"{key}: {self.__dict__[key]}")
+
+        if api_key == "None": print("No API Key Provided")
         self.client = openai.OpenAI(
             base_url=endpoint,
             api_key=api_key

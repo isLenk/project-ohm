@@ -15,9 +15,9 @@ async def lifespan(app: FastAPI):
 
     engine.load_engine()
 
-    char_iterator = iter("Audio Loaded")
-    engine.engine_stream.feed(char_iterator)
-    engine.engine_stream.play()
+    # char_iterator = iter("Audio Loaded")
+    # engine.engine_stream.feed(char_iterator)
+    # engine.engine_stream.play()
     yield
     # Call shutdown
     engine.engine.shutdown()

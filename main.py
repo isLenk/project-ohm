@@ -19,7 +19,7 @@ def main():
     target_model = constants.models["ohm"]
 
     # Load the model
-    model = ModelObject(target_model)
+    model = ModelObject(target_model, api_key="0608da5d28eb10cea2914f3de0f3ddba")
     discord_client = DiscordClient.initialize(model)
 
     discord_client.run(token)

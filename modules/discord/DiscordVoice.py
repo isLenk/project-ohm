@@ -10,6 +10,7 @@ import aiohttp
 import utils.AudioFix as AudioFix
 import json
 import os
+import websockets
 # DISCORD_SAMPLE_RATE = 48000
 DISCORD_SAMPLE_RATE = 44100
 import logging
@@ -39,7 +40,7 @@ class DiscordVoice:
         """Worker that listens to the audio queue and generates text.
         The worker will pause if no text is received within a certain threshold.
         """
-        pause_max = 0.4
+        pause_max = 0.01
 
         while True:
             # A dictionary of participants and their text
@@ -64,10 +65,9 @@ class DiscordVoice:
                         else:
                             participants[more_user] = [more_text]
                 except asyncio.QueueEmpty:
-                    print(".", end="")
-                    await asyncio.sleep(0.1)
+                    # print(".", end="")
+                    await asyncio.sleep(0.01)
                     pause += 0.1    
-            
             if self.is_playing or self.processing_response:
                 continue
 
@@ -83,6 +83,7 @@ class DiscordVoice:
 
     async def output_worker(self):
         """Worker that plays audio files from the audio_out_queue"""
+        print("Output worker started")
         while True:
             if self.vc is None:
                 print("No voice client")
@@ -103,6 +104,7 @@ class DiscordVoice:
             while self.vc.is_playing() or self.vc.is_paused():
                 await asyncio.sleep(0.1)
             self.is_playing = True
+            print("Playing audio file")
             formatted = discord.FFmpegPCMAudio(audio_file, **ffmpeg_options, pipe=True)
             self.vc.play(formatted)
             while self.vc.is_playing():
@@ -151,11 +153,12 @@ class DiscordVoice:
         # Create a listener worker
         self.listener_worker = self.discord_client.add_task(self.listen_worker)
         self.output_worker = self.discord_client.add_task(self.output_worker)
-
+        
         self.vc.listen(voice_recv.extras.SpeechRecognitionSink(default_recognizer="whisper", text_cb=self.got_text))
 
     async def on_text(self, text):
         print(f"on_text:\nPrompt='{text}'")
+        print(type(text))
         if text.strip() == "" or self.processing_response or self.is_playing:
             return
         
@@ -169,21 +172,24 @@ class DiscordVoice:
                 self.name = name
     
         author = Author("user")
-        message = Message(text, author)
+        message = Message(str(text), author)
 
         text_stream = self.discord_client.make_stream_response(message)
-        for text in DC_Util.openai_generator(text_stream):
-            # Substitute any ohm:
+        # for text in DC_Util.openai_generator(text_stream):
+        #     # Substitute any ohm:
+        #     print("Feeding ->", text)
+        #     await self.say(text)
+        websocket = await websockets.connect("ws://localhost:8000/api/v1/tts/ws")
+        feeder = asyncio.create_task(self.discord_client.feed_to_websocket(websocket, text_stream))
+        await self.receive_from_websocket(websocket)
 
-
-            print("Feeding ->", text)
-            await self.say(text)
-
+        await asyncio.gather(feeder)
+        await websocket.close()
 
     async def handle_request_stream(self, text):
         """Handle the request stream from the TTS module"""
-        sample_rate = 24000
         queue = self.audio_out_queue
+        sample_rate = 24000
         min_buffer_size = sample_rate * 5
         out_buffer = io.BytesIO()
         self.is_playing = True
@@ -199,6 +205,37 @@ class DiscordVoice:
         if out_buffer.tell() > 0:
             await DC_Util.push_buffer_to_queue(out_buffer, queue)
         
+        while self.is_playing:
+            await asyncio.sleep(0.3)
+    
+    
+    async def receive_from_websocket(self, websocket):
+        out_buffer = io.BytesIO()
+        sample_rate = 24000
+        min_buffer_size = sample_rate * 5
+        print("Receiving from websocket")
+        try:
+            while True:
+                # Message is either bytes or text "END"
+                message = await websocket.recv()
+                if message == "END":
+                    break
+                out_buffer.write(message)
+                if out_buffer.tell() >= min_buffer_size:
+                    print("+")
+                    out_buffer = await DC_Util.push_buffer_to_queue(
+                        out_buffer, 
+                        self.audio_out_queue)
+                
+            if out_buffer.tell() > 0:
+                print("+<")
+                await DC_Util.push_buffer_to_queue(out_buffer, self.audio_out_queue)
+
+        except websockets.exceptions.ConnectionClosedError:
+            print("Connection closed")
+        except Exception as e:
+            print(e)
+
         while self.is_playing:
             await asyncio.sleep(0.3)
         

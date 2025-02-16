@@ -3,9 +3,17 @@ from fastapi import Depends
 from typing import Annotated
 import io
 import wave
+from queue import Queue
 
 play_tts_semaphore = threading.Semaphore(1)
 tts_lock = threading.Lock()
+
+# Queue to store text to be converted to audio
+text_queue = Queue()
+
+# Chunk Queue stores audio chunks to be sent to the client
+chunk_queue = Queue()
+
 DEBUG_LOGS_ENABLED = True
 
 

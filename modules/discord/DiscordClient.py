@@ -13,16 +13,18 @@ import wave
 import pyaudio
 import io
 import torchaudio
+import websockets
 testing_channel = 1335351030308802630
 voice_channel = 1335374964445941812
 
+import openai
 import utils.AudioFix as AudioFix
 class DiscordClient(discord.Client):
     possible_intents = ["join", "leave"]
     model: ModelObject
     logging_channel: int
     voice: DiscordVoice
-
+    
     def add_task(self, func, *args, **kwargs):
         """Add a task to the event loop"""
         self.loop.create_task(func(*args, **kwargs))
@@ -42,11 +44,44 @@ class DiscordClient(discord.Client):
 
         return client
      
+    async def feed_to_websocket(self, websocket, response):
+        for chunk in response:
+            if chunk.choices[0].delta.content is None:
+                break
+            print(chunk.choices[0].delta.content, end="")
+            # Feed the chunk to the websocket
+            await websocket.send(chunk.choices[0].delta.content)
+            
+        await websocket.send("END")
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
 
         vc = await self.join_testing_channel(vc=True)
+        
+        # client = openai.OpenAI(base_url="http://127.0.0.1:5000/v1", api_key="0608da5d28eb10cea2914f3de0f3ddba")
+        # response = client.chat.completions.create(
+        #     model="cognitivecomputations_dolphin-2.9-llama3-8b",
+        #     messages=[
+        #         {
+        #             "role": "system",
+        #             "content": "You are a helpful assistant."
+        #         },
+        #         {
+        #             "role": "user",
+        #             "content": "tell me a short story (2 sentences)"
+        #         }
+        #     ],
+        #     max_tokens=350,
+        #     stream=True
+        # )
+
+        # websocket = await websockets.connect("ws://localhost:8000/api/v1/tts/ws")
+        # feeder = asyncio.create_task(self.feed_to_websocket(websocket, response))
+        # await self.voice.receive_from_websocket(websocket)
+
+        # await asyncio.gather(feeder)
+        # await websocket.close()
     
     def make_stream_response(self, message):
         """Generate a response for a stream"""

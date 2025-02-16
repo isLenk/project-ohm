@@ -12,7 +12,7 @@ class TTSModule:
 
     def __init__(self):
         self.voice = VOICE
-    
+
     async def get_request_stream(self, text):
         url = f"http://{DOMAIN}:{PORT}/api/v1/tts/feed_input"
         data = {"input": text}
@@ -24,6 +24,18 @@ class TTSModule:
 
         except requests.exceptions.ConnectionError:
             print("Crash!")
+    
+    # async def get_request_stream(self, text):
+    #     url = f"http://{DOMAIN}:{PORT}/api/v1/tts/feed_input"
+    #     data = {"input": text}
+    #     try:
+    #         async with aiohttp.ClientSession() as session:
+    #             async with session.post(url, json=data, params={"stream": "true"}) as response:
+    #                 async for chunk in response.content.iter_any():
+    #                     yield chunk
+
+    #     except requests.exceptions.ConnectionError:
+    #         print("Crash!")
 
     async def send_request(self, text):
         """Send a request to the TTS server."""
