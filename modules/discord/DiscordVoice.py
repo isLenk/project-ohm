@@ -175,15 +175,19 @@ class DiscordVoice:
         message = Message(str(text), author)
 
         text_stream = self.discord_client.make_stream_response(message)
-        # for text in DC_Util.openai_generator(text_stream):
-        #     # Substitute any ohm:
-        #     print("Feeding ->", text)
-        #     await self.say(text)
-        websocket = await websockets.connect("ws://localhost:8000/api/v1/tts/ws")
-        feeder = asyncio.create_task(self.discord_client.feed_to_websocket(websocket, text_stream))
-        await self.receive_from_websocket(websocket)
+        async def ws_thread_manager(response):
+            try:
+                async for _ in self.discord_client.feed_to_websocket(websocket, response):
+                    await self.receive_from_websocket(websocket)
+                await self.receive_from_websocket(websocket, until_done=True)
+            except websockets.exceptions.ConnectionClosedError:
+                print("Connection closed")
+            except Exception as e:
+                print(e)
+                
+        websocket = await websockets.connect("ws://localhost:8000/ws")
+        await ws_thread_manager(text_stream)
 
-        await asyncio.gather(feeder)
         await websocket.close()
 
     async def handle_request_stream(self, text):
@@ -209,13 +213,14 @@ class DiscordVoice:
             await asyncio.sleep(0.3)
     
     
-    async def receive_from_websocket(self, websocket):
+    async def receive_from_websocket(self, websocket, until_done=False):
         out_buffer = io.BytesIO()
         sample_rate = 24000
         min_buffer_size = sample_rate * 5
         print("Receiving from websocket")
         try:
-            while True:
+            counter = 0
+            while (counter := counter + 1) % 100 != 0 or until_done:
                 # Message is either bytes or text "END"
                 message = await websocket.recv()
                 if message == "END":
