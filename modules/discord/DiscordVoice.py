@@ -28,6 +28,7 @@ class DiscordVoice:
     vc: discord.VoiceClient
     is_playing: bool = False
     processing_response: bool = False
+    tts_module: TTSModule
 
     def __init__(self, client, discord_client):
         self.client = client
@@ -35,6 +36,7 @@ class DiscordVoice:
         self.tts = TTSModule()
         self.text_queue = asyncio.Queue()
         self.audio_out_queue = asyncio.Queue()
+        self.tts_module = TTSModule()
     
     async def listen_worker(self):
         """Worker that listens to the audio queue and generates text.
@@ -54,7 +56,6 @@ class DiscordVoice:
             # The pause will reset if more text is received.
             
             while pause < pause_max:
-                
                 try:
                     more_user, more_text = self.text_queue.get_nowait()
                     if more_text:
@@ -68,6 +69,7 @@ class DiscordVoice:
                     # print(".", end="")
                     await asyncio.sleep(0.01)
                     pause += 0.1    
+
             if self.is_playing or self.processing_response:
                 continue
 
@@ -175,20 +177,14 @@ class DiscordVoice:
         message = Message(str(text), author)
 
         text_stream = self.discord_client.make_stream_response(message)
-        async def ws_thread_manager(response):
-            try:
-                async for _ in self.discord_client.feed_to_websocket(websocket, response):
-                    await self.receive_from_websocket(websocket)
-                await self.receive_from_websocket(websocket, until_done=True)
-            except websockets.exceptions.ConnectionClosedError:
-                print("Connection closed")
-            except Exception as e:
-                print(e)
-                
-        websocket = await websockets.connect("ws://localhost:8000/ws")
-        await ws_thread_manager(text_stream)
 
-        await websocket.close()
+        websocket = await websockets.connect("ws://localhost:8000/api/v1/tts/ws")
+
+        async def fn_push(buf): 
+            print(".", end="")
+            return await DC_Util.push_buffer_to_queue(buf, self.audio_out_queue)
+
+        await self.tts_module.ws_thread_manager(websocket, text_stream, fn_push)
 
     async def handle_request_stream(self, text):
         """Handle the request stream from the TTS module"""
@@ -210,40 +206,7 @@ class DiscordVoice:
             await DC_Util.push_buffer_to_queue(out_buffer, queue)
         
         while self.is_playing:
-            await asyncio.sleep(0.3)
-    
-    
-    async def receive_from_websocket(self, websocket, until_done=False):
-        out_buffer = io.BytesIO()
-        sample_rate = 24000
-        min_buffer_size = sample_rate * 5
-        print("Receiving from websocket")
-        try:
-            counter = 0
-            while (counter := counter + 1) % 100 != 0 or until_done:
-                # Message is either bytes or text "END"
-                message = await websocket.recv()
-                if message == "END":
-                    break
-                out_buffer.write(message)
-                if out_buffer.tell() >= min_buffer_size:
-                    print("+")
-                    out_buffer = await DC_Util.push_buffer_to_queue(
-                        out_buffer, 
-                        self.audio_out_queue)
-                
-            if out_buffer.tell() > 0:
-                print("+<")
-                await DC_Util.push_buffer_to_queue(out_buffer, self.audio_out_queue)
-
-        except websockets.exceptions.ConnectionClosedError:
-            print("Connection closed")
-        except Exception as e:
-            print(e)
-
-        while self.is_playing:
-            await asyncio.sleep(0.3)
-        
+            await asyncio.sleep(0.3)        
         
     async def say(self, text):
         await self.handle_request_stream(text)

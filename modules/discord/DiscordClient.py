@@ -43,20 +43,6 @@ class DiscordClient(discord.Client):
         client.logging_channel = testing_channel
 
         return client
-     
-    async def feed_to_websocket(self, websocket, response):
-        num_chunks = 0
-        for chunk in response:
-            if chunk.choices[0].delta.content is None:
-                break
-            if ((num_chunks := num_chunks + 1) % 15) == 0:
-                yield
-                print("F", end="")
-            print(chunk.choices[0].delta.content, end="")
-            # Feed the chunk to the websocket
-            await websocket.send(chunk.choices[0].delta.content)
-            
-        await websocket.send("END")
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
