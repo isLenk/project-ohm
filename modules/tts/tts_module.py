@@ -45,6 +45,8 @@ class TTSModule:
 
         await websocket.send("END")
 
+    websocket = None
+
     async def receive_from_websocket(self, 
                                      websocket, 
                                      fn_push, 
@@ -76,6 +78,7 @@ class TTSModule:
     async def ws_thread_manager(self, websocket, response, fn_push):
         """Feeds the response to the websocket and receives audio chunks. Closes the websocket when done."""
         try:
+            self.websocket = websocket
             async for _ in self.feed_to_websocket(websocket, response):
                 await self.receive_from_websocket(websocket, fn_push)
             await self.receive_from_websocket(websocket, fn_push, until_done=True)
@@ -84,5 +87,12 @@ class TTSModule:
         except Exception as e:
             print(e)
         finally:
+            self.websocket = None
             await websocket.close()
-        
+
+    async def interrupt(self):
+        """Interrupt the websocket connection."""
+        if self.websocket:
+            await self.websocket.close()
+        else:
+            print("No websocket to interrupt")

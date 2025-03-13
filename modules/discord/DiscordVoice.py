@@ -11,6 +11,7 @@ import utils.AudioFix as AudioFix
 import json
 import os
 import websockets
+import time
 # DISCORD_SAMPLE_RATE = 48000
 DISCORD_SAMPLE_RATE = 44100
 import logging
@@ -19,16 +20,16 @@ import wave
 import modules.discord.utils.DiscordVoiceUtil as DC_Util
 class DiscordVoice:
 
+    listener_worker: asyncio.Task
+    output_worker: asyncio.Task
     text_queue: asyncio.Queue
     # Audio chunks that are ready to be played (16000 Hz, 16-bit signed PCM, 1 channel)
     audio_out_queue: asyncio.Queue
-    listener_worker: asyncio.Task
-    output_worker: asyncio.Task
     channel: discord.VoiceChannel
     vc: discord.VoiceClient
+    tts_module: TTSModule
     is_playing: bool = False
     processing_response: bool = False
-    tts_module: TTSModule
 
     def __init__(self, client, discord_client):
         self.client = client
@@ -38,39 +39,58 @@ class DiscordVoice:
         self.audio_out_queue = asyncio.Queue()
         self.tts_module = TTSModule()
     
-    async def listen_worker(self):
+
+    async def _poll_for_more_text(self, pause_max, participants):
+        """Poll for more text within a certain threshold. Used in listen_worker
+        """
+        pause = 0
+        while pause < pause_max:
+            try:
+                more_user, more_text = self.text_queue.get_nowait()
+                if not more_text: continue
+
+                pause = 0
+                # Append the text to the user's text
+                if more_user in participants:
+                    participants[more_user].append(more_text)
+                else:
+                    participants[more_user] = [more_text]
+
+            except asyncio.QueueEmpty:
+                # ? not using asyncio.io to prevent switching to another task
+                time.sleep(0.01)
+                pause += 0.1
+
+        return participants
+
+    async def listen_worker(self, pause_max=0.01):
         """Worker that listens to the audio queue and generates text.
         The worker will pause if no text is received within a certain threshold.
         """
-        pause_max = 0.01
 
         while True:
             # A dictionary of participants and their text
             participants = {}
 
             user, text = await self.text_queue.get()
-            pause = 0
             participants[user] = [text]
 
             # Retrieve more text within the pause_max threshold.
             # The pause will reset if more text is received.
-            
-            while pause < pause_max:
-                try:
-                    more_user, more_text = self.text_queue.get_nowait()
-                    if more_text:
-                        pause = 0
-                        # Append the text to the user's text
-                        if more_user in participants:
-                            participants[more_user].append(more_text)
-                        else:
-                            participants[more_user] = [more_text]
-                except asyncio.QueueEmpty:
-                    # print(".", end="")
-                    await asyncio.sleep(0.01)
-                    pause += 0.1    
+            participants = await self._poll_for_more_text(pause_max, participants)
 
-            if self.is_playing or self.processing_response:
+            if self.is_playing or self.processing_response: 
+                # Interrupt the audio
+                await self.tts_module.interrupt()
+                
+                # Clean out audio queue
+                while not self.audio_out_queue.empty():
+                    self.audio_out_queue.get_nowait()
+
+                # Reset the flag
+                self.processing_response = False
+                self.is_playing = False
+
                 continue
 
             prompt_input = [f"{user}: {text}" for user, text in participants.items()]
@@ -85,7 +105,6 @@ class DiscordVoice:
 
     async def output_worker(self):
         """Worker that plays audio files from the audio_out_queue"""
-        print("Output worker started")
         while True:
             if self.vc is None:
                 print("No voice client")
@@ -106,13 +125,11 @@ class DiscordVoice:
             while self.vc.is_playing() or self.vc.is_paused():
                 await asyncio.sleep(0.1)
             self.is_playing = True
-            print("Playing audio file")
             formatted = discord.FFmpegPCMAudio(audio_file, **ffmpeg_options, pipe=True)
             self.vc.play(formatted)
             while self.vc.is_playing():
                 await asyncio.sleep(0.5)
             self.is_playing = False
-
     
     def shutdown(self):
         self.stt.shutdown()
@@ -159,8 +176,7 @@ class DiscordVoice:
         self.vc.listen(voice_recv.extras.SpeechRecognitionSink(default_recognizer="whisper", text_cb=self.got_text))
 
     async def on_text(self, text):
-        print(f"on_text:\nPrompt='{text}'")
-        print(type(text))
+        print("\n", "-" * 20, f"\nPrompt='{text}'")
         if text.strip() == "" or self.processing_response or self.is_playing:
             return
         
@@ -185,30 +201,4 @@ class DiscordVoice:
             return await DC_Util.push_buffer_to_queue(buf, self.audio_out_queue)
 
         await self.tts_module.ws_thread_manager(websocket, text_stream, fn_push)
-
-    async def handle_request_stream(self, text):
-        """Handle the request stream from the TTS module"""
-        queue = self.audio_out_queue
-        sample_rate = 24000
-        min_buffer_size = sample_rate * 5
-        out_buffer = io.BytesIO()
-        self.is_playing = True
-        
-        async for chunk in self.tts.get_request_stream(text):
-            out_buffer.write(chunk)
-
-            if out_buffer.tell() >= min_buffer_size:
-                out_buffer = await DC_Util.push_buffer_to_queue(
-                    out_buffer, 
-                    queue) 
-        
-        if out_buffer.tell() > 0:
-            await DC_Util.push_buffer_to_queue(out_buffer, queue)
-        
-        while self.is_playing:
-            await asyncio.sleep(0.3)        
-        
-    async def say(self, text):
-        await self.handle_request_stream(text)
-        while self.vc.is_playing() or self.is_playing:
-            await asyncio.sleep(0.5)
+        print("-" *  20)
