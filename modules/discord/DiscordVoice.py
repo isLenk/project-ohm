@@ -12,6 +12,8 @@ import json
 import os
 import websockets
 import time
+from modules.discord.utils.RTTSSink import CustomSpeechRecognitionSink
+
 # DISCORD_SAMPLE_RATE = 48000
 DISCORD_SAMPLE_RATE = 44100
 import logging
@@ -38,6 +40,7 @@ class DiscordVoice:
         self.text_queue = asyncio.Queue()
         self.audio_out_queue = asyncio.Queue()
         self.tts_module = TTSModule()
+        self.stt_module = STTModule()
     
 
     async def _poll_for_more_text(self, pause_max, participants):
@@ -173,7 +176,8 @@ class DiscordVoice:
         self.listener_worker = self.discord_client.add_task(self.listen_worker)
         self.output_worker = self.discord_client.add_task(self.output_worker)
         
-        self.vc.listen(voice_recv.extras.SpeechRecognitionSink(default_recognizer="whisper", text_cb=self.got_text))
+        # self.vc.listen(voice_recv.extras.SpeechRecognitionSink(default_recognizer="whisper", text_cb=self.got_text))
+        self.vc.listen(CustomSpeechRecognitionSink(recognizer="rtts", text_cb=self.got_text))
 
     async def on_text(self, text):
         print("\n", "-" * 20, f"\nPrompt='{text}'")
