@@ -15,7 +15,7 @@ class STTModule:
         self.listening = False
         self.stream = None
         self.audio_interface = pyaudio.PyAudio()
-
+   
 # Test
 if __name__ == '__main__':
 

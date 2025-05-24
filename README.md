@@ -15,6 +15,14 @@ The project uses three models.
 - Modularization: Toggleable abilities
 - Vision: miniCPM
 
+
+---
+### How to Launch
+1. Execute `run_tabby.cmd`
+2. Execute `tts_api.cmd`
+3. Wait for the two processes to be ready
+4. Execute `run_script.cmd` 
+
 ---
 # Machine Specs used:
 

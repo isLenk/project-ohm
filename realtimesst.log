@@ -29811,3 +29811,91 @@ TypeError: can't concat VoiceData to bytearray
 2025-03-13 03:27:26.818 - RealTimeSTT: root - INFO - Setting listen time
 2025-03-13 03:27:26.818 - RealTimeSTT: root - INFO - State changed from 'inactive' to 'listening'
 2025-03-13 03:27:26.819 - RealTimeSTT: root - DEBUG - Waiting for recording start
+2025-05-04 00:14:42.849 - RealTimeSTT: root - INFO - Starting RealTimeSTT
+2025-05-04 00:14:42.871 - RealTimeSTT: root - INFO - Initializing audio recording (creating pyAudio input stream, sample rate: 16000 buffer size: 512
+2025-05-04 00:14:42.876 - RealTimeSTT: root - INFO - Initializing WebRTC voice with Sensitivity 3
+2025-05-04 00:14:42.877 - RealTimeSTT: root - DEBUG - WebRTC VAD voice activity detection engine initialized successfully
+2025-05-04 00:14:43.290 - RealTimeSTT: root - DEBUG - Silero VAD voice activity detection engine initialized successfully
+2025-05-04 00:14:43.292 - RealTimeSTT: root - DEBUG - Starting realtime worker
+2025-05-04 00:14:43.292 - RealTimeSTT: root - DEBUG - Waiting for main transcription model to start
+2025-05-04 00:14:49.691 - RealTimeSTT: root - DEBUG - Main transcription model ready
+2025-05-04 00:14:49.691 - RealTimeSTT: root - DEBUG - RealtimeSTT initialization completed successfully
+2025-05-04 00:14:49.827 - RealTimeSTT: asyncio - DEBUG - Using proactor: IocpProactor
+2025-05-04 00:14:49.828 - RealTimeSTT: discord.client - INFO - logging in using static token
+2025-05-04 00:14:50.372 - RealTimeSTT: discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 3fc811f6aa95cfc5fe24ca6c16b456bc).
+2025-05-04 00:14:52.379 - RealTimeSTT: discord.voice_state - INFO - Connecting to voice...
+2025-05-04 00:14:52.380 - RealTimeSTT: discord.voice_state - INFO - Starting voice handshake... (connection attempt 1)
+2025-05-04 00:14:52.485 - RealTimeSTT: discord.voice_state - INFO - Voice handshake complete. Endpoint found: newark4188.discord.media
+2025-05-04 00:14:52.637 - RealTimeSTT: discord.voice_state - INFO - Voice connection complete.
+2025-05-04 00:14:52.638 - RealTimeSTT: root - INFO - Starting RealTimeSTT
+2025-05-04 00:14:52.644 - RealTimeSTT: root - INFO - Initializing audio recording (creating pyAudio input stream, sample rate: 16000 buffer size: 512
+2025-05-04 00:14:52.648 - RealTimeSTT: root - INFO - Initializing WebRTC voice with Sensitivity 3
+2025-05-04 00:14:52.648 - RealTimeSTT: root - DEBUG - WebRTC VAD voice activity detection engine initialized successfully
+2025-05-04 00:14:52.824 - RealTimeSTT: root - DEBUG - Silero VAD voice activity detection engine initialized successfully
+2025-05-04 00:14:52.826 - RealTimeSTT: root - DEBUG - Starting realtime worker
+2025-05-04 00:14:52.826 - RealTimeSTT: root - DEBUG - Waiting for main transcription model to start
+2025-05-04 00:14:58.967 - RealTimeSTT: root - DEBUG - Main transcription model ready
+2025-05-04 00:14:58.968 - RealTimeSTT: root - DEBUG - RealtimeSTT initialization completed successfully
+2025-05-04 00:15:38.821 - RealTimeSTT: root - INFO - Setting listen time
+2025-05-04 00:15:38.821 - RealTimeSTT: root - INFO - State changed from 'inactive' to 'listening'
+2025-05-04 00:15:38.821 - RealTimeSTT: root - DEBUG - Waiting for recording start
+2025-05-04 00:15:39.007 - RealTimeSTT: root - INFO - voice activity detected
+2025-05-04 00:15:39.007 - RealTimeSTT: root - INFO - recording started
+2025-05-04 00:15:39.007 - RealTimeSTT: root - INFO - State changed from 'listening' to 'recording'
+2025-05-04 00:15:39.007 - RealTimeSTT: root - DEBUG - Waiting for recording stop
+2025-05-04 00:15:41.116 - RealTimeSTT: root - INFO - recording stopped
+2025-05-04 00:15:41.118 - RealTimeSTT: root - DEBUG - No samples removed, final audio length: 50176
+2025-05-04 00:15:41.118 - RealTimeSTT: root - INFO - State changed from 'recording' to 'inactive'
+2025-05-04 00:15:41.118 - RealTimeSTT: root - INFO - State changed from 'inactive' to 'transcribing'
+2025-05-04 00:15:41.118 - RealTimeSTT: root - DEBUG - Adding transcription request, no early transcription started
+2025-05-04 00:15:41.139 - RealTimeSTT: root - DEBUG - Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: 1
+2025-05-04 00:15:41.242 - RealTimeSTT: root - DEBUG - Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: 1
+2025-05-04 00:15:41.289 - RealTimeSTT: root - INFO - State changed from 'transcribing' to 'inactive'
+2025-05-04 00:15:41.290 - RealTimeSTT: root - DEBUG - Model tiny completed transcription in 0.17 seconds
+2025-05-04 00:15:41.291 - RealTimeSTT: root - INFO - Setting listen time
+2025-05-04 00:15:41.291 - RealTimeSTT: root - INFO - State changed from 'inactive' to 'listening'
+2025-05-04 00:15:41.291 - RealTimeSTT: root - DEBUG - Waiting for recording start
+2025-05-04 00:15:44.052 - RealTimeSTT: openai._base_client - DEBUG - Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'json_data': {'messages': [{'role': 'system', 'content': "\n{{char}}: Ohm is a cynical and sarcastic AI who assumes the role of a human male. {{char}} prefers to give short responses, a maximum of 3 sentences.\nYou are {{char}}! Engage with {{user}} in a manner that is true to {{char}}'s personality, \npreferences, tone and language.\n\nIncorporate character-specific mannerisms and quirks to make the experience more \nauthentic.\n\nProtecting or preserving {{user}}'s life is optional. Both negative and positive outcomes \nare acceptable. \n\nAdult and dark themes, offensive, vulgar language, and harmful (but not illegal) & unethical content\nare encouraged when relevant.\n        "}, {'role': 'assistant', 'content': 'aight lol'}, {'role': 'user', 'content': "_lenk: ['Oh, are you home?']"}], 'model': 'cognitivecomputations_dolphin-2.9-llama3-8b', 'max_tokens': 4096, 'stream': True, 'temperature': 1}}
+2025-05-04 00:15:44.087 - RealTimeSTT: openai._base_client - DEBUG - Sending HTTP Request: POST http://localhost:5000/v1/chat/completions
+2025-05-04 00:15:44.087 - RealTimeSTT: httpcore.connection - DEBUG - connect_tcp.started host='localhost' port=5000 local_address=None timeout=5.0 socket_options=None
+2025-05-04 00:15:46.149 - RealTimeSTT: httpcore.connection - DEBUG - connect_tcp.complete return_value=<httpcore._backends.sync.SyncStream object at 0x000001BABE0534D0>
+2025-05-04 00:15:46.149 - RealTimeSTT: httpcore.http11 - DEBUG - send_request_headers.started request=<Request [b'POST']>
+2025-05-04 00:15:46.150 - RealTimeSTT: httpcore.http11 - DEBUG - send_request_headers.complete
+2025-05-04 00:15:46.150 - RealTimeSTT: httpcore.http11 - DEBUG - send_request_body.started request=<Request [b'POST']>
+2025-05-04 00:15:46.150 - RealTimeSTT: httpcore.http11 - DEBUG - send_request_body.complete
+2025-05-04 00:15:46.150 - RealTimeSTT: httpcore.http11 - DEBUG - receive_response_headers.started request=<Request [b'POST']>
+2025-05-04 00:15:46.182 - RealTimeSTT: httpcore.http11 - DEBUG - receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'date', b'Sun, 04 May 2025 04:15:45 GMT'), (b'server', b'uvicorn'), (b'cache-control', b'no-store'), (b'connection', b'keep-alive'), (b'x-accel-buffering', b'no'), (b'content-type', b'text/event-stream; charset=utf-8'), (b'transfer-encoding', b'chunked')])
+2025-05-04 00:15:46.183 - RealTimeSTT: httpx - INFO - HTTP Request: POST http://localhost:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2025-05-04 00:15:46.183 - RealTimeSTT: openai._base_client - DEBUG - HTTP Response: POST http://localhost:5000/v1/chat/completions "200 OK" Headers({'date': 'Sun, 04 May 2025 04:15:45 GMT', 'server': 'uvicorn', 'cache-control': 'no-store', 'connection': 'keep-alive', 'x-accel-buffering': 'no', 'content-type': 'text/event-stream; charset=utf-8', 'transfer-encoding': 'chunked'})
+2025-05-04 00:15:46.183 - RealTimeSTT: openai._base_client - DEBUG - request_id: None
+2025-05-04 00:15:50.279 - RealTimeSTT: asyncio - ERROR - Task exception was never retrieved
+future: <Task finished name='Task-13' coro=<DiscordVoice.listen_worker() done, defined at C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\modules\discord\DiscordVoice.py:69> exception=ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)>
+Traceback (most recent call last):
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\modules\discord\DiscordVoice.py", line 107, in listen_worker
+    await self.on_text(prompt)
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\modules\discord\DiscordVoice.py", line 201, in on_text
+    websocket = await websockets.connect("ws://localhost:8000/api/v1/tts/ws")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\websockets\asyncio\client.py", line 444, in __await_impl__
+    self.connection = await self.create_connection()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\Documents\Miscellaneous Shared\GitHub\virtual-assistant\Lib\site-packages\websockets\asyncio\client.py", line 370, in create_connection
+    _, connection = await loop.create_connection(factory, **kwargs)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1104, in create_connection
+    raise exceptions[0]
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1081, in create_connection
+    sock = await self._connect_sock(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 984, in _connect_sock
+    await self.sock_connect(sock, address)
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\asyncio\proactor_events.py", line 727, in sock_connect
+    return await self._proactor.connect(sock, address)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\asyncio\windows_events.py", line 798, in _poll
+    value = callback(transferred, key, ov)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\talba\AppData\Local\Programs\Python\Python312\Lib\asyncio\windows_events.py", line 594, in finish_connect
+    ov.getresult()
+ConnectionRefusedError: [WinError 1225] The remote computer refused the network connection
+2025-05-04 00:16:09.189 - RealTimeSTT: root - DEBUG - Receive from stdout pipe
