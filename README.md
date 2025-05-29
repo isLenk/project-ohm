@@ -45,3 +45,12 @@ Running on the UGREEN NASync DXP4800
 
 Additional Packages:
 - ffmpeg
+
+
+---
+
+
+# Modules
+
+### pykernel
+API responsible for rebooting module services when requested.

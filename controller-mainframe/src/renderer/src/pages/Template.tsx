@@ -5,9 +5,9 @@ import { Outlet } from 'react-router-dom'
 const Template = () => {
   return (
     <div className="bg-[#212229] w-full h-full absolute py-8 px-14">
-        <Header />
-        <br />
-        <Outlet/>
+      <Header />
+      <br />
+      <Outlet />
     </div>
   )
 }

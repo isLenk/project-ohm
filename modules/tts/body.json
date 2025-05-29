@@ -1,0 +1,5 @@
+{
+    "name": "tts",
+    "description": "A module to manage text-to-speech interactions and provide text-to-speech-related functionalities.",
+    "required": false
+}

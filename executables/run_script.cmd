@@ -1,4 +1,4 @@
-call Scripts\activate
+call ..\Scripts\activate
 
 :execute
 python main.py

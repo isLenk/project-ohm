@@ -3,43 +3,44 @@ import express from 'express'
 const api = express()
 api.use(express.json())
 
-const modules = {}
+export const modules = {}
 
 /* Module
     POST /api/modules
     body {
       name: string,
       description: string,
-      version: string,
       required: boolean,
     }
 */
 api.post('/api/modules', (req, res) => {
-    const { name, description, version, required } = req.body
-    // Here you would typically save the module to a database
-    console.log(`Module added: ${name}, ${description}, ${version}, ${required}`)
-    modules[name] = {
-        description,
-        version,
-        required
-    }
-    res.status(201).json({ message: 'Module added successfully' })
+  const { name, description, required } = req.body
+  // Here you would typically save the module to a database
+  if (modules[name]) {
+    return res.status(409).json({ message: 'Module already exists' })
+  }
+
+  console.log(`Module added: ${name}, ${description}, ${required}`)
+  modules[name] = {
+    description,
+    required
+  }
+  res.status(201).json({ message: 'Module added successfully' })
 })
 
 api.put('/api/modules/:name', (req, res) => {
-    const { name } = req.params
-    const { description, version, required } = req.body
-    // Here you would typically update the module in a database
-    if (modules[name]) {
-        modules[name] = {
-            description,
-            version,
-            required
-        }
-        res.status(200).json({ message: 'Module updated successfully' })
-    } else {
-        res.status(404).json({ message: 'Module not found' })
+  const { name } = req.params
+  const { description, required } = req.body
+  // Here you would typically update the module in a database
+  if (modules[name]) {
+    modules[name] = {
+      description,
+      required
     }
+    res.status(200).json({ message: 'Module updated successfully' })
+  } else {
+    res.status(404).json({ message: 'Module not found' })
+  }
 })
 
 api.get('/api/modules/', (req, res) => {

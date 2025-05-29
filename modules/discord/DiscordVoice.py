@@ -3,13 +3,8 @@ from modules.stt.stt_module import STTModule
 from modules.tts.tts_module import TTSModule
 import numpy as np
 import discord
-import subprocess
 import asyncio
-import io
-import aiohttp
 import utils.AudioFix as AudioFix
-import json
-import os
 import websockets
 import time
 from modules.discord.utils.RTTSSink import CustomSpeechRecognitionSink

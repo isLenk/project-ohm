@@ -1,0 +1,5 @@
+{
+    "name": "memory",
+    "description": "A module to manage memory and provide memory-related functionalities.",
+    "required": false
+}

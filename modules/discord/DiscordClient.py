@@ -5,19 +5,8 @@
 import discord
 from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
-import asyncio
-import threading
-import numpy as np
-import struct
-import wave
-import pyaudio
-import io
-import torchaudio
-import websockets
 testing_channel = 1335351030308802630
 voice_channel = 1335374964445941812
-
-import openai
 import utils.AudioFix as AudioFix
 class DiscordClient(discord.Client):
     possible_intents = ["join", "leave"]
@@ -93,9 +82,6 @@ class DiscordClient(discord.Client):
         response, contains_intent = self.make_response(message)
 
         await message.reply(response)
-        return
-        if contains_intent:
-            self.parse_intent(message, response, source)
         
     async def parse_intent(self, message, response, source):
         intent = self.model.get_intent(response, self.possible_intents)
