@@ -3,6 +3,9 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { modules } from './api.js'
+import { charactersDB } from './db.js'
+import { dialog } from 'electron/main'
+
 function createWindow() {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -54,6 +57,58 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-modules', async (event) => modules)
 
+  ipcMain.handle('get-characters', async (event) => {
+    return new Promise((resolve, reject) => {
+      charactersDB.find({}, (err, docs) => {
+        console.log('get-characters: found ' + docs.length + ' characters')
+        if (err) {
+          reject(err)
+        } else {
+          resolve(docs)
+        }
+      })
+    })
+  })
+
+  ipcMain.handle('add-character', async (event, character) => {
+    return new Promise((resolve, reject) => {
+      charactersDB.insert(character, (err, newDoc) => {
+        if (err) {
+          reject(err)
+        } else {
+          resolve(newDoc)
+        }
+      })
+    })
+  })
+
+  ipcMain.handle('update-character', async (event, character) => {
+    return new Promise((resolve, reject) => {
+      charactersDB.update({ _id: character._id }, character, {}, (err, numReplaced) => {
+        if (err) {
+          reject(err)
+        } else {
+          resolve(numReplaced)
+        }
+      })
+    })
+  })
+
+  ipcMain.handle('delete-character', async (event, characterId) => {
+    return new Promise((resolve, reject) => {
+      charactersDB.remove({ _id: characterId }, {}, (err, numRemoved) => {
+        if (err) {
+          reject(err)
+        } else {
+          resolve(numRemoved)
+        }
+      })
+    })
+  })
+
+  ipcMain.handle('dialog', async (event, method, params) => {
+    dialog[method](params)
+  })
   createWindow()
 
   app.on('activate', function () {
