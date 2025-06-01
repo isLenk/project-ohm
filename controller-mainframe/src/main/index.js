@@ -107,8 +107,13 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('dialog', async (event, method, params) => {
-    dialog[method](params)
+    return dialog[method](params)
   })
+
+  ipcMain.handle('log', (event, message) => {
+    console.log(message)
+  })
+
   createWindow()
 
   app.on('activate', function () {

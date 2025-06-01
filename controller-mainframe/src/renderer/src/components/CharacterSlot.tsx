@@ -3,19 +3,31 @@ import { FaTrash } from "react-icons/fa";
 
 const CharacterSlot = ({ key, character, setCharacter, saveEdits }) => {
     const deleteCharacter = async (id) => {
-        console.log('Deleting character with ID:', id);
-        // const confirmed = await window.api.showQuestionDialog('Delete??', 'Are you sure you want to delete this character?');
-        // console.log(confirmed);
-        // if (confirmed) {
-        //     // Call the API to delete the character
-        //     await window.api.deleteCharacter(id);
-        // }
-        await window.api.openDialog('show-question-dialog', {
-            title: 'Delete??',
-            message: 'Are you sure you want to delete this character?'
-        });
-    };
-
+        window.api.log("Attempting to delete character with ID: " + id);
+        window.api.openDialog("showMessageBox", {
+            type: 'warning',
+            title: 'Delete Character',
+            message: 'Are you sure you want to delete this character?',
+            buttons: ['Yes', 'No'],
+            defaultId: 1,
+            cancelId: 1
+        }).then(async (result) => {
+            window.api.log(`Deleting character with ID: ${id}`);
+            if (result === 0) {
+                await window.api.deleteCharacter(id);
+            }
+        }
+        ).catch((error) => {
+            console.error("Error deleting character:", error);
+            window.api.openDialog("showMessageBox", {
+                type: 'error',
+                title: 'Error',
+                message: 'An error occurred while deleting the character.'
+            });
+        }
+        );
+    }
+    
     return (
         <div className='flex gap-4 items-start justify-between w-full h-full '>
             <div key={key} className='bg-[#31343e] p-4 px-12 text-gray-100 flex flex-col items-center rounded-md shadow-md'>

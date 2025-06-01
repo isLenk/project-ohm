@@ -1,6 +1,7 @@
 import React from 'react'
 import Box from "../components/Box";
 import EventLog from "../components/EventLog";
+import LogEntry from '../components/LogEntry';
 
 const Dashboard = () => {
   const required_modules = {
@@ -18,10 +19,20 @@ const Dashboard = () => {
     }
   }
   
+  const log_entries = [
+    ['update', 'nlp_api restarted'],
+    ['update', 'text_generation_api restarted'],
+    ['error', 'nlp_api failed to start'],
+    ['error', 'text_generation_api failed to start'],
+    ['input', '"Hello, world!"'],
+    ['output', '"Hello, world!"'],
+    ['info', 'Memory updated!']
+  ]
+
 return (
   <div className="py-2 grid grid-cols-8 grid-rows-4">
     <div className="col-start-1 row-start-1 col-span-4 row-span-1">
-      <h1 className="text-2xl font-bold">Activity</h1>
+      <h1 className="text-2xl font-bold">Registry</h1>
       <ul className="overflow-y-auto">
         {Object.entries(required_modules).map(([name, module]) => (
           <li key={name} className="flex items-center gap-4">
@@ -31,6 +42,17 @@ return (
             {name}
           </li>
         ))}
+      </ul>
+    </div>
+
+    <div className="col-start-5 col-span-3 row-start-1 row-span-4 ">
+    <h1 className="text-2xl font-bold">Log</h1>
+    <ul className="overflow-y-auto w-fit gap-1 flex flex-col">
+        {
+          log_entries.map(([log_type, value], index) => (
+            <LogEntry key={index} log_type={log_type} value={value} />
+          ))
+        }
       </ul>
     </div>
   </div>

@@ -1,18 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-
 // Custom APIs for renderer
 const api = {
   getModules: () => ipcRenderer.invoke('get-modules'),
   getCharacters: () => ipcRenderer.invoke('get-characters'),
   addCharacter: (character) => ipcRenderer.invoke('add-character', character),
   updateCharacter: (character) => ipcRenderer.invoke('update-character', character),
-  deleteCharacter: (characterId) => ipcRenderer.invoke('delete-character', characterId),
+  deleteCharacter : (characterId) => ipcRenderer.invoke('delete-character', characterId),
   openDialog: (method, params) => {
-    return ipcRenderer.invoke('dialog', method, params).catch((error) => {
-      console.error('Error in openDialog:', error)
-    })
-  }
+    return ipcRenderer.invoke('dialog', method, params)
+  },
+  log: (message) => ipcRenderer.send('log', message)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
