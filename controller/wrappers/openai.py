@@ -65,13 +65,19 @@ class OpenAIModel:
         if hasattr(self, "top_p"):
             configs["top_p"] = self.top_p
         return configs
-    
-    def create(self, prompt, user, **kwargs):
+
+    def create(self, prompt, system=None, user=None, assistant="aight lol", related_memories=None, **kwargs):
+        if system is None:
+            system = self.system
+
+        memory_str = ",".join(m['payload']['value'] for m in related_memories['data']) if related_memories else ""
+
         return self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": self.system},
-                {"role": "assistant", "content": "aight lol"},
+                {"role": "system", "content": system},
+                {"role": "assistant", "content": assistant},
+                {"role": "user", "content": "Relevant information: " + memory_str},
                 {"role": "user", "content": prompt}
             ],
             temperature=1,
@@ -80,12 +86,25 @@ class OpenAIModel:
         )
 
     def generate_stream_text(self, prompt, user="user"):
-        response = self.create(prompt, user,  stream=True)
+        response = self.create(prompt, user=user, stream=True)
 
         return response
     
-    def generate_text(self, prompt, user="user"):
-        response = self.create(prompt, user)
+    def generate_text(self, prompt, related_memories, user="user"):
+        response = self.create(prompt, user=user, related_memories=related_memories)
 
         contains_intent = "[INTENT]" in response.choices[0].message.content
         return (response.choices[0].message.content, contains_intent)
+    
+    def check_create_memory(self, prompt):
+        """
+        Potentially create a memory based on the prompt.
+        Returns True if a memory was created, False otherwise.
+        """
+        system = "Determine if the following sentence is a fact/preference or not. Return only either 'yes' or 'no' or else I will be fired."
+        
+        answer = ""
+        while answer != "yes" and answer != "no":
+            response = self.create(prompt=prompt, assistant="", system=system, max_completion_tokens=3)
+            answer = response.choices[0].message.content.lower().strip()
+        return answer == "yes"

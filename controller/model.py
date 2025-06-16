@@ -19,8 +19,11 @@ class ModelObject:
         
         self.model = OpenAIModel(model, self.api_key, self.endpoint)
 
-    def generate_text(self, prompt, user="user") -> tuple[str, bool]:
-        return self.model.generate_text(prompt, user)
+    def generate_text(self, prompt, related_memories, user="user") -> tuple[str, bool]:
+        return self.model.generate_text(prompt, related_memories, user)
+
+    def check_create_memory(self, prompt) -> tuple[str, bool]:
+        return self.model.check_create_memory(prompt)
     
     def generate_stream_text(self, prompt, user="user") -> str:
         return self.model.generate_stream_text(prompt, user)

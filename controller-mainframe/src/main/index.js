@@ -17,7 +17,8 @@ function createWindow() {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
-    }
+    },
+    icon: __dirname + '/../../resources/icon.png'
   })
 
   mainWindow.on('ready-to-show', () => {
