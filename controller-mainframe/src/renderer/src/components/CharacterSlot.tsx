@@ -3,29 +3,30 @@ import { FaTrash } from "react-icons/fa";
 
 const CharacterSlot = ({ key, character, setCharacter, saveEdits }) => {
     const deleteCharacter = async (id) => {
-        window.api.log("Attempting to delete character with ID: " + id);
-        window.api.openDialog("showMessageBox", {
+        window.api.println('Attempting to delete character with ID: ' + id)
+        window.api
+          .openDialog('showMessageBox', {
             type: 'warning',
             title: 'Delete Character',
             message: 'Are you sure you want to delete this character?',
             buttons: ['Yes', 'No'],
             defaultId: 1,
             cancelId: 1
-        }).then(async (result) => {
-            window.api.log(`Deleting character with ID: ${id}`);
+          })
+          .then(async (result) => {
+            window.api.println(`Deleting character with ID: ${id}`)
             if (result === 0) {
-                await window.api.deleteCharacter(id);
+              await window.api.deleteCharacter(id)
             }
-        }
-        ).catch((error) => {
-            console.error("Error deleting character:", error);
-            window.api.openDialog("showMessageBox", {
-                type: 'error',
-                title: 'Error',
-                message: 'An error occurred while deleting the character.'
-            });
-        }
-        );
+          })
+          .catch((error) => {
+            console.error('Error deleting character:', error)
+            window.api.openDialog('showMessageBox', {
+              type: 'error',
+              title: 'Error',
+              message: 'An error occurred while deleting the character.'
+            })
+          })
     }
     
     return (

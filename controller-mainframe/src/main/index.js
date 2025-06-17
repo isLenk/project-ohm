@@ -3,7 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { modules } from './api.js'
-import { charactersDB } from './db.js'
+import { charactersDB, logsDB, addLog } from './db.js'
 import { dialog } from 'electron/main'
 
 function createWindow() {
@@ -111,8 +111,29 @@ app.whenReady().then(() => {
     return dialog[method](params)
   })
 
-  ipcMain.handle('log', (event, message) => {
+  ipcMain.handle('println', (event, message) => {
     console.log(message)
+    logsDB.insert({ message, timestamp: new Date() })
+  })
+
+  ipcMain.handle('add-log', (event, log_type, message) => {
+    addLog(log_type, message)
+  })
+
+  ipcMain.handle('get-logs', async (event, count = 20) => {
+    return new Promise((resolve, reject) => {
+      logsDB
+        .find({})
+        .sort({ timestamp: -1 })
+        .limit(count)
+        .exec((err, docs) => {
+          if (err) {
+            reject(err)
+          } else {
+            resolve(docs)
+          }
+        })
+    })
   })
 
   createWindow()

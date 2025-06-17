@@ -4,10 +4,8 @@ const Modules = () => {
 
   useEffect(() => {
     const fetchModules = async () => {
-      console.log('Fetching modules...')
-      const response = await window.api.getModules();
-      console.log('Modules:', response)
-      setModules({modules: response})
+      const response = await window.api.getModules()
+      setModules({ modules: response })
     }
 
     fetchModules()

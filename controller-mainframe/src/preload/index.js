@@ -6,11 +6,13 @@ const api = {
   getCharacters: () => ipcRenderer.invoke('get-characters'),
   addCharacter: (character) => ipcRenderer.invoke('add-character', character),
   updateCharacter: (character) => ipcRenderer.invoke('update-character', character),
-  deleteCharacter : (characterId) => ipcRenderer.invoke('delete-character', characterId),
+  deleteCharacter: (characterId) => ipcRenderer.invoke('delete-character', characterId),
   openDialog: (method, params) => {
     return ipcRenderer.invoke('dialog', method, params)
   },
-  log: (message) => ipcRenderer.send('log', message)
+  println: (message) => ipcRenderer.send('println', message),
+  addLog: (log_type, message) => ipcRenderer.invoke('println', log_type, message),
+  getLogs: async (count) => await ipcRenderer.invoke('get-logs', count)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

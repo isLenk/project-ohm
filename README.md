@@ -46,7 +46,13 @@ Running on the UGREEN NASync DXP4800
 Additional Packages:
 - ffmpeg
 
+---
+Dependencies:
 
+- https://github.com/OpenBMB/MiniCPM-o
+- https://huggingface.co/cognitivecomputations/dolphin-2.9-llama3-8b
+- https://github.com/KoljaB/RealtimeTTS
+- https://github.com/KoljaB/RealtimeSTT
 ---
 
 

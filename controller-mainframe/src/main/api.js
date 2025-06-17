@@ -1,9 +1,9 @@
 import express from 'express'
-import fetch from 'node-fetch'
 import { QdrantClient } from '@qdrant/js-client-rest'
+import { addLog } from './db.js'
+import axios from 'axios'
 
 const api = express()
-
 api.use(express.json())
 
 export const modules = {}
@@ -28,6 +28,7 @@ api.post('/api/modules', (req, res) => {
     description,
     required
   }
+  addLog('info', `New Module - ${name} (req=${required})`)
   res.status(201).json({ message: 'Module added successfully' })
 })
 
@@ -75,16 +76,19 @@ const endpoint = 'http://localhost:5000/v1/chat/completions'
 const client = new QdrantClient({ host: '127.0.0.1', port: 6333 })
 
 async function openai_fetch(body) {
-  const response = await fetch(endpoint, {
-    method: 'POST',
+  const response = await axios.post(endpoint, body, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${bearer}`
-    },
-    body: JSON.stringify(body)
+    }
   })
-  const data = await response.json()
-  return data.choices[0].message.content
+  if (response.status !== 200) {
+    throw new Error(`Error: ${response.status} - ${response.statusText}`)
+  }
+  if (!response.data || !response.data.choices || response.data.choices.length === 0) {
+    throw new Error('No choices found in response')
+  }
+  return response.data.choices[0].message.content
 }
 
 async function llm_call_get_memory_importance(input) {
@@ -234,9 +238,9 @@ api.post('/api/:character/memories', async (req, res) => {
   }
 
   if (call_response.toLowerCase() === 'yes') {
-    console.log(`Creating memory for character ${character} with input: ${input}`)
     // Here you would typically create a memory in a database or in-memory store
     await qdrant_create_memory(character, input, encoding, vectorsize)
+    addLog('info', `Memory created for character ${character}: ${input}`)
   }
 
   // Here you would typically fetch the memory from a database or in-memory store
