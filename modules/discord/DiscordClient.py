@@ -20,6 +20,8 @@ class DiscordClient(discord.Client):
 
     @staticmethod
     def initialize(model: ModelObject, testing_channel=testing_channel):
+        """Called by main.py to initialize the Discord client
+        """
         intents = discord.Intents.all()
         intents.message_content = True
         

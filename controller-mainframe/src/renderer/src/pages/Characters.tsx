@@ -2,6 +2,7 @@ import React from 'react'
 import CharacterSlot from '../components/CharacterSlot'
 import { IoMdAdd } from 'react-icons/io'
 import { v4 as uuidv4 } from 'uuid'
+import WIPOverlay from '../components/WIPOverlay'
 
 const Characters = () => {
   const [characters, setCharacters] = React.useState([])
@@ -38,6 +39,7 @@ const Characters = () => {
 
   return (
     <>
+      <WIPOverlay />
       <div className="flex items-center justify-between">
         <h1 className="text-xl text-white uppercase">Characters</h1>
 

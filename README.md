@@ -1,5 +1,8 @@
+<!-- Image -->
+![Logo](Documentation/Banners/OhmBanner.png)
+
 ### Virtual Assistant
-Project heavily inspired by Vedals Neuro.
+Project heavily inspired by Vedals Neuro and DougDoug's bots.
 
 Virtual Assistant is a passion project that can combines Text-To-Speech, Speech-To-Text, and Generative AI to produce human-like AI chatbots.
 

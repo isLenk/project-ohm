@@ -14,7 +14,7 @@ import Logo from '../assets/icon.svg?react'
 const Header = () => {
   const { pathname } = useLocation()
   return (
-    <div className="flex justify-between items-center">
+    <div className="top-0 sticky z-100 flex justify-between items-center">
       <Link to="/" className="flex items-center text-white gap-4">
         <Logo className="w-6 h-6 mr-2" />
         <h1 className="text-2xl uppercase  tracking-widest font-semibold text-gray-300">

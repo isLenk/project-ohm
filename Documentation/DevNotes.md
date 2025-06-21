@@ -5,3 +5,7 @@ Contained in this file is all of the troubles and start of tech debt that I've c
 - Due to time constraints, I've fixed character in `/api/:character/memories` to be Ohm. In other words, all characters share the same set of memories.
 - For two reasons, namely time and efficiency, memory retrieval/generation is done in two parts. The python end (which I'd already implemented LLM handling in) will first send a memory retrieval request, then 
 - Due to semantic search 
+
+### June 16 2025
+- Switched to Axios since node-fetch and electron-fetch were being unreasonably difficult to use without altering package.json to use ES6 (breaking loading files like preload)
+- 

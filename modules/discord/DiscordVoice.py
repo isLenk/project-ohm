@@ -1,5 +1,4 @@
 from discord.ext import voice_recv
-from modules.stt.stt_module import STTModule
 from modules.tts.tts_module import TTSModule
 import numpy as np
 import discord
@@ -8,10 +7,9 @@ import utils.AudioFix as AudioFix
 import websockets
 import time
 from modules.discord.utils.RTTSSink import CustomSpeechRecognitionSink
-
-# DISCORD_SAMPLE_RATE = 48000
-DISCORD_SAMPLE_RATE = 44100
 import logging
+
+DISCORD_SAMPLE_RATE = 44100
 logger = logging.getLogger(__name__)
 import wave
 import modules.discord.utils.DiscordVoiceUtil as DC_Util
@@ -34,8 +32,8 @@ class DiscordVoice:
         self.tts = TTSModule()
         self.text_queue = asyncio.Queue()
         self.audio_out_queue = asyncio.Queue()
+        
         self.tts_module = TTSModule()
-        self.stt_module = STTModule()
     
 
     async def _poll_for_more_text(self, pause_max, participants):
@@ -122,6 +120,7 @@ class DiscordVoice:
                 
             while self.vc.is_playing() or self.vc.is_paused():
                 await asyncio.sleep(0.1)
+                
             self.is_playing = True
             formatted = discord.FFmpegPCMAudio(audio_file, **ffmpeg_options, pipe=True)
             self.vc.play(formatted)
