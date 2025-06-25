@@ -139,7 +139,8 @@ class DiscordVoice:
         return self.vc
 
     async def leave_channel(self, message) -> None:
-        """Leave the voice channel"""
+        """Clean up the workers andd leave the voice channel
+        """
         if message.guild.voice_client:
             await message.guild.voice_client.disconnect()
         try:
@@ -153,8 +154,7 @@ class DiscordVoice:
     def got_text(self, user, text):
         """Callback for when text is received from the listener"""
         # If text is empty, return
-        if text.strip() == "":
-            return
+        if text.strip() == "": return
         
         if self.processing_response:
             print("PROCESSING - Skipped")
@@ -163,14 +163,12 @@ class DiscordVoice:
         print(text, end=" | ")
         self.text_queue.put_nowait((user, text))
 
-    
     async def listen(self):
         """Listen to the voice channel and start the listener workers"""
         # Create a listener worker
         self.listener_worker = self.discord_client.add_task(self.listen_worker)
         self.output_worker = self.discord_client.add_task(self.output_worker)
         
-        # self.vc.listen(voice_recv.extras.SpeechRecognitionSink(default_recognizer="whisper", text_cb=self.got_text))
         self.vc.listen(CustomSpeechRecognitionSink(recognizer="rtts", text_cb=self.got_text))
 
     async def on_text(self, text):
@@ -190,13 +188,16 @@ class DiscordVoice:
         author = Author("user")
         message = Message(str(text), author)
 
-        text_stream = self.discord_client.make_stream_response(message)
-
-        websocket = await websockets.connect("ws://localhost:8000/api/v1/tts/ws")
-
         async def fn_push(buf): 
             print(".", end="")
             return await DC_Util.push_buffer_to_queue(buf, self.audio_out_queue)
 
-        await self.tts_module.ws_thread_manager(websocket, text_stream, fn_push)
+        text_stream = self.discord_client.make_stream_response(message)
+        
+        try:
+            websocket = await websockets.connect("ws://localhost:8000/api/v1/tts/ws")
+            await self.tts_module.ws_thread_manager(websocket, text_stream, fn_push)
+        except Exception as e:
+            print(f"Error connecting to TTS WebSocket: {e}")
+
         print("-" *  20)

@@ -37,8 +37,7 @@ class DiscordClient(discord.Client):
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
-
-        vc = await self.join_testing_channel(vc=True)
+        await self.join_testing_channel(vc=True)
     
     def make_stream_response(self, message):
         """Generate a response for a stream"""
@@ -77,7 +76,6 @@ class DiscordClient(discord.Client):
                 return
             if message.author == self.user:
                 return
-            
         elif source == "voice":
             return
         

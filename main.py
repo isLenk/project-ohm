@@ -24,7 +24,6 @@ def run_discord_client(model: ModelObject, token: Union[str, None] = None):
     discord_client = DiscordClient.initialize(model)
     discord_client.run(token)
 
-
 def process_user_input(model: ModelObject, user_input: str):
     """
     Process user input and return a response.
@@ -41,6 +40,7 @@ def process_user_input(model: ModelObject, user_input: str):
     print(f"Response: {response[0]}")
 
 def main():
+
     token = os.getenv('DISCORD_TOKEN')
 
     target_model = constants.models["ohm"]
@@ -48,6 +48,8 @@ def main():
     # View all of the modules in the modules directory
     modules = send_modules_to_interface()
     
+    run_discord_client(model, token)
+    return
     # Initialize the models
     # Test model
     text_in = "";
