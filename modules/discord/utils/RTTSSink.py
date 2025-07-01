@@ -11,8 +11,7 @@ class CustomSpeechRecognitionSink(voice_recv.AudioSink):
         self.text_cb = text_cb
         self.recognizer_name = recognizer
 
-
-        self.recognizer = AudioToTextRecorder(use_microphone=True, spinner=False)
+        self.recognizer = AudioToTextRecorder(use_microphone=False, spinner=False)
 
     def wants_opus(self):
         return False
@@ -31,12 +30,9 @@ class CustomSpeechRecognitionSink(voice_recv.AudioSink):
         self.recognizer.feed_audio(data.pcm)
         self.recognizer.text(lambda text: self.text_cb(user, text))
         
-        
     def background_listener(self, user):
         process_cb = self.process_cb
         text_cb = self.text_cb
-
-
 
     # TODO: Implement.
     def cleanup(self) -> None:

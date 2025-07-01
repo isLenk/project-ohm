@@ -28,3 +28,17 @@ to which I just needed to downgrade the library.
 I was finally able to successfully feed the input and receive a response again. However, that was without deepspeed enabled. Toggling it on, I receive a version mismatch between the compiled deepspeed library and torch. Luckily, they specified which exact version I needed (`2.1 -> 2.5`). Thus a quick re-install later and now I am able to run with deepspeed toggled.
 
 https://github.com/deepspeedai/DeepSpeed/releases
+
+
+```
+py -3.11 venv tts_env
+pip install deepspeed-0.15.2+cuda121-cp311-cp311-win_amd64.whl
+pip uninstall torch torchvision torchaudio
+pip install torch==2.5.0 torchvision==0.20.0 torchaudio==2.5.0 --index-url https://download.pytorch.org/whl/cu121
+pip uninstall transformers
+pip install transformers==4.48.1
+```
+
+### June 29 2025
+- References https://github.com/SYSTRAN/faster-whisper/issues/1240 for basic venv install but not enough. Needed cuDNN 9.10.2 but that was straightforward (my disk space is dissapearing). Still not enough, having varying CUDA installs makes life a bit more painful.
+- Resolved fortunately through: [https://github.com/SYSTRAN/faster-whisper/issues/1230 ](https://github.com/SYSTRAN/faster-whisper/issues/1230#issuecomment-2628614311). Running 11.8.

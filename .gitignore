@@ -7,4 +7,5 @@
 /playground
 models
 ckernel
-/prototypes/TTS/tts_env
+/tts_api/tts_env
+/tts_api/tts_api

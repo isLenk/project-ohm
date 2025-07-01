@@ -22,7 +22,7 @@ class TTSEngine:
         self.unload_engine()
         self.audio_queue = Queue()
         self.chunks_received = 0
-        self.engine = CoquiEngine(model_name=model_name, voice=voice, *args, **kwargs)
+        self.engine = CoquiEngine(use_deepspeed=True, model_name=model_name, voice=voice, *args, **kwargs)
         self.engine_stream = TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop)
         self.pending_feed = Queue() 
 

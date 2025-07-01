@@ -5,7 +5,7 @@ import sys
 from dependencies import cprint, log
 from engine import engine
 import uvicorn
-
+import torch
 #  https://github.com/KoljaB/RealtimeTTS/tree/master/example_fast_api
 
 @asynccontextmanager
@@ -32,6 +32,16 @@ from routers.v1.tts.engine_route import router as v1_tts_router
 app.include_router(v1_tts_router, prefix="/api/v1/tts", tags=["TTS Engine"])
 app.include_router(v1_input_router, prefix="/api/v1/tts", tags=["TTS Input"])
 
+def check_cuda():
+    """Simply display whether CUDA is available and print device information.
+    CoquiEngine will automatically use CUDA if available."""
+
+    if torch.cuda.is_available():
+        print("CUDA available.")
+        print(f"Current: {torch.cuda.current_device()} - Count: {torch.cuda.device_count()}")
+        print(f"Device Name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
+    
+
 @app.get("/")
 async def get_homepage():
     return {"Hello."}
@@ -56,6 +66,7 @@ def safe_exit():
     sys.exit()
 
 if __name__ == "__main__":
+    check_cuda()
     signal.signal(signal.SIGINT, safe_exit)
     # app.run(port=8000)
     uvicorn.run("main:app", reload=True)

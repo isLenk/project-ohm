@@ -22,12 +22,15 @@ class DiscordClient(discord.Client):
     def initialize(model: ModelObject, testing_channel=testing_channel):
         """Called by main.py to initialize the Discord client
         """
+
+
+        # Establish permissions for the bot
         intents = discord.Intents.all()
         intents.message_content = True
         
         client = DiscordClient(intents=intents)
-        client.testing_channel = testing_channel
 
+        client.testing_channel = testing_channel
         client.model = model
         client.voice = DiscordVoice(client, client)
 
