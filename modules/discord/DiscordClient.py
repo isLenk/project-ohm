@@ -5,48 +5,42 @@
 import discord
 from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
-import asyncio
-import threading
-import numpy as np
-import struct
-import wave
-import pyaudio
-import io
-import torchaudio
 testing_channel = 1335351030308802630
 voice_channel = 1335374964445941812
-
 import utils.AudioFix as AudioFix
 class DiscordClient(discord.Client):
     possible_intents = ["join", "leave"]
     model: ModelObject
     logging_channel: int
     voice: DiscordVoice
-
+    
     def add_task(self, func, *args, **kwargs):
         """Add a task to the event loop"""
         self.loop.create_task(func(*args, **kwargs))
 
     @staticmethod
     def initialize(model: ModelObject, testing_channel=testing_channel):
+        """Called by main.py to initialize the Discord client
+        """
+
+
+        # Establish permissions for the bot
         intents = discord.Intents.all()
         intents.message_content = True
         
         client = DiscordClient(intents=intents)
-        client.testing_channel = testing_channel
 
+        client.testing_channel = testing_channel
         client.model = model
         client.voice = DiscordVoice(client, client)
 
         client.logging_channel = testing_channel
 
         return client
-     
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
-
-        vc = await self.join_testing_channel(vc=True)
+        await self.join_testing_channel(vc=True)
     
     def make_stream_response(self, message):
         """Generate a response for a stream"""
@@ -85,16 +79,12 @@ class DiscordClient(discord.Client):
                 return
             if message.author == self.user:
                 return
-            
         elif source == "voice":
             return
         
         response, contains_intent = self.make_response(message)
 
         await message.reply(response)
-        return
-        if contains_intent:
-            self.parse_intent(message, response, source)
         
     async def parse_intent(self, message, response, source):
         intent = self.model.get_intent(response, self.possible_intents)

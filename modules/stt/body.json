@@ -1,0 +1,5 @@
+{
+    "name": "stt",
+    "description": "A module to manage speech-to-text interactions and provide speech-to-text-related functionalities.",
+    "required": false
+}

@@ -1,0 +1,5 @@
+{
+    "name": "discord",
+    "description": "A module to manage Discord interactions and provide Discord-related functionalities.",
+    "required": true
+}

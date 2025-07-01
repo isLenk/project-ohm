@@ -1,12 +1,21 @@
 import io
-
+import wave
 """Utility functions for Discord voice"""
 
 
 async def push_buffer_to_queue(buffer, queue):
     """Push a buffer to a queue"""
     buffer.seek(0)
-    await queue.put(io.BytesIO(buffer.getvalue()))
+    # await queue.put(io.BytesIO(buffer.getvalue()))
+    temp_buffer = io.BytesIO()
+    with wave.open(temp_buffer, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(24000)
+        f.writeframes(buffer.getvalue())
+    temp_buffer.seek(0)
+    await queue.put(temp_buffer)
+    
     buffer = io.BytesIO()
 
     return buffer

@@ -1,5 +1,8 @@
+<!-- Image -->
+![Logo](Documentation/Banners/OhmBanner.png)
+
 ### Virtual Assistant
-Project heavily inspired by Vedals Neuro.
+Project heavily inspired by Vedals Neuro and DougDoug's bots.
 
 Virtual Assistant is a passion project that can combines Text-To-Speech, Speech-To-Text, and Generative AI to produce human-like AI chatbots.
 
@@ -14,6 +17,14 @@ The project uses three models.
 - Voice-To-Text: FasterWhisper / Whisper on Discord
 - Modularization: Toggleable abilities
 - Vision: miniCPM
+
+
+---
+### How to Launch
+1. Execute `run_tabby.cmd`
+2. Execute `tts_api.cmd`
+3. Wait for the two processes to be ready
+4. Execute `run_script.cmd` 
 
 ---
 # Machine Specs used:
@@ -37,3 +48,18 @@ Running on the UGREEN NASync DXP4800
 
 Additional Packages:
 - ffmpeg
+
+---
+Dependencies:
+
+- https://github.com/OpenBMB/MiniCPM-o
+- https://huggingface.co/cognitivecomputations/dolphin-2.9-llama3-8b
+- https://github.com/KoljaB/RealtimeTTS
+- https://github.com/KoljaB/RealtimeSTT
+---
+
+
+# Modules
+
+### pykernel
+API responsible for rebooting module services when requested.

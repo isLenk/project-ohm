@@ -6,3 +6,6 @@
 /launch.cmd
 /playground
 models
+ckernel
+/tts_api/tts_env
+/tts_api/tts_api

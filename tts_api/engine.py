@@ -6,7 +6,7 @@ from RealtimeTTS import TextToAudioStream, CoquiEngine
 import threading
 from typing import Union
 from queue import Queue
-from dependencies import cprint, create_wave_header_for_engine, log
+from dependencies import cprint, create_wave_header_for_engine, log, chunk_queue, text_queue
 
 class TTSEngine:
     stream: str
@@ -22,7 +22,7 @@ class TTSEngine:
         self.unload_engine()
         self.audio_queue = Queue()
         self.chunks_received = 0
-        self.engine = CoquiEngine(model_name=model_name, voice=voice, *args, **kwargs)
+        self.engine = CoquiEngine(use_deepspeed=True, model_name=model_name, voice=voice, *args, **kwargs)
         self.engine_stream = TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop)
         self.pending_feed = Queue() 
 
@@ -55,7 +55,7 @@ class TTSEngine:
         """Callback for handling audio chunks"""
         self.chunks_received += 1
         try:
-            self.audio_queue.put(chunk)
+            chunk_queue.put(chunk)
         except Exception as e:
             cprint("red", e)
             
@@ -84,86 +84,30 @@ class TTSEngine:
             yield payload
 
         log("Generator finished.")
-
-    # ? UNUSED ATM
-    @_ensure_engine
-    def feed_stream(self, url):
-        """Designed for feeding a text streaming generation API"""
-        log("Retrieved stream", url)
-        text_stream = TTSEngine._openai_generator(url)
-        self.engine_stream.feed(text_stream)
-        self.engine_stream.play()
-        # for chunk in TTSEngine._openai_generator(url):
-        #     print(chunk)
-        #     self.engine_stream.feed(chunk)
-        #     self.engine_stream.play()
-
-    @_ensure_engine
-    def push_to_feed_queue(self, text: str):
-        """Push text to the engine feed queue"""
-        self.pending_feed.put(text)
-    
-    @_ensure_engine
-    def feed_input(self, input, muted=True):
-        """Play input text directly"""
-        # If stream is playing, add to queue
-        if self.engine_stream.is_playing():
-            log("Adding to queue")
-            self.pending_feed.put(input)
-            return
-        
-        print(f"Feeding input: {input}")
-        self.audio_queue = Queue()
-        self.engine_stream.feed(input)
-        self.engine_stream.play(muted=muted,
-                                on_audio_chunk=self._on_audio_chunk)
-        # self.audio_queue.put(None)
-        # self.audio_queue.put_nowait(None)
-
+ 
     @_ensure_engine
     def on_audio_stream_stop(self):
         """Callback for when the audio stream stops"""
         print("Audio stream stopped.")
         # Check if there are pending feeds
-        if not self.pending_feed.empty():
-            print("Pending feed detected.")
-            self.feed_input(self.pending_feed.get())
-            return
-        else:
-            print("No pending feed.")
-
-        self.audio_queue.put(None)
-
+        chunk_queue.put(200)
+        self.pending_feed = Queue()
+        
     @_ensure_engine
     def finish_input(self):
         """Finish the input stream"""
         self.audio_queue.put(None)
         self.pending_feed = Queue()
 
+    def handle_ws(self):
+        while True:
+            var = text_queue.get(block=True)
+            if var == 200: break
+            yield var
+
     @_ensure_engine
-    def stop_stream(self):
-        """Cancels the current stream"""
-        pass
-
-    def audio_stream(self):
-        """Generator for audio chunks"""
-        pass
-
-    def audio_chunk_generator(self, send_wave_headers=True):
-        first_chunk = False
-        try:
-            while True:
-                chunk = self.audio_queue.get()
-                if chunk is None:
-                    print("Terminating stream")
-                    break
-                if not first_chunk:
-                    if send_wave_headers:
-                        print("Sending wave header")
-                        yield create_wave_header_for_engine(self.engine)
-                    first_chunk = True
-                yield chunk
-        except Exception as e:
-            print(f"Error during streaming: {str(e)}")
+    def feed_from_text_queue(self):
+        """Feed from the text queue to the engine"""
+        self.engine_stream.feed(self.handle_ws()).play_async(muted=True, on_audio_chunk=self._on_audio_chunk)
 
 engine = TTSEngine()
