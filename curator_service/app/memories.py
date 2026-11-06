@@ -227,14 +227,11 @@ def extract(project, job, conversation_id: Optional[int] = None) -> dict:
 
 
 # ── style traits ────────────────────────────────────────────────────────────
-def _traits(conn, author_id: str, name: str) -> list[str]:
-    blocks = conn.execute("SELECT id FROM blocks WHERE author_id = ?", (author_id,)).fetchall()
-    if len(blocks) < STYLE_MIN_BLOCKS:
-        return []
-    msgs = conn.execute(
-        "SELECT content_text, mentions, block_id FROM messages WHERE author_id = ? AND excluded = 0", (author_id,)
-    ).fetchall()
-    if not msgs:
+WORD = re.compile(r"[a-z']+")
+
+
+def _traits(name: str, block_count: int, msgs: list, mine: Counter, everyone: Counter, everyone_total: int) -> list[str]:
+    if block_count < STYLE_MIN_BLOCKS or not msgs:
         return []
     traits = []
     starts = [m["content_text"].lstrip()[:1] for m in msgs if m["content_text"].strip()[:1].isalpha()]
@@ -252,19 +249,29 @@ def _traits(conn, author_id: str, name: str) -> list[str]:
     pings = sum(1 for m in msgs if len(json.loads(m["mentions"] or "[]")) >= 3) / len(msgs)
     if pings >= 0.05:
         traits.append(f"{name} pings the whole group to organize things.")
-    mine = Counter(w for m in msgs for w in re.findall(r"[a-z']+", m["content_text"].lower()))
-    others = Counter(w for (t,) in conn.execute(
-        "SELECT content_text FROM messages WHERE excluded = 0 AND author_id != ?", (author_id,)
-    ) for w in re.findall(r"[a-z']+", t.lower()))
-    mine_total, others_total = sum(mine.values()) or 1, sum(others.values()) or 1
+    mine_total = sum(mine.values())
+    others_total = (everyone_total - mine_total) or 1
+    mine_total = mine_total or 1
     slang = [w for w, n in mine.most_common(200)
-             if n >= 3 and len(w) <= 6 and n / mine_total >= 5 * max(others[w], 1) / others_total]
+             if n >= 3 and len(w) <= 6 and n / mine_total >= 5 * max(everyone[w] - n, 1) / others_total]
     if slang:
         traits.append(f"{name} often says " + ", ".join(f"“{w}”" for w in slang[:4]) + ".")
     return traits
 
 
 def refresh_styles(conn) -> int:
+    """Re-derive every person's style traits. Reads and tokenizes each message once:
+    "everyone else's" word counts are everyone's minus this person's."""
+    block_counts = dict(conn.execute("SELECT author_id, COUNT(*) FROM blocks GROUP BY author_id").fetchall())
+    by_author: dict[str, list] = {}
+    words: dict[str, Counter] = {}
+    for m in conn.execute("SELECT author_id, content_text, mentions, block_id FROM messages WHERE excluded = 0"):
+        by_author.setdefault(m["author_id"], []).append(m)
+        words.setdefault(m["author_id"], Counter()).update(WORD.findall(m["content_text"].lower()))
+    everyone: Counter = Counter()
+    for c in words.values():
+        everyone.update(c)
+    everyone_total = sum(everyone.values())
     count = 0
     for a in conn.execute("SELECT id, name, display_name FROM authors WHERE is_bot = 0").fetchall():
         name = a["display_name"] or a["name"]
@@ -272,7 +279,9 @@ def refresh_styles(conn) -> int:
         kept = {r[0] for r in conn.execute(
             "SELECT text FROM memories WHERE author_id = ? AND category = 'style' AND status != 'new'", (a["id"],)
         )}
-        for t in _traits(conn, a["id"], name):
+        traits = _traits(name, block_counts.get(a["id"], 0), by_author.get(a["id"], []),
+                         words.get(a["id"], Counter()), everyone, everyone_total)
+        for t in traits:
             if t not in kept:
                 add(conn, a["id"], "style", t)
                 count += 1
