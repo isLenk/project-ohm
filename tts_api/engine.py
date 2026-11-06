@@ -2,7 +2,8 @@
 from fastapi import Body
 from fastapi import BackgroundTasks
 from fastapi.responses import StreamingResponse
-from RealtimeTTS import TextToAudioStream, CoquiEngine
+from RealtimeTTS import TextToAudioStream
+from streaming_chatterbox import StreamingChatterboxEngine
 import threading
 from typing import Union
 from queue import Queue
@@ -15,14 +16,16 @@ class TTSEngine:
     chunks_received: int
     pending_feed: Queue
 
-    def load_engine(self, model_name="xtts_v2", voice="voices/lance.wav", overwrite=False, *args, **kwargs):
-        if hasattr(self, "engine") and overwrite == False and self.engine.model_name == model_name: 
+    # ? voice=None uses Chatterbox Turbo's built-in (female) voice. Pass a .wav path (5s+) to clone one instead, e.g. "../voices/lance.wav"
+    def load_engine(self, model_name="chatterbox", voice=None, overwrite=False, *args, **kwargs):
+        if hasattr(self, "engine") and overwrite == False and self.engine.engine_name == model_name: 
             cprint("red", "Model already loaded.")
             return "Model already loaded."
         self.unload_engine()
         self.audio_queue = Queue()
         self.chunks_received = 0
-        self.engine = CoquiEngine(use_deepspeed=True, model_name=model_name, voice=voice, *args, **kwargs)
+        # ? Streams audio mid-sentence (~0.3s to first audio instead of waiting for the whole sentence)
+        self.engine = StreamingChatterboxEngine(voice=voice, *args, **kwargs)
         self.engine_stream = TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop)
         self.pending_feed = Queue() 
 
@@ -104,6 +107,27 @@ class TTSEngine:
             var = text_queue.get(block=True)
             if var == 200: break
             yield var
+
+    @_ensure_engine
+    def reset_stream(self):
+        """Stop any synthesis still running and drop leftover text/audio.
+        Without this, a response the client hung up on (interrupt) keeps synthesizing into the
+        shared queues and its audio and end marker leak into the next connection."""
+        stream = self.engine_stream
+        if stream.is_playing():
+            # ? Not using stream.stop(): it closes the audio stream from this thread while the play
+            # thread closes it too, which crashes the whole server. Ask the play thread to wind down instead.
+            for abort_event in list(stream.abort_events):
+                abort_event.set()
+            self.engine.stop()          # Drop the sentence currently being synthesized
+            stream.char_iter.stop()
+            text_queue.put(200)         # handle_ws may be blocked waiting for text
+            if stream.play_thread is not None:
+                stream.play_thread.join(timeout=15)
+            stream._create_iterators()  # Fresh text iterator for the next feed (same as stop() does)
+        for q in (text_queue, chunk_queue):
+            while not q.empty():
+                q.get_nowait()
 
     @_ensure_engine
     def feed_from_text_queue(self):
