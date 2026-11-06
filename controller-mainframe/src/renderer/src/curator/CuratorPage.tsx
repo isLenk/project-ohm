@@ -424,7 +424,7 @@ export default function CuratorPage() {
             <button
               key={cv.id}
               onClick={() => jumpTo(cv.first_message_id, view === 'memories' ? 'threads' : view)}
-              className={cx('flex w-full flex-col gap-2 px-5 py-3.5 text-left', c?.id === cv.id ? 'bg-raised shadow-[inset_2px_0_0_#f3f4f6]' : 'hover:bg-[#26272d]')}
+              className={cx('flex w-full flex-col gap-2 px-5 py-3.5 text-left [contain-intrinsic-size:auto_72px] [content-visibility:auto]', c?.id === cv.id ? 'bg-raised shadow-[inset_2px_0_0_#f3f4f6]' : 'hover:bg-[#26272d]')}
             >
               <span className="flex w-full items-center gap-2">
                 <span className="flex-1 text-sm font-semibold">{fmtRange(cv.first_ts, cv.last_ts)}</span>
