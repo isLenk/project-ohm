@@ -6,6 +6,7 @@ import { modules } from './api.js'
 import { logsDB, addLog } from './db.js'
 import { listCharacters, addCharacter, updateCharacter, deleteCharacter } from './characters.js'
 import { dialog } from 'electron/main'
+import { startCurator, stopCurator, curatorConfig } from './curator.js'
 
 function createWindow() {
   // Create the browser window.
@@ -75,6 +76,11 @@ app.whenReady().then(() => {
     console.log(message)
     logsDB.insert({ message, timestamp: new Date() })
   })
+
+  // Conversation Curator backend (curator_service/)
+  startCurator()
+  ipcMain.handle('curator-config', () => curatorConfig())
+  app.on('will-quit', stopCurator)
 
   ipcMain.handle('add-log', (event, log_type, message) => {
     addLog(log_type, message)

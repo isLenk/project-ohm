@@ -12,7 +12,8 @@ const api = {
   },
   println: (message) => ipcRenderer.send('println', message),
   addLog: (log_type, message) => ipcRenderer.invoke('println', log_type, message),
-  getLogs: async (count) => await ipcRenderer.invoke('get-logs', count)
+  getLogs: async (count) => await ipcRenderer.invoke('get-logs', count),
+  curatorConfig: () => ipcRenderer.invoke('curator-config')
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
