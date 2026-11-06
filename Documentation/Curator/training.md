@@ -136,10 +136,10 @@ Only one run at a time. The GPU is also used by llama-server and TTS, so before 
 ## 5. After training
 
 1. Save the PEFT adapter to `<app data>/adapters/<run_id>/peft/`.
-2. Convert it with llama.cpp:
+2. Convert it with llama.cpp. The script only needs the base model's config files, not its weights. Pass `--base <folder>` for a local folder, or `--base-model-id <repo id>` to read the config from the Hub:
 
    ```
-   python llama.cpp/convert_lora_to_gguf.py <peft dir> --base <hf_path> --outfile <app data>/adapters/<run_id>/adapter.gguf
+   python llama.cpp/convert_lora_to_gguf.py <peft dir> --base-model-id google/gemma-4-e4b-it --outtype f16 --outfile <app data>/adapters/<run_id>/adapter.gguf
    ```
 
 3. Insert an `adapters` row. It now appears under "LoRA adapters you've trained" in the dropdown.
@@ -147,4 +147,18 @@ Only one run at a time. The GPU is also used by llama-server and TTS, so before 
 
 ### Serving the adapter
 
-`llama-server` loads adapters at startup with `--lora <adapter.gguf>`. When the user picks an adapter in the dropdown (`PUT /models/active`), the controller has to restart llama-server with `--lora` added to the command in `executables/_run_llama.cmd`. Newer llama-server builds also support hot-swapping adapter scales through `/lora-adapters`. If ours does, prefer that over a restart.
+This was checked against the current llama.cpp server README.
+
+- Adapter files are loaded only at startup: `--lora a.gguf,b.gguf` (comma-separated, or repeat `--lora`).
+- Start with `--lora-init-without-apply` so every adapter loads with scale 0, which means no effect until chosen.
+- **Pick an adapter without restarting.** Use either:
+  - `GET /lora-adapters` lists the loaded adapters with their `id`.
+  - `POST /lora-adapters` with `[{"id": 0, "scale": 1.0}]` sets the global scale.
+  - Or per request: send `"lora": [{"id": 0, "scale": 1.0}]` in the completion body. Requests with different LoRA settings are not batched together.
+
+So `PUT /models/active` works like this:
+
+1. If the chosen adapter file is already loaded, POST the new scales to `/lora-adapters`. No restart is needed.
+2. If it is a newly trained file, restart llama-server once with every registered adapter for that base on `--lora`, plus `--lora-init-without-apply`. Then do step 1.
+
+Update `executables/_run_llama.cmd`, or better, have the controller build the command from the registry.
