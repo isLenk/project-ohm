@@ -6,7 +6,7 @@ PROJECT_MIGRATIONS whenever the project schema changes.
 
 APPLICATION_ID = 0x4F484D31  # 'OHM1'
 
-PROJECT_VERSION = 1
+PROJECT_VERSION = 2
 
 PROJECT_SCHEMA = """
 CREATE TABLE meta (
@@ -70,7 +70,7 @@ CREATE TABLE links (
   unit_id       TEXT NOT NULL,
   parent_id     TEXT REFERENCES messages(id),
   status        TEXT NOT NULL CHECK (status IN ('accepted','suggested','root')),
-  origin        TEXT NOT NULL CHECK (origin IN ('discord','suggested','manual')),
+  origin        TEXT NOT NULL CHECK (origin IN ('discord','suggested','manual','model')),
   score         REAL,
   updated_at    INTEGER NOT NULL,
   UNIQUE (unit_kind, unit_id)
@@ -79,7 +79,13 @@ CREATE INDEX links_parent ON links (parent_id);
 
 CREATE TABLE rejected_suggestions (
   unit_kind TEXT NOT NULL, unit_id TEXT NOT NULL, parent_id TEXT NOT NULL,
+  origin    TEXT,
   PRIMARY KEY (unit_kind, unit_id, parent_id)
+);
+
+CREATE TABLE model_link_scans (
+  block_id   INTEGER PRIMARY KEY REFERENCES blocks(id),
+  scanned_at INTEGER NOT NULL
 );
 
 CREATE TABLE conversations (
@@ -162,7 +168,34 @@ CREATE TABLE message_similar (
 """
 
 # Step n upgrades a file from user_version n to n + 1.
-PROJECT_MIGRATIONS: list[str] = []
+PROJECT_MIGRATIONS: list[str] = [
+    # 1 -> 2: links can come from the model; rejections remember who suggested them; model scan log.
+    """
+    BEGIN;
+    CREATE TABLE links_v2 (
+      id            INTEGER PRIMARY KEY,
+      unit_kind     TEXT NOT NULL CHECK (unit_kind IN ('block','message')),
+      unit_id       TEXT NOT NULL,
+      parent_id     TEXT REFERENCES messages(id),
+      status        TEXT NOT NULL CHECK (status IN ('accepted','suggested','root')),
+      origin        TEXT NOT NULL CHECK (origin IN ('discord','suggested','manual','model')),
+      score         REAL,
+      updated_at    INTEGER NOT NULL,
+      UNIQUE (unit_kind, unit_id)
+    );
+    INSERT INTO links_v2 (id, unit_kind, unit_id, parent_id, status, origin, score, updated_at)
+      SELECT id, unit_kind, unit_id, parent_id, status, origin, score, updated_at FROM links;
+    DROP TABLE links;
+    ALTER TABLE links_v2 RENAME TO links;
+    CREATE INDEX links_parent ON links (parent_id);
+    ALTER TABLE rejected_suggestions ADD COLUMN origin TEXT;
+    CREATE TABLE model_link_scans (
+      block_id   INTEGER PRIMARY KEY REFERENCES blocks(id),
+      scanned_at INTEGER NOT NULL
+    );
+    COMMIT;
+    """,
+]
 
 DEFAULT_SETTINGS = {
     "split_gap_ms": 30 * 60 * 1000,

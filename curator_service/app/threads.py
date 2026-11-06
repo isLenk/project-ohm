@@ -206,9 +206,17 @@ def delete(conn, kind: str, unit_id: str) -> dict:
     if not previous:
         raise not_found("Link")
     if previous["status"] == "suggested":
-        conn.execute("INSERT OR IGNORE INTO rejected_suggestions VALUES (?, ?, ?)", (kind, str(unit_id), previous["parent_id"]))
+        _remember_rejection(conn, kind, unit_id, previous)
     conn.execute("DELETE FROM links WHERE unit_kind = ? AND unit_id = ?", (kind, str(unit_id)))
     return _result(conn, kind, unit_id, previous)
+
+
+def _remember_rejection(conn, kind: str, unit_id: str, link: dict) -> None:
+    if link["parent_id"]:
+        conn.execute(
+            "INSERT OR IGNORE INTO rejected_suggestions (unit_kind, unit_id, parent_id, origin) VALUES (?, ?, ?, ?)",
+            (kind, str(unit_id), link["parent_id"], link["origin"]),
+        )
 
 
 def accept(conn, kind: str, unit_id: str) -> dict:
@@ -223,7 +231,7 @@ def reject(conn, kind: str, unit_id: str, settings: dict) -> dict:
     previous = link_row(conn, kind, unit_id)
     if not previous or previous["status"] != "suggested":
         raise ApiError(409, "not_suggested", "That link is not a suggestion.")
-    conn.execute("INSERT OR IGNORE INTO rejected_suggestions VALUES (?, ?, ?)", (kind, str(unit_id), previous["parent_id"]))
+    _remember_rejection(conn, kind, unit_id, previous)
     conn.execute("DELETE FROM links WHERE id = ?", (previous["id"],))
     if kind == "block":
         suggest_block(conn, int(unit_id), settings)
@@ -385,10 +393,18 @@ def suggest_all(conn, settings: dict, channel_id: Optional[str] = None) -> dict:
     return counts
 
 
-def suggester_stats(conn) -> dict:
-    accepted = conn.execute("SELECT COUNT(*) FROM links WHERE origin = 'suggested' AND status = 'accepted'").fetchone()[0]
-    pending = conn.execute("SELECT COUNT(*) FROM links WHERE status = 'suggested'").fetchone()[0]
-    rejected = conn.execute("SELECT COUNT(*) FROM rejected_suggestions").fetchone()[0]
+def _origin_stats(conn, origin: str) -> dict:
+    accepted = conn.execute("SELECT COUNT(*) FROM links WHERE origin = ? AND status = 'accepted'", (origin,)).fetchone()[0]
+    pending = conn.execute("SELECT COUNT(*) FROM links WHERE origin = ? AND status = 'suggested'", (origin,)).fetchone()[0]
+    # Rejections from before project v2 have no origin; they all came from the heuristic suggester.
+    rejected = conn.execute(
+        "SELECT COUNT(*) FROM rejected_suggestions WHERE COALESCE(origin, 'suggested') = ?", (origin,)
+    ).fetchone()[0]
     total = accepted + rejected
     return {"accepted": accepted, "rejected": rejected, "pending": pending,
             "precision": round(accepted / total, 3) if total else None}
+
+
+def suggester_stats(conn) -> dict:
+    """The heuristic suggester's numbers at the top level, the model's under "model"."""
+    return {**_origin_stats(conn, "suggested"), "model": _origin_stats(conn, "model")}

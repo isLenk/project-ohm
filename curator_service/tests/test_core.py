@@ -1,10 +1,12 @@
 import json
+import sqlite3
 
 import pytest
 
 from curator_service.app import conversations, export, feed, search, threads
 from curator_service.app.errors import ApiError
 from curator_service.app.project import Project
+from curator_service.tests.seed import seed
 
 
 def block_of(p, message_id):
@@ -210,3 +212,50 @@ def test_cap_is_feasible_with_two_people():
     out, removed = export._cap(examples, 0.3, "seed")
     counts = {a: sum(e["speaker_id"] == a for e in out) for a in "ab"}
     assert counts == {"a": 30, "b": 30} and removed == 40
+
+
+def test_v1_project_migrates(tmp_path):
+    path = tmp_path / "old.ohm"
+    p = Project.create(path, "Old")
+    seed(p)
+    with p.tx() as conn:
+        threads._write(conn, "block", block_of(p, "1009"), "1008", "suggested", "suggested", 0.7)
+        threads.reject(conn, "block", block_of(p, "1009"), p.settings())
+    p.save()
+    p.close()
+
+    # rewind the file to the v1 schema
+    raw = sqlite3.connect(path)
+    raw.executescript("""
+        CREATE TABLE links_v1 (
+          id INTEGER PRIMARY KEY,
+          unit_kind TEXT NOT NULL CHECK (unit_kind IN ('block','message')),
+          unit_id TEXT NOT NULL, parent_id TEXT REFERENCES messages(id),
+          status TEXT NOT NULL CHECK (status IN ('accepted','suggested','root')),
+          origin TEXT NOT NULL CHECK (origin IN ('discord','suggested','manual')),
+          score REAL, updated_at INTEGER NOT NULL, UNIQUE (unit_kind, unit_id));
+        INSERT INTO links_v1 SELECT * FROM links;
+        DROP TABLE links;
+        ALTER TABLE links_v1 RENAME TO links;
+        CREATE INDEX links_parent ON links (parent_id);
+        CREATE TABLE rejected_v1 (unit_kind TEXT NOT NULL, unit_id TEXT NOT NULL, parent_id TEXT NOT NULL,
+          PRIMARY KEY (unit_kind, unit_id, parent_id));
+        INSERT INTO rejected_v1 SELECT unit_kind, unit_id, parent_id FROM rejected_suggestions;
+        DROP TABLE rejected_suggestions;
+        ALTER TABLE rejected_v1 RENAME TO rejected_suggestions;
+        DROP TABLE model_link_scans;
+        PRAGMA user_version = 1;
+    """)
+    links_before = raw.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+    raw.close()
+
+    p = Project.open(path)
+    try:
+        assert p.scalar("PRAGMA user_version") == 2
+        assert p.scalar("SELECT COUNT(*) FROM links") == links_before
+        assert threads.suggester_stats(p.conn)["rejected"] == 1  # old rejections count as the heuristic's
+        with p.tx() as conn:
+            threads._write(conn, "block", block_of(p, "1012"), "1011", "suggested", "model", 0.4)
+        assert p.scalar("SELECT COUNT(*) FROM model_link_scans") == 0
+    finally:
+        p.close()

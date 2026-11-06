@@ -9,6 +9,7 @@ Two stores:
 - **Project file:**
   - `memories.embedding`
   - `memory_scans`, which records the blocks already read for memories
+  - `model_link_scans`, which records the blocks the model has already guessed a reply for
   - `message_similar`, which flags near-duplicates
 - **Registry:**
   - `base_models.fingerprint` replaces `sha256`. It is a hash of the size plus the first and last 64 MB, because hashing a whole 5 GB GGUF on click is too slow.
@@ -21,7 +22,7 @@ A `.ohm` file is a plain SQLite 3 database.
 
 ```sql
 PRAGMA application_id = 0x4F484D31;  -- 'OHM1', lets us reject random .sqlite files
-PRAGMA user_version   = 1;           -- schema version, bump on every migration
+PRAGMA user_version   = 2;           -- schema version, bump on every migration
 PRAGMA journal_mode   = WAL;
 PRAGMA foreign_keys   = ON;
 ```
@@ -106,8 +107,8 @@ CREATE TABLE links (
   unit_id       TEXT NOT NULL,          -- blocks.id as text, or messages.id
   parent_id     TEXT REFERENCES messages(id),  -- NULL only when status = 'root'
   status        TEXT NOT NULL CHECK (status IN ('accepted','suggested','root')),
-  origin        TEXT NOT NULL CHECK (origin IN ('discord','suggested','manual')),
-  score         REAL,                   -- suggestion confidence, NULL otherwise
+  origin        TEXT NOT NULL CHECK (origin IN ('discord','suggested','manual','model')),
+  score         REAL,                   -- suggestion confidence (heuristic score), NULL otherwise
   updated_at    INTEGER NOT NULL,
   UNIQUE (unit_kind, unit_id)
 );
@@ -115,6 +116,7 @@ CREATE INDEX links_parent ON links (parent_id);
 
 CREATE TABLE rejected_suggestions (     -- so the same guess is never offered twice
   unit_kind TEXT NOT NULL, unit_id TEXT NOT NULL, parent_id TEXT NOT NULL,
+  origin    TEXT,                       -- who suggested it; NULL for rejections from version 1
   PRIMARY KEY (unit_kind, unit_id, parent_id)
 );
 

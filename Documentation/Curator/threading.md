@@ -86,7 +86,7 @@ Optionally, a later version can ask the local LLM (`llama-server` on `:5000`) to
 
 ### Measuring it
 
-Every accepted link with `origin='suggested'` is a true positive. Every row in `rejected_suggestions` is a false positive. Expose both counts in `GET /stats/suggester` so the weights can be tuned against real curation.
+Every accepted link with `origin='suggested'` is a true positive. Every row in `rejected_suggestions` is a false positive. Expose both counts in `GET /stats/suggester` so the weights can be tuned against real curation. Rejections record the link's `origin`, so the same numbers for the model are under `"model"` in that response. Rejections from before project version 2 have no origin and count as the heuristic's.
 
 ## Approval
 
