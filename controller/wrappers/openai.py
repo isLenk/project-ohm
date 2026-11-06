@@ -87,8 +87,8 @@ class OpenAIModel:
             **params,
         )
 
-    def generate_stream_text(self, prompt, user="user", related_memories=None, history=None):
-        return self.create(prompt, related_memories=related_memories, history=history, stream=True)
+    def generate_stream_text(self, prompt, user="user", related_memories=None, history=None, **kwargs):
+        return self.create(prompt, related_memories=related_memories, history=history, stream=True, **kwargs)
 
     def generate_text(self, prompt, related_memories=None, user="user", history=None):
         response = self.create(prompt, related_memories=related_memories, history=history)

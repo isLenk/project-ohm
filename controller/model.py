@@ -25,8 +25,8 @@ class ModelObject:
     def extract_memory(self, speaker, text):
         return self.model.extract_memory(speaker, text)
     
-    def generate_stream_text(self, prompt, user="user", related_memories=None, history=None):
-        return self.model.generate_stream_text(prompt, user, related_memories, history=history)
+    def generate_stream_text(self, prompt, user="user", related_memories=None, history=None, **kwargs):
+        return self.model.generate_stream_text(prompt, user, related_memories, history=history, **kwargs)
     
     def get_intent(self, prompt, responses) -> str:
         return self.model.get_intent(prompt, responses)

@@ -11,6 +11,7 @@ from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
 from controller.memory import memory, HISTORY_LIMIT, HISTORY_MINUTES
 testing_channel = 1335351030308802630
+VOICE_MAX_TOKENS = 120  # ~20s of speech at most per voice reply
 voice_channel = 1335374964445941812
 import utils.AudioFix as AudioFix
 class DiscordClient(discord.Client):
@@ -199,8 +200,10 @@ class Turn:
 
     def prompt(self, text, memories=None):
         """Open the LLM stream (with the conversation so far as context)."""
+        # ? In voice, a hard cap so a "how do I..." question can't turn into a minute-long lecture
+        limit = {"max_tokens": VOICE_MAX_TOKENS} if self.source == "voice" else {}
         self._stream = self.client.model.generate_stream_text(
-            text, related_memories=memories, history=self.client.history(self.channel_id),
+            text, related_memories=memories, history=self.client.history(self.channel_id), **limit,
         )
         self._chunks = iter(self._stream)
 
