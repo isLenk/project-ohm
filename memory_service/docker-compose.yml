@@ -1,0 +1,39 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: va-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: assistant
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      # Runs only the first time, when ./data/postgres is empty.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Browse the DB from your PC (DBeaver/pgAdmin) on port 15432; UGOS already uses 5432.
+      # Remove to keep it internal.
+      - "15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistant -d assistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    container_name: va-memory-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://assistant:${POSTGRES_PASSWORD}@db:5432/assistant
+      API_KEY: ${API_KEY:?set API_KEY in .env}
+      EMBED_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      MODEL_CACHE: /models
+    volumes:
+      - ./data/models:/models
+    ports:
+      - "8100:8100"
