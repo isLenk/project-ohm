@@ -110,9 +110,9 @@ def set_flag(conn, conversation_id: int, column: str, on: bool) -> dict:
 
 def _previous_message(conn, msg):
     return conn.execute(
-        "SELECT * FROM messages WHERE channel_id = ? AND (ts < ? OR (ts = ? AND CAST(id AS INTEGER) < ?)) "
+        "SELECT * FROM messages WHERE channel_id = ? AND ts <= ? AND (ts < ? OR (ts = ? AND CAST(id AS INTEGER) < ?)) "
         "ORDER BY ts DESC, CAST(id AS INTEGER) DESC LIMIT 1",
-        (msg["channel_id"], msg["ts"], msg["ts"], key(msg)[1]),
+        (msg["channel_id"], msg["ts"], msg["ts"], msg["ts"], key(msg)[1]),
     ).fetchone()
 
 

@@ -71,15 +71,16 @@ def page(conn, channel_id: Optional[str] = None, cursor: Optional[str] = None, d
 
     def blocks_after(ts, bid, n):
         return conn.execute(
-            f"SELECT id, first_ts FROM blocks WHERE channel_id = ? AND (first_ts > ? OR (first_ts = ? AND id > ?)) ORDER BY {order} LIMIT ?",
-            (channel_id, ts, ts, bid, n),
+            f"SELECT id, first_ts FROM blocks WHERE channel_id = ? AND first_ts >= ? "
+            f"AND (first_ts > ? OR (first_ts = ? AND id > ?)) ORDER BY {order} LIMIT ?",
+            (channel_id, ts, ts, ts, bid, n),
         ).fetchall()
 
     def blocks_before(ts, bid, n):
         rows = conn.execute(
-            "SELECT id, first_ts FROM blocks WHERE channel_id = ? AND (first_ts < ? OR (first_ts = ? AND id < ?)) "
-            "ORDER BY first_ts DESC, id DESC LIMIT ?",
-            (channel_id, ts, ts, bid, n),
+            "SELECT id, first_ts FROM blocks WHERE channel_id = ? AND first_ts <= ? "
+            "AND (first_ts < ? OR (first_ts = ? AND id < ?)) ORDER BY first_ts DESC, id DESC LIMIT ?",
+            (channel_id, ts, ts, ts, bid, n),
         ).fetchall()
         return list(reversed(rows))
 
