@@ -55,6 +55,17 @@ threads.suggest_all(conn, project.settings(), channel_id)      # suggested repli
 
 Write native Discord replies as links with `status='accepted', origin='discord'` before calling `suggest_all`. `tests/seed.py` shows the whole shape. After the transaction, start embeddings with `jobs.start("embeddings", lambda job: embeddings.build(project, job))`. Memory extraction picks up new blocks on its next run.
 
+### Big files (100k+ messages)
+
+`tests/bench.py` loads 100k synthetic messages the way an importer should and times every step. On a laptop the import itself takes about 3 s for the inserts, 0.1 s for `rebuild` and 12 s for `suggest_all`.
+
+- Compute blocks in Python while walking the sorted messages. Insert with `executemany` (blocks, then messages, then native links). Don't run a query per message.
+- Keep it to one `project.tx()`. The FTS triggers keep search up to date during the insert, so you don't need a separate rebuild step.
+- Run the import as a job (`jobs.start("import", ...)`) and return the job id, the way `/memories/extract` does. Otherwise the HTTP request blocks for the whole import while it holds the project lock. `suggest_all(..., progress=job.progress)` reports progress.
+- Embeddings run in the background after the import. Not measured here (sentence-transformers was not installed), but MiniLM on CPU should take minutes for 100k messages. Similarity features turn on when they finish.
+
+Run `python -m curator_service.tests.bench` after changing anything in the import path.
+
 ## Not verified yet
 
 The real training path in `app/train/worker.py` (Unsloth with Gemma 4 E4B, then llama.cpp conversion) has not run on a GPU. Simulated runs exercise everything around it. Expect to adjust it on the first real run.
