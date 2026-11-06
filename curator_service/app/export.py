@@ -4,24 +4,79 @@ import hashlib
 import json
 import random
 import re
+from bisect import bisect_right
 from pathlib import Path
 from typing import Optional
 
 from . import conversations, embeddings
-from .threads import block_messages, link_row, split_ids, unit_of
+from .threads import block_messages, link_row, split_ids
 
 DUPLICATE = 0.95
 SYSTEM = "You are {speaker} in a Discord group chat. Reply as {speaker} would."
 
 
-def _approved_ranges(conn) -> list[tuple[str, int, int]]:
-    return [(r["channel_id"], r["first_ts"], r["last_ts"]) for r in conn.execute(
-        "SELECT channel_id, first_ts, last_ts FROM conversations WHERE approved_at IS NOT NULL AND archived_at IS NULL"
-    )]
+class _Graph:
+    """Messages, units and links for the export, read once instead of per unit.
 
+    Everything in approved conversations comes from one snapshot. Parents outside them
+    (only reachable with strict_context off) are read from the database and memoized.
+    """
 
-def _in_approved(ranges, msg) -> bool:
-    return any(c == msg["channel_id"] and a <= msg["ts"] <= b for c, a, b in ranges)
+    def __init__(self, conn, convs: list[dict]):
+        self.conn = conn
+        self.snap = conversations._snapshot(conn, convs)
+        self.ranges: dict[str, tuple[list[int], list[int]]] = {}
+        for c in sorted(convs, key=lambda c: (c["first_ts"], c["id"])):
+            starts, ends = self.ranges.setdefault(c["channel_id"], ([], []))
+            starts.append(c["first_ts"])
+            ends.append(c["last_ts"])
+        self.messages: dict[str, dict] = {}
+        self.units: dict[tuple[str, str], tuple[str, list[str]]] = {}
+        self.links: dict[tuple[str, str], Optional[dict]] = {}
+        self.split: set[str] = set()
+        for snap in self.snap.values():
+            for m in snap["messages"]:
+                self.messages[m["id"]] = m
+            for u in snap["units"]:
+                k = (u["kind"], u["id"])
+                live = [m for m in u["messages"] if not m["excluded"]]
+                self.units[k] = ("\n".join(m["content_text"] for m in live), [m["id"] for m in live])
+                self.links[k] = u["link"]
+                if u["kind"] == "message":
+                    self.split.add(u["id"])
+        self.snapshotted = set(self.messages)  # their split-line status is already known
+        self.names: dict[str, str] = {}
+
+    def in_approved(self, msg) -> bool:
+        starts, ends = self.ranges.get(msg["channel_id"], ([], []))
+        i = bisect_right(starts, msg["ts"]) - 1
+        return i >= 0 and ends[i] >= msg["ts"]
+
+    def message(self, message_id: str):
+        if message_id not in self.messages:
+            self.messages[message_id] = self.conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+        return self.messages[message_id]
+
+    def unit_of(self, msg) -> tuple[str, str]:
+        """A split line is its own unit; anything else speaks for its block."""
+        if msg["id"] not in self.snapshotted:
+            if self.link("message", msg["id"]):
+                self.split.add(msg["id"])
+            self.snapshotted.add(msg["id"])
+        return ("message", msg["id"]) if msg["id"] in self.split else ("block", str(msg["block_id"]))
+
+    def unit_text(self, kind: str, uid: str) -> tuple[str, list[str]]:
+        if (kind, uid) not in self.units:
+            self.units[(kind, uid)] = _unit_text(self.conn, kind, uid)
+        return self.units[(kind, uid)]
+
+    def link(self, kind: str, uid: str) -> Optional[dict]:
+        if (kind, uid) not in self.links:
+            self.links[(kind, uid)] = link_row(self.conn, kind, uid)
+        return self.links[(kind, uid)]
+
+    def name(self, author_id: str) -> str:
+        return _name(self.conn, author_id, self.names)
 
 
 def _unit_text(conn, kind: str, uid: str) -> tuple[str, list[str]]:
@@ -41,22 +96,22 @@ def _name(conn, author_id: str, cache: dict) -> str:
     return cache[author_id]
 
 
-def _context(conn, link: Optional[dict], ranges, names: dict, strict: bool) -> list[dict]:
+def _context(g: _Graph, link: Optional[dict], strict: bool) -> list[dict]:
     """Walk parents to the thread start, oldest first, skipping excluded units."""
     chain, seen = [], set()
     parent_id = link["parent_id"] if link else None
     while parent_id:
-        p = conn.execute("SELECT * FROM messages WHERE id = ?", (parent_id,)).fetchone()
-        if not p or (strict and not _in_approved(ranges, p)):
+        p = g.message(parent_id)
+        if not p or (strict and not g.in_approved(p)):
             break
-        kind, uid = unit_of(conn, p)
+        kind, uid = g.unit_of(p)
         if (kind, uid) in seen:
             break
         seen.add((kind, uid))
-        text, _ = _unit_text(conn, kind, uid)
+        text, _ = g.unit_text(kind, uid)
         if text:
-            chain.append({"speaker": _name(conn, p["author_id"], names), "text": text})
-        plink = link_row(conn, kind, uid)
+            chain.append({"speaker": g.name(p["author_id"]), "text": text})
+        plink = g.link(kind, uid)
         parent_id = plink["parent_id"] if plink else None
     chain.reverse()
     return chain
@@ -66,17 +121,16 @@ def build(project, speakers: Optional[list[str]] = None, strict_context: bool = 
     """Every example plus the counts the Train modal shows."""
     conn = project.conn
     settings = project.settings()
-    names: dict = {}
     examples, dropped = [], {"unattached": 0, "excluded": 0, "capped": 0, "duplicates": 0, "bots": 0}
     with project.lock:
-        ranges = _approved_ranges(conn)
-        convs = conn.execute(
+        convs = [dict(r) for r in conn.execute(
             "SELECT * FROM conversations WHERE approved_at IS NOT NULL AND archived_at IS NULL ORDER BY first_ts"
-        ).fetchall()
+        ).fetchall()]
+        g = _Graph(conn, convs)
         bots = {r[0] for r in conn.execute("SELECT id FROM authors WHERE is_bot = 1")}
         for conv in convs:
-            for u in conversations.units_in(conn, dict(conv)):
-                text, ids = _unit_text(conn, u["kind"], u["id"])
+            for u in g.snap[conv["id"]]["units"]:
+                text, ids = g.unit_text(u["kind"], u["id"])
                 if not text:
                     dropped["excluded"] += 1
                     continue
@@ -91,8 +145,8 @@ def build(project, speakers: Optional[list[str]] = None, strict_context: bool = 
                     continue
                 examples.append({
                     "id": f"{'blk' if u['kind'] == 'block' else 'msg'}:{u['id']}",
-                    "speaker": _name(conn, u["author_id"], names), "speaker_id": u["author_id"],
-                    "context": _context(conn, link, ranges, names, strict_context),
+                    "speaker": g.name(u["author_id"]), "speaker_id": u["author_id"],
+                    "context": _context(g, link, strict_context),
                     "target": text, "conversation_id": conv["id"], "source_message_ids": ids,
                 })
 
@@ -123,6 +177,45 @@ def _norm(t: str) -> str:
     return re.sub(r"\W+", " ", t.lower()).strip()
 
 
+def _target_vectors(project, group: list[dict]):
+    """Normalized vectors for each example's target. A one-message target is exactly that
+    message's text, so its stored embedding is reused; only longer targets get encoded."""
+    import numpy as np
+
+    single = [e["source_message_ids"][0] for e in group if len(e["source_message_ids"]) == 1]
+    stored: dict = {}
+    for i in range(0, len(single), 500):
+        chunk = single[i : i + 500]
+        stored.update(project.conn.execute(
+            f"SELECT message_id, vector FROM message_embeddings WHERE message_id IN ({','.join('?' * len(chunk))})", chunk
+        ).fetchall())
+    vecs: list = [None] * len(group)
+    todo = []
+    for i, e in enumerate(group):
+        blob = stored.get(e["source_message_ids"][0]) if len(e["source_message_ids"]) == 1 else None
+        if blob is not None:
+            vecs[i] = embeddings.from_blob(blob)
+        else:
+            todo.append(i)
+    if todo:
+        for i, v in zip(todo, embeddings.encode([group[i]["target"] for i in todo])):
+            vecs[i] = v
+    return np.vstack(vecs).astype("float32")
+
+
+def _near_pairs(vecs, threshold: float, chunk: int = 1024):
+    """(i, j) with i < j and similarity >= threshold, in the order a nested i, j loop meets them."""
+    import numpy as np
+
+    n = len(vecs)
+    for start in range(0, n, chunk):
+        sims = vecs[start : start + chunk] @ vecs.T
+        rows, cols = np.nonzero(sims >= threshold)
+        for r, j in zip(rows.tolist(), cols.tolist()):
+            if j > start + r:
+                yield start + r, j
+
+
 def _dedupe(project, examples) -> tuple[list, int]:
     """Same author saying (almost) the same thing twice: keep the one with more context."""
     keep: dict[tuple[str, str], dict] = {}
@@ -133,8 +226,6 @@ def _dedupe(project, examples) -> tuple[list, int]:
     out = [e for e in examples if keep.get((e["speaker_id"], _norm(e["target"]))) is e]
     removed = len(examples) - len(out)
     if embeddings.available() and len(out) > 1:
-        import numpy as np
-
         by_author: dict[str, list] = {}
         for e in out:
             by_author.setdefault(e["speaker_id"], []).append(e)
@@ -142,13 +233,10 @@ def _dedupe(project, examples) -> tuple[list, int]:
         for group in by_author.values():
             if len(group) < 2:
                 continue
-            vecs = embeddings.encode([g["target"] for g in group])
-            sims = vecs @ vecs.T
-            for i in range(len(group)):
-                for j in range(i + 1, len(group)):
-                    if sims[i, j] >= DUPLICATE and id(group[i]) not in drop and id(group[j]) not in drop:
-                        loser = group[i] if len(group[i]["context"]) < len(group[j]["context"]) else group[j]
-                        drop.add(id(loser))
+            for i, j in _near_pairs(_target_vectors(project, group), DUPLICATE):
+                if id(group[i]) not in drop and id(group[j]) not in drop:
+                    loser = group[i] if len(group[i]["context"]) < len(group[j]["context"]) else group[j]
+                    drop.add(id(loser))
         out = [e for e in out if id(e) not in drop]
         removed += len(drop)
     return out, removed

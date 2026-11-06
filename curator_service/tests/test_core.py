@@ -206,6 +206,39 @@ def test_export_context_chain_and_cap(project):
     assert [m["role"] for m in msgs] == ["system", "user", "assistant"]
 
 
+def test_near_duplicates_keep_the_one_with_more_context(project, monkeypatch):
+    import numpy as np
+
+    # "same" and "same again" point the same way; everything else is orthogonal.
+    basis = {"same": 0, "same again": 0, "other": 1, "third": 2}
+    monkeypatch.setattr(export.embeddings, "available", lambda: True)
+    monkeypatch.setattr(export.embeddings, "encode",
+                        lambda texts: np.eye(4, dtype="float32")[[basis[t] for t in texts]])
+    examples = [
+        {"speaker_id": "a", "target": "same", "context": [1], "source_message_ids": ["x", "y"]},
+        {"speaker_id": "a", "target": "other", "context": [], "source_message_ids": ["x", "y"]},
+        {"speaker_id": "a", "target": "same again", "context": [1, 2], "source_message_ids": ["x", "y"]},
+        {"speaker_id": "b", "target": "same", "context": [], "source_message_ids": ["x", "y"]},
+        {"speaker_id": "a", "target": "third", "context": [], "source_message_ids": ["x", "y"]},
+    ]
+    out, removed = export._dedupe(project, examples)
+    assert removed == 1
+    assert [e["target"] for e in out] == ["other", "same again", "same", "third"]
+
+
+def test_near_pairs_matches_a_nested_loop():
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    vecs = rng.normal(size=(300, 8)).astype("float32")
+    vecs[150] = vecs[3]
+    vecs[299] = vecs[3]
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    sims = vecs @ vecs.T
+    expected = [(i, j) for i in range(300) for j in range(i + 1, 300) if sims[i, j] >= 0.7]
+    assert list(export._near_pairs(vecs, 0.7, chunk=64)) == expected
+
+
 def test_cap_is_feasible_with_two_people():
     examples = [{"id": str(i), "speaker_id": "a" if i < 70 else "b", "speaker": "x", "context": [], "target": str(i)}
                 for i in range(100)]
