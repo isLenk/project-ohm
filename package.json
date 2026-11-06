@@ -1,0 +1,9 @@
+{
+  "name": "virtual-assistant",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:all": "node scripts/dev.mjs all"
+  }
+}
