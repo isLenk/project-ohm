@@ -8,7 +8,7 @@ from typing import Optional
 
 from .errors import ApiError, not_found
 from .project import now_ms
-from .threads import block_messages, key, link_row, split_ids
+from .threads import block_messages, conversation_at, key, link_row, split_ids
 
 
 def get(conn: sqlite3.Connection, conversation_id: int) -> dict:
@@ -142,10 +142,7 @@ def split(conn, before_message_id: str) -> list[dict]:
     msg = conn.execute("SELECT * FROM messages WHERE id = ?", (before_message_id,)).fetchone()
     if not msg:
         raise not_found("Message")
-    conv = conn.execute(
-        "SELECT * FROM conversations WHERE channel_id = ? AND first_ts <= ? AND last_ts >= ?",
-        (msg["channel_id"], msg["ts"], msg["ts"]),
-    ).fetchone()
+    conv = conversation_at(conn, msg["channel_id"], msg["ts"])
     if not conv:
         raise not_found("Conversation")
     if conv["first_message_id"] == msg["id"]:

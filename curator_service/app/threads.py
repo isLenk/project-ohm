@@ -34,6 +34,26 @@ def key(msg) -> tuple[int, int]:
 
 
 # ── lookups ─────────────────────────────────────────────────────────────────
+def conversation_sql(channel: str, ts: str) -> str:
+    """SQL for the id of the conversation that starts last at or before `ts` in `channel`.
+
+    Conversations never overlap, so that is the only one that can hold `ts` (check its
+    last_ts). Ordering by first_ts with LIMIT 1 is one index seek; the obvious
+    `first_ts <= ts AND last_ts >= ts` scans every earlier conversation.
+    """
+    return (f"(SELECT c_at.id FROM conversations c_at WHERE c_at.channel_id = {channel} AND c_at.first_ts <= {ts} "
+            f"ORDER BY c_at.first_ts DESC, c_at.id DESC LIMIT 1)")
+
+
+def conversation_at(conn: sqlite3.Connection, channel_id: str, ts: int):
+    """The conversation holding a message at `ts`, or None."""
+    row = conn.execute(
+        "SELECT * FROM conversations WHERE channel_id = ? AND first_ts <= ? ORDER BY first_ts DESC, id DESC LIMIT 1",
+        (channel_id, ts),
+    ).fetchone()
+    return row if row and row["last_ts"] >= ts else None
+
+
 def message(conn: sqlite3.Connection, message_id: str):
     row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     if not row:
@@ -105,12 +125,9 @@ def thread_path(conn: sqlite3.Connection, message_id: str) -> list[dict]:
 def conversations_of(conn: sqlite3.Connection, msgs) -> list[int]:
     ids = set()
     for m in msgs:
-        row = conn.execute(
-            "SELECT id FROM conversations WHERE channel_id = ? AND first_ts <= ? AND last_ts >= ?",
-            (m["channel_id"], m["ts"], m["ts"]),
-        ).fetchone()
+        row = conversation_at(conn, m["channel_id"], m["ts"])
         if row:
-            ids.add(row[0])
+            ids.add(row["id"])
     return sorted(ids)
 
 
@@ -349,11 +366,8 @@ def score_candidates(conn, block_id: int) -> list[tuple[float, dict]]:
 
 
 def _starts_fresh(conn, first) -> bool:
-    conv = conn.execute(
-        "SELECT first_message_id FROM conversations WHERE channel_id = ? AND first_ts <= ? AND last_ts >= ?",
-        (first["channel_id"], first["ts"], first["ts"]),
-    ).fetchone()
-    if conv and conv[0] == first["id"]:
+    conv = conversation_at(conn, first["channel_id"], first["ts"])
+    if conv and conv["first_message_id"] == first["id"]:
         return True
     prev = conn.execute(
         "SELECT ts FROM messages WHERE channel_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1", (first["channel_id"], first["ts"])

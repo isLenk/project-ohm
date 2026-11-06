@@ -6,7 +6,7 @@ from typing import Optional
 
 from . import conversations
 from .errors import ApiError, not_found
-from .threads import block_messages, link_row
+from .threads import block_messages, conversation_at, link_row
 
 PREVIEW = 60
 
@@ -116,11 +116,8 @@ def page(conn, channel_id: Optional[str] = None, cursor: Optional[str] = None, d
         first_id = item["messages"][0]["id"] if item["messages"] else None
         if first_id in starts:
             items.append({"type": "conversation_start", "conversation": conversations.stats(conn, starts[first_id])})
-        conv = conn.execute(
-            "SELECT id FROM conversations WHERE channel_id = ? AND first_ts <= ? AND last_ts >= ?",
-            (channel_id, r["first_ts"], r["first_ts"]),
-        ).fetchone()
-        item["conversation_id"] = conv[0] if conv else None
+        conv = conversation_at(conn, channel_id, r["first_ts"])
+        item["conversation_id"] = conv["id"] if conv else None
         items.append(item)
         author_ids.add(item["author_id"])
         for link in [item["link"]] + [m["link"] for m in item["messages"]]:

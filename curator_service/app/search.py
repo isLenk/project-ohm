@@ -6,6 +6,7 @@ from typing import Optional
 
 from . import embeddings
 from .errors import ApiError
+from .threads import conversation_at, conversation_sql
 
 REGEX_BUDGET_S = 0.2
 ACTIONS = [
@@ -91,7 +92,7 @@ def _filters(conn, p: dict) -> tuple[list[str], list]:
         col = "approved_at" if p["in"] == "approved" else "archived_at"
         extra = " AND c.archived_at IS NULL" if p["in"] == "approved" else ""
         where.append(
-            f"EXISTS (SELECT 1 FROM conversations c WHERE c.channel_id = m.channel_id AND c.first_ts <= m.ts "
+            f"EXISTS (SELECT 1 FROM conversations c WHERE c.id = {conversation_sql('m.channel_id', 'm.ts')} "
             f"AND c.last_ts >= m.ts AND c.{col} IS NOT NULL{extra})"
         )
     if p["before"]:
@@ -127,11 +128,8 @@ def _spans(text: str, needles: list[str]) -> list[list[int]]:
 
 
 def _conversation_id(conn, m) -> Optional[int]:
-    row = conn.execute(
-        "SELECT id FROM conversations WHERE channel_id = ? AND first_ts <= ? AND last_ts >= ?",
-        (m["channel_id"], m["ts"], m["ts"]),
-    ).fetchone()
-    return row[0] if row else None
+    row = conversation_at(conn, m["channel_id"], m["ts"])
+    return row["id"] if row else None
 
 
 def run(project, q: str, mode: str = "text", limit: int = 50) -> dict:

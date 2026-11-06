@@ -54,8 +54,8 @@ def _pending(project, conversation_id: Optional[int]) -> list[int]:
         "LEFT JOIN model_link_scans s ON s.block_id = b.id "
         "WHERE l.id IS NULL AND s.block_id IS NULL "
         "AND EXISTS (SELECT 1 FROM messages m WHERE m.block_id = b.id AND m.excluded = 0) "
-        "AND NOT EXISTS (SELECT 1 FROM conversations c WHERE c.channel_id = b.channel_id "
-        "  AND b.first_ts BETWEEN c.first_ts AND c.last_ts AND c.approved_at IS NOT NULL)"
+        "AND NOT EXISTS (SELECT 1 FROM conversations c WHERE c.id = " + threads.conversation_sql("b.channel_id", "b.first_ts") +
+        "  AND c.last_ts >= b.first_ts AND c.approved_at IS NOT NULL)"
     )
     params: list = []
     if conversation_id is not None:

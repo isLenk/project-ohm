@@ -14,6 +14,7 @@ from . import embeddings, llm
 from .config import MEMORY_API_KEY, MEMORY_API_URL
 from .errors import ApiError, not_found
 from .project import now_ms
+from .threads import conversation_sql
 
 MIN_WORDS = 3
 DUPLICATE = 0.9
@@ -56,10 +57,12 @@ def get(conn, memory_id: int):
 
 def people(conn) -> list[dict]:
     total = conn.execute("SELECT COUNT(*) FROM messages WHERE excluded = 0").fetchone()[0] or 1
+    # Every message sits in exactly one conversation, so the latest one starting at or before it is its own.
+    in_convs = dict(conn.execute(
+        f"SELECT m.author_id, COUNT(DISTINCT {conversation_sql('m.channel_id', 'm.ts')}) FROM messages m GROUP BY m.author_id"
+    ).fetchall())
     rows = conn.execute(
-        "SELECT a.*, (SELECT COUNT(*) FROM messages m WHERE m.author_id = a.id AND m.excluded = 0) AS messages, "
-        "(SELECT COUNT(DISTINCT c.id) FROM conversations c JOIN messages m ON m.channel_id = c.channel_id "
-        " AND m.ts BETWEEN c.first_ts AND c.last_ts WHERE m.author_id = a.id) AS conversations "
+        "SELECT a.*, (SELECT COUNT(*) FROM messages m WHERE m.author_id = a.id AND m.excluded = 0) AS messages "
         "FROM authors a ORDER BY messages DESC"
     ).fetchall()
     out = []
@@ -69,7 +72,7 @@ def people(conn) -> list[dict]:
         ).fetchall())
         out.append({
             "author_id": r["id"], "name": r["name"], "display_name": r["display_name"], "color_index": r["color_index"],
-            "is_bot": bool(r["is_bot"]), "messages": r["messages"], "conversations": r["conversations"],
+            "is_bot": bool(r["is_bot"]), "messages": r["messages"], "conversations": in_convs.get(r["id"], 0),
             "share": round(r["messages"] / total, 3),
             "memories": {"new": counts.get("new", 0), "kept": counts.get("kept", 0), "forgotten": counts.get("forgotten", 0)},
         })
