@@ -267,10 +267,28 @@ class DiscordVoice:
         self.output_worker = self.discord_client.add_task(self.output_worker)
         self.last_heard = time.monotonic()
         self.idle_task = self.discord_client.add_task(self.idle_worker)
+        self.start_listening()
 
+    def start_listening(self):
+        """(Re)start receiving audio. A fresh sink each time: voice_recv cleans the old one up when it stops."""
         # ? SilenceGeneratorSink fills in silence when Discord stops sending packets, so we can tell when someone is done talking
         self.sink = CustomSpeechRecognitionSink(recognizer="rtts", text_cb=self.got_text, speech_cb=self.on_speech)
-        self.vc.listen(voice_recv.SilenceGeneratorSink(self.sink))
+        self.vc.listen(voice_recv.SilenceGeneratorSink(self.sink), after=self._listening_stopped)
+
+    def _listening_stopped(self, error):
+        """voice_recv stops listening for good if anything throws while it handles a packet (runs on its thread)"""
+        if error is not None:
+            print(f"[voice] Stopped hearing audio: {error!r}")
+
+    def ensure_listening(self):
+        """Called every second: if receiving died while still in the call, start it again"""
+        if self.vc is None or not self.vc.is_connected() or self.vc.is_listening():
+            return
+        print("[voice] Wasn't receiving audio anymore, restarting it")
+        try:
+            self.start_listening()
+        except Exception as e:
+            print(f"[voice] Couldn't restart listening: {e!r}")
 
     async def on_text(self, said_by):
         """said_by: {discord user: what they said} for everyone who spoke this turn."""
@@ -291,6 +309,7 @@ class DiscordVoice:
             await asyncio.sleep(1)
             if self.vc is None or not self.vc.is_connected():
                 continue
+            self.ensure_listening()
             if self.is_busy() or self.sink.anyone_speaking():
                 self.last_heard = time.monotonic()
                 continue

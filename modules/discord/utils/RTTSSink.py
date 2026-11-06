@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import soundfile as sf
 import soxr
+import os
 import time
 import traceback
 from modules.stt.parakeet import get_models
@@ -24,6 +25,17 @@ MIN_SPEECH_MS = 250     # Ignore anything shorter than this (coughs, clicks)
 PRE_ROLL_MS = 200       # Keep a bit of audio from before speech started so the first word isn't cut off
 SPEECH_THRESHOLD = 0.5  # Silero speech probability 0-1, higher = more strict
 DEBUG = True            # Print what the sink is hearing
+
+def open_recording(path):
+    """Append to the debug recording instead of starting over, so a restart keeps what came before"""
+    if os.path.exists(path):
+        try:
+            f = sf.SoundFile(path, "r+")
+            f.seek(0, sf.SEEK_END)
+            return f
+        except Exception:
+            pass # Unreadable/old format, start a new one
+    return sf.SoundFile(path, "w", STT_RATE, 1)
 
 class UserStream:
     """Audio buffer + speaking state for a single user"""
@@ -54,7 +66,7 @@ class CustomSpeechRecognitionSink(voice_recv.AudioSink):
         self.pool = ThreadPoolExecutor(max_workers=1)
         self.frames = 0
         # ? Saves everything the sink hears so it can be replayed offline
-        self.recording = sf.SoundFile("stt_debug.wav", "w", STT_RATE, 1) if DEBUG else None
+        self.recording = open_recording("stt_debug.wav") if DEBUG else None
 
     def wants_opus(self):
         return False
