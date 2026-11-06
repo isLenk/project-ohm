@@ -103,6 +103,8 @@ class OpenAIModel:
             "life events, opinions they clearly hold.\n"
             "Not worth remembering: greetings, filler, questions, reactions, insults, jokes, small talk, "
             "or anything about the conversation or the bot itself.\n"
+            "Requests to the bot are not facts about the person either: \"explain X\", \"how do I Y\", "
+            "\"I want you to...\", \"tell me about...\" are all NONE, even if they mention a topic.\n"
             f"If there is something worth remembering, reply with ONE short third-person note that starts "
             f"with their name, for example: \"{speaker} likes apples.\"\n"
             "Otherwise reply with exactly: NONE"
