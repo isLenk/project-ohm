@@ -15,8 +15,8 @@ CHUNK_MS = 32
 CONTEXT = 64            # ...plus the last 64 samples of the previous chunk
 
 # Voice done detection
-EARLY_TRANSCRIBE_MS = 150 # Start transcribing after this much silence so it's ready by QUICK_SILENCE_MS
-QUICK_SILENCE_MS = 300  # If what they said ends like a sentence, reply after this
+EARLY_TRANSCRIBE_MS = 100 # Start transcribing after this much silence so it's ready by QUICK_SILENCE_MS
+QUICK_SILENCE_MS = 200  # If what they said ends like a sentence, reply after this (transcription takes ~60ms)
 SILENCE_MS = 900        # Otherwise wait this long in case they're mid-thought
 MIN_SPEECH_MS = 250     # Ignore anything shorter than this (coughs, clicks)
 PRE_ROLL_MS = 200       # Keep a bit of audio from before speech started so the first word isn't cut off
