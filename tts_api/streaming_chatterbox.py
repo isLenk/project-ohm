@@ -11,6 +11,7 @@ few seconds of audio) with the same noise and HiFiGAN source, so the region that
 was already sent comes out (nearly) identical and the seam is crossfaded.
 """
 import logging
+import time
 
 import numpy as np
 import torch
@@ -34,11 +35,20 @@ LOOKAHEAD = 3                # flow drops the last 3 tokens when finalize=False
 
 class StreamingChatterboxEngine(ChatterboxEngine):
 
-    def __init__(self, *args, first_chunk_tokens=24, chunk_tokens=32,
-                 crossfade_ms=20, watermark=True, **kwargs):
+    def __init__(self, *args, first_chunk_tokens=12, chunk_tokens=32, min_chunk_tokens=6,
+                 low_water_ms=400, crossfade_ms=20, watermark=True, **kwargs):
         super().__init__(*args, **kwargs)
+        # When to vocode: the first pass after first_chunk_tokens (small, so audio starts fast). After that,
+        # every chunk_tokens, or sooner (min_chunk_tokens) if the listener is about to run out of audio
+        # (less than low_water_ms still queued). Fewer passes when there's slack, small ones when there isn't.
         self.first_chunk_tokens = first_chunk_tokens
         self.chunk_tokens = chunk_tokens
+        self.min_chunk_tokens = min_chunk_tokens
+        self.low_water = low_water_ms / 1000
+        # Estimate of where playback is: audio sent since playback (re)started, and when it started.
+        # Carries across sentences, so a sentence that starts while the last one is still playing can wait.
+        self._play_start = 0.0
+        self._play_audio = 0.0
         self.crossfade = int(self.sampling_rate * crossfade_ms / 1000)
         # Chatterbox's Perth watermark (marks the audio as AI-generated); stock generate() adds it,
         # we bypass generate() so apply it ourselves, per chunk (~10ms each)
@@ -119,6 +129,16 @@ class StreamingChatterboxEngine(ChatterboxEngine):
     def _emit(self, audio):
         if audio.size and not self.stop_synthesis_event.is_set():
             self.queue.put((np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
+            now = time.perf_counter()
+            if self._ahead(now) <= 0:
+                # Everything sent so far has played (or this is a new reply), playback restarts from here
+                self._play_start, self._play_audio = now, 0.0
+            self._play_audio += audio.size / self.sampling_rate
+
+    def _ahead(self, now=None):
+        """Seconds of audio sent but (probably) not played yet.
+        ? Playback really starts a bit after we send, so this errs on the low side, which is the safe side"""
+        return self._play_audio - ((now or time.perf_counter()) - self._play_start)
 
     def _trim_tail(self, audio):
         """Drop trailing silence (the stock engine trimmed each sentence; we can only trim the end)."""
@@ -150,7 +170,7 @@ class StreamingChatterboxEngine(ChatterboxEngine):
             sent = 0                # samples already queued
             held = np.zeros(0, np.float32)  # tail kept back to crossfade into the next pass
             source = None
-            next_at = self.first_chunk_tokens
+            vocoded = 0             # how many tokens the last vocode pass covered
 
             first = True
 
@@ -187,12 +207,14 @@ class StreamingChatterboxEngine(ChatterboxEngine):
                     return True
                 if token.item() < SPEECH_VOCAB:
                     tokens.append(token.view(1))
-                if len(tokens) >= next_at:
+                new = len(tokens) - vocoded
+                need = self.first_chunk_tokens if not vocoded else self.min_chunk_tokens
+                if new >= self.chunk_tokens or (new >= need and self._ahead() < self.low_water):
                     wav, src = self._vocode(torch.cat(tokens), False, noise, seed,
                                             source[:, :, :sent] if source is not None else None)
                     source = src
                     push(wav, final=False)
-                    next_at = len(tokens) + self.chunk_tokens
+                    vocoded = len(tokens)
 
             if tokens and not self.stop_synthesis_event.is_set():
                 wav, _ = self._vocode(torch.cat(tokens), True, noise, seed,
