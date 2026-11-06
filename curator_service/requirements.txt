@@ -1,0 +1,13 @@
+# Curator service. Install into the repo's venv: pip install -r curator_service/requirements.txt
+fastapi
+uvicorn
+pydantic>=2
+requests
+python-dotenv
+psutil
+regex
+numpy
+# Similarity search, duplicate detection and memory dedupe. Optional: the service runs without it.
+sentence-transformers
+# "From Hugging Face…" in the model menu
+huggingface_hub
