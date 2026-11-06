@@ -3,14 +3,17 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { modules } from './api.js'
-import { charactersDB, logsDB, addLog } from './db.js'
+import { logsDB, addLog } from './db.js'
+import { listCharacters, addCharacter, updateCharacter, deleteCharacter } from './characters.js'
 import { dialog } from 'electron/main'
 
 function createWindow() {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1280,
+    height: 800,
+    minWidth: 1024,
+    minHeight: 700,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
@@ -58,54 +61,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-modules', async (event) => modules)
 
-  ipcMain.handle('get-characters', async (event) => {
-    return new Promise((resolve, reject) => {
-      charactersDB.find({}, (err, docs) => {
-        console.log('get-characters: found ' + docs.length + ' characters')
-        if (err) {
-          reject(err)
-        } else {
-          resolve(docs)
-        }
-      })
-    })
-  })
-
-  ipcMain.handle('add-character', async (event, character) => {
-    return new Promise((resolve, reject) => {
-      charactersDB.insert(character, (err, newDoc) => {
-        if (err) {
-          reject(err)
-        } else {
-          resolve(newDoc)
-        }
-      })
-    })
-  })
-
-  ipcMain.handle('update-character', async (event, character) => {
-    return new Promise((resolve, reject) => {
-      charactersDB.update({ _id: character._id }, character, {}, (err, numReplaced) => {
-        if (err) {
-          reject(err)
-        } else {
-          resolve(numReplaced)
-        }
-      })
-    })
-  })
-
-  ipcMain.handle('delete-character', async (event, characterId) => {
-    return new Promise((resolve, reject) => {
-      charactersDB.remove({ _id: characterId }, {}, (err, numRemoved) => {
-        if (err) {
-          reject(err)
-        } else {
-          resolve(numRemoved)
-        }
-      })
-    })
-  })
+  // Characters live on the NAS when MAIN_VITE_MEMORY_API_URL is set (see characters.js).
+  ipcMain.handle('get-characters', () => listCharacters())
+  ipcMain.handle('add-character', (event, character) => addCharacter(character))
+  ipcMain.handle('update-character', (event, character) => updateCharacter(character))
+  ipcMain.handle('delete-character', (event, characterId) => deleteCharacter(characterId))
 
   ipcMain.handle('dialog', async (event, method, params) => {
     return dialog[method](params)

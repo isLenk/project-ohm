@@ -1,4 +1,14 @@
 import Datastore from 'nedb';
+import axios from 'axios';
+
+// Logs are also mirrored to the memory service on the NAS when it's configured.
+const nasLogs = import.meta.env.MAIN_VITE_MEMORY_API_URL
+  ? axios.create({
+      baseURL: import.meta.env.MAIN_VITE_MEMORY_API_URL,
+      headers: { 'X-API-Key': import.meta.env.MAIN_VITE_MEMORY_API_KEY || '' },
+      timeout: 3000
+    })
+  : null
 
 const charactersDB = new Datastore({
     filename: 'characters.db',
@@ -17,6 +27,9 @@ function addLog(log_type, message) {
     message,
     timestamp: new Date()
   }
+  nasLogs
+    ?.post('/logs', { level: log_type, source: 'controller', message: String(message) })
+    .catch((err) => console.error('Could not mirror log to NAS:', err.message))
   logsDB.insert(logEntry, (err, newDoc) => {
     if (err) {
       console.error('Error adding log:', err)
