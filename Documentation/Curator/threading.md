@@ -82,7 +82,14 @@ Take the highest-scoring candidate. Then:
 
 Mass-ping messages (3+ mentions, no reply reference) usually start something new, but they are also the most ambiguous. Leave them unattached unless the score is high.
 
-Optionally, a later version can ask the local LLM (`llama-server` on `:5000`) to pick among the top 3 candidates. It must stay optional and time-boxed, because import should not depend on the model being up.
+### Model guesses
+
+For the blocks the heuristic leaves unattached, the user can ask the local LLM (`llama-server` on `:5000`). It is a button ("Guess with model") on the current conversation, never part of import, because import must not depend on the model being up. `POST /links/guess` runs it as a background job (`curator_service/app/model_links.py`):
+
+1. Take every block with no link, at least one non-excluded message, outside approved conversations, that the model hasn't looked at (`model_link_scans`). The request can limit this to one conversation.
+2. Score candidates as above and keep the top 5. List them oldest first, numbered, as `[n] Author: text`, followed by the block. The model answers `{"reply_to": n}` or `{"reply_to": null}`.
+3. A valid pick becomes a `suggested` link with `origin='model'` and the heuristic's score for that candidate. It goes through the same ✓/✕ flow, and the Threads view labels it "model's guess".
+4. Any answer, including `null` or garbage, marks the block in `model_link_scans` so it isn't asked again. A failed request doesn't, so the next run retries it. If `llama-server` stops answering, the job stops and reports `stopped`.
 
 ### Measuring it
 

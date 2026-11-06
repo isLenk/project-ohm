@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import conversations, embeddings, export, feed, gpu, jobs, llm, memories, search, threads
+from . import conversations, embeddings, export, feed, gpu, jobs, llm, memories, model_links, search, threads
 from .config import MODELS_DIR, PORT, TRAIN_SIMULATE
 from .errors import ApiError
 from .project import Project, require_project, state
@@ -264,6 +264,19 @@ def link_suggest_all():
     settings = p.settings()
     with p.tx() as conn:
         return dirty(threads.suggest_all(conn, settings))
+
+
+class GuessBody(BaseModel):
+    conversation_id: Optional[int] = None
+
+
+@app.post("/links/guess")
+def link_guess(b: GuessBody):
+    """Background job: the local LLM picks parents for blocks the suggester left unattached."""
+    p = require_project()
+    if not llm.up():
+        raise ApiError(503, "llm_down", "Start llama-server (Ohm's LLM on :5000) to have the model guess replies.")
+    return jobs.start("link_guess", lambda job: model_links.guess(p, job, b.conversation_id))
 
 
 @app.get("/stats/suggester")

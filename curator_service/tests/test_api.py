@@ -49,6 +49,7 @@ def test_full_flow(tmp_path):
     assert m["status"] == "kept"
     assert c.patch(f"/memories/{m['id']}", json={"status": "forgotten"}).json()["status"] == "forgotten"
     assert c.post("/memories/extract", json={}).status_code == 503  # no llama-server in tests
+    assert c.post("/links/guess", json={}).json()["error"] == "llm_down"
 
     prev = c.get("/export/preview").json()
     assert prev["examples"] > 0 and len(prev["sample"][0]) == 3

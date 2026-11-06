@@ -74,6 +74,7 @@ One endpoint serves both the Threads and the Raw view. Raw just ignores the link
 | DELETE | `/links/message/{message_id}` | — | detach, or merge a split line back into its block |
 | POST | `/links/{unit_kind}/{unit_id}/accept` | — | ✓ on a suggestion |
 | POST | `/links/{unit_kind}/{unit_id}/reject` | — | ✕ on a suggestion; may return a new suggestion |
+| POST | `/links/guess` | `{ conversation_id? }` | job: the local LLM guesses parents for unattached blocks. `503 llm_down` if llama-server is off. Result `{ blocks, suggested, no_reply, failed, stopped, units }` |
 
 Every link route returns:
 
