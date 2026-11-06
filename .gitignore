@@ -10,3 +10,4 @@ ckernel
 /tts_api/tts_env
 /tts_api/tts_api
 /memory_service/data
+stt_debug.wav

@@ -6,11 +6,18 @@ import asyncio
 import utils.AudioFix as AudioFix
 import websockets
 import time
+import random
 from modules.discord.utils.RTTSSink import CustomSpeechRecognitionSink
+from modules.discord.utils.StreamingPCMSource import StreamingPCMSource
+import utils.latency as latency
 import logging
 
 DISCORD_SAMPLE_RATE = 44100
+IDLE_SECONDS = 10   # how long the call has to be quiet before Ohm might talk on his own
+IDLE_CHANCE = 0.5   # chance he does each time that happens, so it feels occasional, not like a timer
 logger = logging.getLogger(__name__)
+# ? Discord sends RTCP sender reports that voice_recv logs on every packet, they're harmless
+logging.getLogger("discord.ext.voice_recv.reader").setLevel(logging.WARNING)
 import wave
 import modules.discord.utils.DiscordVoiceUtil as DC_Util
 class DiscordVoice:
@@ -25,6 +32,12 @@ class DiscordVoice:
     tts_module: TTSModule
     is_playing: bool = False
     processing_response: bool = False
+    current_source: StreamingPCMSource | None = None
+    response_task: asyncio.Task | None = None # The reply currently being generated/played
+    current_prompt: dict = {}                 # What that reply is answering
+    current_turn = None                       # The Turn (see DiscordClient) behind that reply
+    last_heard: float = 0.0                   # time.monotonic() of the last sign of conversation
+    spoke_unprompted: bool = False            # Already broke the current silence; wait for someone to talk
 
     def __init__(self, client, discord_client):
         self.client = client
@@ -75,29 +88,47 @@ class DiscordVoice:
             # The pause will reset if more text is received.
             participants = await self._poll_for_more_text(pause_max, participants)
 
-            if self.is_playing or self.processing_response: 
-                # Interrupt the audio
-                await self.tts_module.interrupt()
-                
-                # Clean out audio queue
-                while not self.audio_out_queue.empty():
-                    self.audio_out_queue.get_nowait()
-
-                # Reset the flag
-                self.processing_response = False
-                self.is_playing = False
-
-                continue
-
-            prompt_input = [f"{user}: {text}" for user, text in participants.items()]
-            if "".join(prompt_input).strip() == "":
+            # Who said what, e.g. {Lenk: "anyone up for a game?", Sam: "sure"}
+            said_by = {user: " ".join(texts).strip() for user, texts in participants.items()}
+            said_by = {user: text for user, text in said_by.items() if text}
+            if not said_by:
                 print("listen_worker: No text received")
                 continue
-    
-            prompt = "\n".join(prompt_input)
-    
-            if not self.vc.is_playing():
-                await self.on_text(prompt)
+
+            if self.is_busy():
+                was_talking = self.vc.is_playing()
+                previous = self.current_prompt
+                if not was_talking and self.current_turn is not None:
+                    # Nobody heard that reply, so don't keep it in the conversation
+                    self.current_turn.discard()
+                await self.interrupt()
+                if was_talking:
+                    # Talking over her just shuts her up
+                    print("[voice] Interrupted")
+                    continue
+                # She hadn't started talking yet, so they were still mid-thought: answer it all together
+                print("[voice] More speech before she answered, restarting with all of it")
+                said_by = {u: f"{previous.get(u, '')} {said_by.get(u, '')}".strip() for u in {**previous, **said_by}}
+
+            # ? Runs in the background so this loop can keep listening and interrupt it
+            self.current_prompt = said_by
+            self.response_task = asyncio.create_task(self.on_text(said_by))
+
+    def is_busy(self):
+        """True while a reply is being generated or played"""
+        return (self.response_task is not None and not self.response_task.done()) or bool(self.vc and self.vc.is_playing())
+
+    async def interrupt(self):
+        """Stop the current reply: cancel generation (LLM + TTS) and cut the audio"""
+        task, self.response_task = self.response_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if self.current_source is not None:
+            self.current_source.clear()
+            self.current_source = None
+        if self.vc and self.vc.is_playing():
+            self.vc.stop()
 
     async def output_worker(self):
         """Worker that plays audio files from the audio_out_queue"""
@@ -141,11 +172,13 @@ class DiscordVoice:
     async def leave_channel(self, message) -> None:
         """Clean up the workers andd leave the voice channel
         """
+        await self.interrupt()
         if message.guild.voice_client:
             await message.guild.voice_client.disconnect()
         try:
             self.listener_worker.cancel()
             self.output_worker.cancel()
+            self.idle_task.cancel()
         except Exception as e:
             print(e)
         finally:
@@ -161,6 +194,8 @@ class DiscordVoice:
             return
         
         print(text, end=" | ")
+        self.last_heard = time.monotonic()
+        self.spoke_unprompted = False
         self.text_queue.put_nowait((user, text))
 
     async def listen(self):
@@ -168,36 +203,96 @@ class DiscordVoice:
         # Create a listener worker
         self.listener_worker = self.discord_client.add_task(self.listen_worker)
         self.output_worker = self.discord_client.add_task(self.output_worker)
-        
-        self.vc.listen(CustomSpeechRecognitionSink(recognizer="rtts", text_cb=self.got_text))
+        self.last_heard = time.monotonic()
+        self.idle_task = self.discord_client.add_task(self.idle_worker)
 
-    async def on_text(self, text):
-        print("\n", "-" * 20, f"\nPrompt='{text}'")
-        if text.strip() == "" or self.processing_response or self.is_playing:
+        # ? SilenceGeneratorSink fills in silence when Discord stops sending packets, so we can tell when someone is done talking
+        self.sink = CustomSpeechRecognitionSink(recognizer="rtts", text_cb=self.got_text)
+        self.vc.listen(voice_recv.SilenceGeneratorSink(self.sink))
+
+    async def on_text(self, said_by):
+        """said_by: {discord user: what they said} for everyone who spoke this turn."""
+        print("\n", "-" * 20, f"\nPrompt={ {str(u): t for u, t in said_by.items()} }")
+        if not said_by:
             return
-        
-        class Message:
-            def __init__(self, content, author):
-                self.content = content
-                self.author = author
+        await self._speak(self.discord_client.make_stream_response, said_by, self.vc.channel)
 
-        class Author:
-            def __init__(self, name):
-                self.name = name
-    
-        author = Author("user")
-        message = Message(str(text), author)
+    async def speak_unprompted(self):
+        """Say something on his own because the call has gone quiet"""
+        print("\n", "-" * 20, "\n[voice] Quiet for a while, saying something")
+        await self._speak(self.discord_client.make_idle_stream, self.vc.channel)
 
-        async def fn_push(buf): 
-            print(".", end="")
-            return await DC_Util.push_buffer_to_queue(buf, self.audio_out_queue)
+    async def idle_worker(self):
+        """Every so often, if nobody has said anything for IDLE_SECONDS, maybe start talking.
+        He only does it once per silence: after that he waits for someone to talk first."""
+        while True:
+            await asyncio.sleep(1)
+            if self.vc is None or not self.vc.is_connected():
+                continue
+            if self.is_busy() or self.sink.anyone_speaking():
+                self.last_heard = time.monotonic()
+                continue
+            if self.spoke_unprompted or time.monotonic() - self.last_heard < IDLE_SECONDS:
+                continue
 
-        text_stream = self.discord_client.make_stream_response(message)
-        
+            self.last_heard = time.monotonic()  # Not this time? Try again after another stretch of silence
+            if not any(not m.bot for m in self.vc.channel.members) or random.random() > IDLE_CHANCE:
+                continue
+            self.spoke_unprompted = True
+            self.current_prompt = {}
+            self.response_task = asyncio.create_task(self.speak_unprompted())
+
+    async def _speak(self, make_turn, *args):
+        """Generate a reply with make_turn(*args) and play it as it streams in"""
+        # ? One continuous source per response: chunks are played as soon as they
+        # arrive instead of being batched into separate ffmpeg clips
+        def on_start():
+            latency.mark("playback")
+            latency.report()
+
+        source = StreamingPCMSource(in_rate=24000, on_start=on_start)
+        self.current_source = source
+
+        def on_done(error):
+            if error: print(f"Playback error: {error}")
+
+        async def fn_push(chunk):
+            latency.mark("first_tts_audio")
+            source.feed(chunk)
+            if not self.vc.is_playing():
+                self.vc.play(source, after=on_done)
+
+        latency.mark("bot_got_text")
+        turn = None
+        # ? If we're cancelled while make_turn is still running on its thread, the Turn it returns
+        # is never seen here, so it has to close its own LLM stream once it exists
+        pending = {"cancelled": False, "turn": None}
+        def make():
+            pending["turn"] = t = make_turn(*args)
+            if pending["cancelled"]:
+                t.discard()
+            return t
         try:
-            websocket = await websockets.connect("ws://localhost:8000/api/v1/tts/ws")
-            await self.tts_module.ws_thread_manager(websocket, text_stream, fn_push)
+            # ? Memory lookups + the LLM request are blocking HTTP calls, keep them off the event loop.
+            # Connect to TTS at the same time instead of after
+            turn, websocket = await asyncio.gather(
+                asyncio.to_thread(make),
+                websockets.connect("ws://localhost:8000/api/v1/tts/ws"),
+            )
+            self.current_turn = turn
+            latency.mark("llm_stream_open")
+            await self.tts_module.ws_thread_manager(websocket, turn, fn_push, raw=True)
         except Exception as e:
             print(f"Error connecting to TTS WebSocket: {e}")
+        finally:
+            source.finish()
+            # Save the exchange (a no-op if it was discarded for a restart). If he got cut off,
+            # this keeps what he'd said so far.
+            if turn is not None:
+                turn.commit()
+            else:
+                pending["cancelled"] = True
+                if pending["turn"] is not None:
+                    pending["turn"].discard()
 
         print("-" *  20)
