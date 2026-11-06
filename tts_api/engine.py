@@ -26,6 +26,7 @@ class TTSEngine:
         self.chunks_received = 0
         # ? Streams audio mid-sentence (~0.3s to first audio instead of waiting for the whole sentence)
         self.engine = StreamingChatterboxEngine(voice=voice, *args, **kwargs)
+        self.warm_up()
         self.engine_stream = TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop)
         self.pending_feed = Queue() 
 
@@ -34,6 +35,20 @@ class TTSEngine:
         cprint("blue", f"Format: {formatting}, Channels: {channel}, Sample Rate: {sample_rate}")
         # Read the 
         cprint("blue", "Model Loaded")
+
+    def warm_up(self):
+        """Synthesize a throwaway sentence so CUDA kernels and caches are set up before the first real reply.
+        Long enough to hit both the mid-sentence and final vocode passes."""
+        import time
+        start = time.perf_counter()
+        try:
+            self.engine.synthesize("Hey, just warming up my voice here, give me one second and I'll be ready to talk.")
+        except Exception as e:
+            cprint("red", f"Warm-up failed: {e!r}")
+        # Throw away the warm-up audio so it doesn't play on the first connection
+        while not self.engine.queue.empty():
+            self.engine.queue.get_nowait()
+        cprint("blue", f"Warmed up in {time.perf_counter() - start:.1f}s")
 
     def unload_engine(self):
         if not hasattr(self, "engine"):
