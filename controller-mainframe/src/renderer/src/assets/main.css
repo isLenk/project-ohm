@@ -1,34 +1,36 @@
 @import './base.css';
-@import "tailwindcss";
+@import '@fontsource/space-grotesk/700.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #1b1b1f;
+  --color-page: #212229;
+  --color-panel: #2b2a30;
+  --color-raised: #31343e;
+  --color-field: #25262d;
+  --color-line: #3f4049;
+  --color-muted: #9ca3af;
+  --color-accent: #fbbf24;
+  --color-card: #f4f1ea;
+  --font-display: 'Space Grotesk', 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, monospace;
+}
 
 body {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-image: url('./wavy-lines.svg');
-  background-size: cover;
+  background: var(--color-page);
+  color: #f3f4f6;
   user-select: none;
 }
 
-code {
-  font-weight: 600;
-  padding: 3px 5px;
-  border-radius: 2px;
-  background-color: var(--color-background-mute);
-  font-family:
-    ui-monospace,
-    SFMono-Regular,
-    SF Mono,
-    Menlo,
-    Consolas,
-    Liberation Mono,
-    monospace;
-  font-size: 85%;
+.panel {
+  @apply rounded-xl bg-panel;
 }
 
-#root {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
+.btn {
+  @apply inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold;
+}
+
+.field {
+  @apply min-h-11 w-full rounded-lg border border-line bg-field px-3.5 text-[15px] text-gray-100 outline-none focus:border-accent;
 }

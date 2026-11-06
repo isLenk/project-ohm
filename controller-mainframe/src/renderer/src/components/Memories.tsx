@@ -1,17 +1,17 @@
-import React from 'react'
+import PageHeader from './PageHeader'
 
-const Memories = () => {
-  return (
-    <div>
-      <h1 className='text-xl'>Memories</h1>
-      <br/>
-      <a 
-        className='bg-blue-800 p-2 rounded-sm '
-        href="http://localhost:6333/dashboard#/collections" target="_blank" rel="noopener noreferrer">
-        Open Qdrant Dashboard
-      </a>
-    </div>
-  )
-}
+const Memories = () => (
+  <>
+    <PageHeader title="Memories" sub="Facts and past conversations are stored in Qdrant." />
+    <a
+      className="btn bg-accent text-ink"
+      href="http://localhost:6333/dashboard#/collections"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      Open Qdrant dashboard
+    </a>
+  </>
+)
 
 export default Memories

@@ -1,15 +1,13 @@
-import React from 'react'
-import Header from '../components/Header'
 import { Outlet } from 'react-router-dom'
+import Sidebar from '../components/Sidebar'
 
-const Template = () => {
-  return (
-    <div className="bg-[#212229] w-full min-h-screen absolute py-8 px-14">
-      <Header />
-      <br />
+const Template = () => (
+  <div className="flex min-h-screen">
+    <Sidebar />
+    <main className="min-w-0 flex-1 px-10 py-8">
       <Outlet />
-    </div>
-  )
-}
+    </main>
+  </div>
+)
 
 export default Template
