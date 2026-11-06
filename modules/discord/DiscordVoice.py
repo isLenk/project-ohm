@@ -103,12 +103,12 @@ class DiscordVoice:
                     self.current_turn.discard()
                 await self.interrupt()
                 if was_talking:
-                    # Talking over her just shuts her up
-                    print("[voice] Interrupted")
-                    continue
-                # She hadn't started talking yet, so they were still mid-thought: answer it all together
-                print("[voice] More speech before she answered, restarting with all of it")
-                said_by = {u: f"{previous.get(u, '')} {said_by.get(u, '')}".strip() for u in {**previous, **said_by}}
+                    # Talking over her shuts her up, then she answers what they said
+                    print("[voice] Interrupted, answering that instead")
+                else:
+                    # She hadn't started talking yet, so they were still mid-thought: answer it all together
+                    print("[voice] More speech before she answered, restarting with all of it")
+                    said_by = {u: f"{previous.get(u, '')} {said_by.get(u, '')}".strip() for u in {**previous, **said_by}}
 
             # ? Runs in the background so this loop can keep listening and interrupt it
             self.current_prompt = said_by
