@@ -3,7 +3,7 @@
 export type Link = {
   parent_id: string | null
   status: 'accepted' | 'suggested' | 'root'
-  origin: 'discord' | 'suggested' | 'manual'
+  origin: 'discord' | 'suggested' | 'manual' | 'model'
   score: number | null
   parent_ts: number | null
   parent_preview: string | null

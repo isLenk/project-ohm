@@ -355,7 +355,9 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent }: Props)
                   <span className="text-[14px] font-semibold text-gray-100">{nameOf(author)}</span>
                   <span className="text-[11.5px] text-muted">{first ? fmtTime(first.ts) : ''}</span>
                   {b.link?.status === 'root' && <span className="text-[11.5px] text-muted">thread start</span>}
-                  {b.link?.status === 'suggested' && <span className="text-[11.5px] text-muted">suggested reply</span>}
+                  {b.link?.status === 'suggested' && (
+                    <span className="text-[11.5px] text-muted">{b.link.origin === 'model' ? "model's guess" : 'suggested reply'}</span>
+                  )}
                   {loose && <span className="text-[11.5px] text-[#E0B25C]">not attached</span>}
                   {ownCount > 1 && <span className="text-[11.5px] text-muted">{ownCount} lines</span>}
                   {b.link?.status !== 'root' && (

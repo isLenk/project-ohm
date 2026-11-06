@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { LuAlignLeft, LuArchive, LuBrain, LuCheck, LuFilePlus, LuGitBranch, LuSearch, LuX } from 'react-icons/lu'
-import { CuratorError, call, dialog, get, post, type ConversationStats, type EditResult } from './api'
+import { LuAlignLeft, LuArchive, LuBrain, LuCheck, LuFilePlus, LuGitBranch, LuSearch, LuSparkles, LuX } from 'react-icons/lu'
+import { CuratorError, call, dialog, followJob, get, post, type ConversationStats, type EditResult } from './api'
 import { useFeed } from './useFeed'
 import ThreadsView from './ThreadsView'
 import RawView from './RawView'
@@ -32,6 +32,7 @@ export default function CuratorPage() {
   const [person, setPerson] = useState<string | null>(null)
   const [modelsKey, setModelsKey] = useState(0)
   const [recover, setRecover] = useState<string | null>(null)
+  const [guessing, setGuessing] = useState<string | null>(null)
   const undo = useRef<EditResult['inverse'][]>([])
 
   const onError = useCallback((e: unknown) => {
@@ -175,6 +176,27 @@ export default function CuratorPage() {
       onError(e)
     }
   }, [feed, markDirty, loadConvs, onError])
+
+  // ── model guesses for unattached blocks ─────────────────────────────────
+  const guessReplies = async (c: ConversationStats) => {
+    setGuessing('Asking the model…')
+    try {
+      const j = await post('/links/guess', { conversation_id: c.id })
+      const r = await followJob(j.id, (p) => setGuessing(p.total ? `Asking the model ${p.done}/${p.total}` : 'Asking the model…'))
+      feed.apply({ units: r?.units || [] })
+      if (r?.suggested) markDirty()
+      loadConvs()
+      const s = await get<ConversationStats>(`/conversations/${c.id}`)
+      setCurrent(s)
+      feed.updateConversation(s)
+      if (r?.stopped) onError(new Error(`${r.stopped} ${r.suggested} guesses made before it stopped.`))
+      else say(r?.suggested ? `The model guessed ${r.suggested} ${r.suggested === 1 ? 'reply' : 'replies'}` : 'The model had no guesses')
+    } catch (e) {
+      onError(e)
+    } finally {
+      setGuessing(null)
+    }
+  }
 
   // ── approval ────────────────────────────────────────────────────────────
   const approve = async (c: ConversationStats, confirmed = false) => {
@@ -437,6 +459,16 @@ export default function CuratorPage() {
             )}
             <span className="flex-1" />
             {c.unattached > 0 && <span className="text-[12.5px] text-[#E0B25C]">{c.unattached} not attached</span>}
+            {c.unattached > 0 && !c.approved && (
+              <button
+                onClick={() => guessReplies(c)}
+                disabled={!!guessing}
+                title="Ask the local model which message each unattached block replies to"
+                className="flex h-9 items-center gap-2 rounded-md border border-line px-3.5 text-[13px] hover:bg-raised disabled:opacity-60"
+              >
+                <LuSparkles className="size-4" /> {guessing || 'Guess with model'}
+              </button>
+            )}
             {c.suggested > 0 && <span className="text-[12.5px] text-muted">{c.suggested} suggested</span>}
             <button
               onClick={() => setFlag(c, c.archived ? 'unarchive' : 'archive')}
