@@ -230,10 +230,20 @@ def rebuild(conn, channel_id: str, settings: dict) -> dict:
     if not msgs:
         return {"conversations": 0}
     old = [dict(r) for r in conn.execute("SELECT * FROM conversations WHERE channel_id = ?", (channel_id,))]
-    manual = [c for c in old if c["manual"]]
+    manual = sorted((c for c in old if c["manual"]), key=lambda c: (c["first_ts"], c["id"]))
+    manual_starts = [c["first_ts"] for c in manual]
 
     def inside_manual(m) -> Optional[dict]:
-        return next((c for c in manual if c["first_ts"] <= m["ts"] <= c["last_ts"]), None)
+        # Manual conversations don't overlap, so only the latest one starting at or before m can hold it.
+        i = bisect_right(manual_starts, m["ts"])
+        while i > 0:
+            i -= 1
+            c = manual[i]
+            if c["last_ts"] >= m["ts"]:
+                return c
+            if c["first_ts"] < m["ts"]:
+                return None
+        return None
 
     starts = []
     for i, m in enumerate(msgs):

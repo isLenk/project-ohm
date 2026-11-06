@@ -149,6 +149,15 @@ def test_split_inside_block_cuts_block_and_copies_link(project):
     assert merged["last_message_id"] == "1010"
 
 
+def test_rebuild_keeps_manual_splits(project):
+    with project.tx() as conn:
+        conversations.split(conn, "1004")
+        conversations.split(conn, "1009")
+        conversations.rebuild(conn, "c1", project.settings())
+    firsts = [c["first_message_id"] for c in project.all("SELECT * FROM conversations ORDER BY first_ts")]
+    assert firsts == ["1000", "1004", "1009", "1011"]
+
+
 # ── feed ────────────────────────────────────────────────────────────────────
 def test_feed_pages_and_markers(project):
     with project.lock:
