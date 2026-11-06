@@ -5,12 +5,14 @@ import {
   LuLayers,
   LuDatabase,
   LuFilter,
-  LuSlidersHorizontal
+  LuSlidersHorizontal,
+  LuMessagesSquare
 } from 'react-icons/lu'
 
 const LINKS = [
   ['/', 'Dashboard', LuLayoutGrid],
   ['/characters', 'Characters', LuUsers],
+  ['/curator', 'Curator', LuMessagesSquare],
   ['/modules', 'Modules', LuLayers],
   ['/memories', 'Memories', LuDatabase],
   ['/filters', 'Filters', LuFilter],
