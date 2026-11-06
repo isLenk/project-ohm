@@ -108,15 +108,16 @@ def page(conn, channel_id: Optional[str] = None, cursor: Optional[str] = None, d
         f"SELECT id FROM messages WHERE block_id IN ({','.join('?' * len(ids))})", ids
     )}
     items, author_ids = [], set()
-    starts = {r["first_message_id"]: dict(r) for r in conn.execute(
+    starting = [dict(r) for r in conn.execute(
         "SELECT * FROM conversations WHERE channel_id = ? AND first_ts >= ? AND first_ts <= ?",
         (channel_id, rows[0]["first_ts"], rows[-1]["first_ts"]),
-    )}
+    )]
+    starts = {s["first_message_id"]: s for s in conversations.stats_many(conn, starting)}
     for r in rows:
         item = block_item(conn, r["id"], page_ids)
         first_id = item["messages"][0]["id"] if item["messages"] else None
         if first_id in starts:
-            items.append({"type": "conversation_start", "conversation": conversations.stats(conn, starts[first_id])})
+            items.append({"type": "conversation_start", "conversation": starts[first_id]})
         conv = conversation_at(conn, channel_id, r["first_ts"])
         item["conversation_id"] = conv["id"] if conv else None
         items.append(item)

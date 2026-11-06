@@ -4,11 +4,12 @@ Only conversations can be approved, and only approved, unarchived ones are expor
 """
 
 import sqlite3
+from bisect import bisect_right
 from typing import Optional
 
 from .errors import ApiError, not_found
 from .project import now_ms
-from .threads import block_messages, conversation_at, key, link_row, split_ids
+from .threads import block_messages, conversation_at, key, link_row
 
 
 def get(conn: sqlite3.Connection, conversation_id: int) -> dict:
@@ -18,39 +19,69 @@ def get(conn: sqlite3.Connection, conversation_id: int) -> dict:
     return dict(row)
 
 
-def blocks_in(conn, conv: dict) -> list:
-    return conn.execute(
-        "SELECT * FROM blocks WHERE channel_id = ? AND first_ts >= ? AND first_ts <= ? ORDER BY first_ts, id",
-        (conv["channel_id"], conv["first_ts"], conv["last_ts"]),
-    ).fetchall()
+def _snapshot(conn, convs: list[dict]) -> dict[int, dict]:
+    """Messages and units for many conversations at once: three range queries per channel.
 
+    Returns {conversation id: {"messages": [...], "units": [...]}}. A message belongs to the
+    conversation its ts falls in, a unit to the one its block starts in; blocks never cross a
+    conversation boundary, so the two agree.
+    """
+    out = {c["id"]: {"messages": [], "units": []} for c in convs}
+    by_channel: dict[str, list[dict]] = {}
+    for c in convs:
+        by_channel.setdefault(c["channel_id"], []).append(c)
+    for channel_id, cs in by_channel.items():
+        cs.sort(key=lambda c: (c["first_ts"], c["id"]))
+        starts = [c["first_ts"] for c in cs]
+        lo, hi = starts[0], max(c["last_ts"] for c in cs)
 
-def messages_in(conn, conv: dict) -> list:
-    return conn.execute(
-        "SELECT * FROM messages WHERE channel_id = ? AND ts >= ? AND ts <= ? ORDER BY ts, CAST(id AS INTEGER)",
-        (conv["channel_id"], conv["first_ts"], conv["last_ts"]),
-    ).fetchall()
+        def owner(ts: int) -> Optional[int]:
+            i = bisect_right(starts, ts) - 1
+            return cs[i]["id"] if i >= 0 and cs[i]["last_ts"] >= ts else None
+
+        msgs = conn.execute(
+            "SELECT m.*, b.first_ts AS block_ts FROM messages m JOIN blocks b ON b.id = m.block_id "
+            "WHERE m.channel_id = ? AND m.ts >= ? AND m.ts <= ? ORDER BY m.ts, CAST(m.id AS INTEGER)",
+            (channel_id, lo, hi),
+        ).fetchall()
+        block_links = {r["unit_id"]: dict(r) for r in conn.execute(
+            "SELECT l.* FROM blocks b JOIN links l ON l.unit_kind = 'block' AND l.unit_id = CAST(b.id AS TEXT) "
+            "WHERE b.channel_id = ? AND b.first_ts >= ? AND b.first_ts <= ?", (channel_id, lo, hi),
+        )}
+        message_links = {r["unit_id"]: dict(r) for r in conn.execute(
+            "SELECT l.* FROM messages m JOIN links l ON l.unit_kind = 'message' AND l.unit_id = m.id "
+            "WHERE m.channel_id = ? AND m.ts >= ? AND m.ts <= ?", (channel_id, lo, hi),
+        )}
+        blocks: dict[int, list] = {}
+        for m in msgs:
+            cid = owner(m["ts"])
+            if cid is not None:
+                out[cid]["messages"].append(m)
+            blocks.setdefault(m["block_id"], []).append(m)
+        for bid in sorted(blocks, key=lambda b: (blocks[b][0]["block_ts"], b)):
+            bm = blocks[bid]
+            cid = owner(bm[0]["block_ts"])
+            if cid is None:
+                continue
+            units = out[cid]["units"]
+            own = [m for m in bm if m["id"] not in message_links]
+            if own:
+                units.append({"kind": "block", "id": str(bid), "author_id": bm[0]["author_id"], "messages": own,
+                              "link": block_links.get(str(bid))})
+            for m in bm:
+                if m["id"] in message_links:
+                    units.append({"kind": "message", "id": m["id"], "author_id": m["author_id"], "messages": [m],
+                                  "link": message_links[m["id"]]})
+    return out
 
 
 def units_in(conn, conv: dict) -> list[dict]:
     """Every unit in the conversation with its link (or None) and the messages it speaks for."""
-    units = []
-    for b in blocks_in(conn, conv):
-        msgs = block_messages(conn, b["id"])
-        splits = split_ids(conn, b["id"])
-        own = [m for m in msgs if m["id"] not in splits]
-        if own:
-            units.append({"kind": "block", "id": str(b["id"]), "author_id": b["author_id"], "messages": own,
-                          "link": link_row(conn, "block", str(b["id"]))})
-        for m in msgs:
-            if m["id"] in splits:
-                units.append({"kind": "message", "id": m["id"], "author_id": m["author_id"], "messages": [m],
-                              "link": link_row(conn, "message", m["id"])})
-    return units
+    return _snapshot(conn, [conv])[conv["id"]]["units"]
 
 
-def stats(conn, conv: dict) -> dict:
-    msgs = [m for m in messages_in(conn, conv) if not m["excluded"]]
+def _stats(conv: dict, snap: dict) -> dict:
+    msgs = [m for m in snap["messages"] if not m["excluded"]]
     by_author: dict[str, int] = {}
     for m in msgs:
         by_author[m["author_id"]] = by_author.get(m["author_id"], 0) + 1
@@ -58,7 +89,7 @@ def stats(conn, conv: dict) -> dict:
     skew = sorted(({"author_id": a, "count": n, "share": round(n / total, 3)} for a, n in by_author.items()),
                   key=lambda s: -s["count"])
     unattached = suggested = roots = 0
-    for u in units_in(conn, conv):
+    for u in snap["units"]:
         live = [m for m in u["messages"] if not m["excluded"]]
         if not live:
             continue
@@ -77,6 +108,15 @@ def stats(conn, conv: dict) -> dict:
     }
 
 
+def stats_many(conn, convs: list[dict]) -> list[dict]:
+    snaps = _snapshot(conn, convs)
+    return [_stats(c, snaps[c["id"]]) for c in convs]
+
+
+def stats(conn, conv: dict) -> dict:
+    return stats_many(conn, [conv])[0]
+
+
 def listing(conn, filter_: str = "all") -> list[dict]:
     where = {
         "all": "archived_at IS NULL",
@@ -86,7 +126,7 @@ def listing(conn, filter_: str = "all") -> list[dict]:
     if where is None:
         raise ApiError(422, "bad_filter", "Filter is all, approved or archived.")
     rows = conn.execute(f"SELECT * FROM conversations WHERE {where} ORDER BY first_ts DESC").fetchall()
-    return [stats(conn, dict(r)) for r in rows]
+    return stats_many(conn, [dict(r) for r in rows])
 
 
 def approve(conn, conversation_id: int, confirm: bool) -> dict:
