@@ -8,7 +8,7 @@ import json
 import math
 import re
 import sqlite3
-from typing import Optional
+from typing import Callable, Optional
 
 from .errors import ApiError, not_found
 from .project import now_ms
@@ -442,8 +442,12 @@ def suggest_block(conn, block_id: int, settings: dict, cache: Optional[ScoreCach
     return link_row(conn, "block", str(block_id))
 
 
-def suggest_all(conn, settings: dict, channel_id: Optional[str] = None) -> dict:
-    """Run the suggester over every block without a link. The importer calls this after loading messages."""
+def suggest_all(conn, settings: dict, channel_id: Optional[str] = None,
+                progress: Optional[Callable[[int, int], None]] = None) -> dict:
+    """Run the suggester over every block without a link. The importer calls this after loading messages.
+
+    `progress(done, total)` is called every 500 blocks, e.g. with a job's progress method.
+    """
     sql = "SELECT b.id FROM blocks b LEFT JOIN links l ON l.unit_kind = 'block' AND l.unit_id = CAST(b.id AS TEXT) WHERE l.id IS NULL"
     params: tuple = ()
     if channel_id:
@@ -451,9 +455,14 @@ def suggest_all(conn, settings: dict, channel_id: Optional[str] = None) -> dict:
         params = (channel_id,)
     counts = {"suggested": 0, "root": 0, "unattached": 0}
     cache = ScoreCache()
-    for (bid,) in conn.execute(sql + " ORDER BY b.first_ts, b.id", params).fetchall():
+    pending = conn.execute(sql + " ORDER BY b.first_ts, b.id", params).fetchall()
+    for i, (bid,) in enumerate(pending):
+        if progress and i % 500 == 0:
+            progress(i, len(pending))
         row = suggest_block(conn, bid, settings, cache, check_link=False)
         counts[row["status"] if row else "unattached"] += 1
+    if progress:
+        progress(len(pending), len(pending))
     return counts
 
 
