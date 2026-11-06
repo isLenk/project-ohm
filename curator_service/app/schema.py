@@ -6,7 +6,7 @@ PROJECT_MIGRATIONS whenever the project schema changes.
 
 APPLICATION_ID = 0x4F484D31  # 'OHM1'
 
-PROJECT_VERSION = 2
+PROJECT_VERSION = 3
 
 PROJECT_SCHEMA = """
 CREATE TABLE meta (
@@ -42,6 +42,7 @@ CREATE TABLE blocks (
   last_ts       INTEGER NOT NULL
 );
 CREATE INDEX blocks_feed ON blocks (channel_id, first_ts, id);
+CREATE INDEX blocks_author ON blocks (channel_id, author_id, first_ts);
 
 CREATE TABLE messages (
   id            TEXT PRIMARY KEY,
@@ -60,7 +61,8 @@ CREATE TABLE messages (
   excluded      INTEGER NOT NULL DEFAULT 0,
   exclude_reason TEXT
 );
-CREATE INDEX messages_feed ON messages (channel_id, ts, id);
+-- Feed order is (ts, snowflake as a number); the CAST must match the queries' ORDER BY exactly.
+CREATE INDEX messages_feed ON messages (channel_id, ts, CAST(id AS INTEGER));
 CREATE INDEX messages_block ON messages (block_id, ts);
 CREATE INDEX messages_author ON messages (author_id, ts);
 
@@ -193,6 +195,14 @@ PROJECT_MIGRATIONS: list[str] = [
       block_id   INTEGER PRIMARY KEY REFERENCES blocks(id),
       scanned_at INTEGER NOT NULL
     );
+    COMMIT;
+    """,
+    # 2 -> 3: indexes that keep big imports (100k+ messages) fast. No data changes.
+    """
+    BEGIN;
+    DROP INDEX IF EXISTS messages_feed;
+    CREATE INDEX messages_feed ON messages (channel_id, ts, CAST(id AS INTEGER));
+    CREATE INDEX IF NOT EXISTS blocks_author ON blocks (channel_id, author_id, first_ts);
     COMMIT;
     """,
 ]

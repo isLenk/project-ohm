@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from curator_service.app import conversations, export, feed, search, threads
+from curator_service.app import conversations, export, feed, schema, search, threads
 from curator_service.app.errors import ApiError
 from curator_service.app.project import Project
 from curator_service.tests.seed import seed
@@ -214,7 +214,7 @@ def test_cap_is_feasible_with_two_people():
     assert counts == {"a": 30, "b": 30} and removed == 40
 
 
-def test_v1_project_migrates(tmp_path):
+def test_old_project_migrates(tmp_path):
     path = tmp_path / "old.ohm"
     p = Project.create(path, "Old")
     seed(p)
@@ -244,6 +244,9 @@ def test_v1_project_migrates(tmp_path):
         DROP TABLE rejected_suggestions;
         ALTER TABLE rejected_v1 RENAME TO rejected_suggestions;
         DROP TABLE model_link_scans;
+        DROP INDEX messages_feed;
+        CREATE INDEX messages_feed ON messages (channel_id, ts, id);
+        DROP INDEX blocks_author;
         PRAGMA user_version = 1;
     """)
     links_before = raw.execute("SELECT COUNT(*) FROM links").fetchone()[0]
@@ -251,7 +254,10 @@ def test_v1_project_migrates(tmp_path):
 
     p = Project.open(path)
     try:
-        assert p.scalar("PRAGMA user_version") == 2
+        assert p.scalar("PRAGMA user_version") == schema.PROJECT_VERSION
+        feed_index = p.scalar("SELECT sql FROM sqlite_master WHERE name = 'messages_feed'")
+        assert "CAST(id AS INTEGER)" in feed_index
+        assert p.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name = 'blocks_author'") == 1
         assert p.scalar("SELECT COUNT(*) FROM links") == links_before
         assert threads.suggester_stats(p.conn)["rejected"] == 1  # old rejections count as the heuristic's
         with p.tx() as conn:

@@ -22,7 +22,7 @@ A `.ohm` file is a plain SQLite 3 database.
 
 ```sql
 PRAGMA application_id = 0x4F484D31;  -- 'OHM1', lets us reject random .sqlite files
-PRAGMA user_version   = 2;           -- schema version, bump on every migration
+PRAGMA user_version   = 3;           -- schema version, bump on every migration
 PRAGMA journal_mode   = WAL;
 PRAGMA foreign_keys   = ON;
 ```
@@ -88,7 +88,7 @@ CREATE TABLE messages (
   excluded      INTEGER NOT NULL DEFAULT 0,
   exclude_reason TEXT                   -- 'manual' | 'bot' | 'empty' | 'filter:<rule id>'
 );
-CREATE INDEX messages_feed ON messages (channel_id, ts, id);
+CREATE INDEX messages_feed ON messages (channel_id, ts, CAST(id AS INTEGER));  -- matches the feed's ORDER BY
 CREATE INDEX messages_author ON messages (author_id, ts);
 
 CREATE TABLE blocks (
@@ -98,6 +98,8 @@ CREATE TABLE blocks (
   first_ts      INTEGER NOT NULL,
   last_ts       INTEGER NOT NULL
 );
+CREATE INDEX blocks_feed ON blocks (channel_id, first_ts, id);
+CREATE INDEX blocks_author ON blocks (channel_id, author_id, first_ts);  -- the suggester's "who spoke last" lookup
 
 -- One row per unit that has a decision. A unit is a block or a split message.
 -- No row = unattached.
