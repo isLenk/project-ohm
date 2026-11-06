@@ -5,7 +5,6 @@ See Documentation/Curator/memories.md.
 
 import json
 import re
-import time
 from collections import Counter
 from typing import Optional
 
@@ -174,7 +173,8 @@ def extract(project, job, conversation_id: Optional[int] = None) -> dict:
         params += [conv["channel_id"], conv["first_ts"], conv["last_ts"]]
     blocks = project.all(sql + " ORDER BY b.first_ts", params)
     use_vectors = embeddings.available()
-    created = merged = 0
+    created = merged = failed = 0
+    stopped = None
     for i, b in enumerate(blocks):
         if job.cancelled:
             break
@@ -189,8 +189,12 @@ def extract(project, job, conversation_id: Optional[int] = None) -> dict:
             try:
                 result = llm.chat_json(EXTRACT_SYSTEM, f"{name}:\n{text}")
             except requests.RequestException:
-                time.sleep(5)
-                result = None
+                # Leave the block unscanned so the next run asks again.
+                if not llm.up():
+                    stopped = "llama-server stopped answering."
+                    break
+                failed += 1
+                continue
         with project.tx() as conn:
             conn.execute("INSERT OR REPLACE INTO memory_scans (block_id, scanned_at) VALUES (?, ?)", (b["id"], now_ms()))
             if not isinstance(result, dict) or not result.get("note"):
@@ -215,7 +219,8 @@ def extract(project, job, conversation_id: Optional[int] = None) -> dict:
     job.progress(len(blocks), len(blocks), "done")
     with project.tx() as conn:
         styles = refresh_styles(conn)
-    return {"blocks": len(blocks), "created": created, "merged": merged, "style_traits": styles}
+    return {"blocks": len(blocks), "created": created, "merged": merged, "failed": failed, "stopped": stopped,
+            "style_traits": styles}
 
 
 # ── style traits ────────────────────────────────────────────────────────────

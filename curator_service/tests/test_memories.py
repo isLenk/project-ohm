@@ -1,3 +1,5 @@
+import requests
+
 from curator_service.app import llm, memories
 
 
@@ -53,3 +55,16 @@ def test_sync_needs_memory_service(project):
         with project.tx() as conn:
             memories.sync(conn, "ohm")
     assert e.value.code == "memory_service_off"
+
+
+def test_extract_leaves_failed_blocks_unscanned(project, monkeypatch):
+    monkeypatch.setattr(llm, "up", lambda: True)
+
+    def broken(*a, **k):
+        raise requests.Timeout("slow")
+
+    monkeypatch.setattr(llm, "chat_json", broken)
+    r = memories.extract(project, FakeJob())
+    assert r["failed"] > 0 and r["created"] == 0
+    scanned = project.scalar("SELECT COUNT(*) FROM memory_scans")
+    assert scanned == r["blocks"] - r["failed"]  # only the too-short blocks

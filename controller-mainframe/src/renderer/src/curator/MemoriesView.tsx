@@ -102,7 +102,10 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
       setJob('Reading messages…')
       const result = await followJob(j.id, (p) => setJob(p.total ? `Reading messages ${p.done}/${p.total}` : 'Reading messages…'))
       setJob(null)
-      setNote(`Found ${result?.created ?? 0} new memories (${result?.merged ?? 0} matched ones you already had).`)
+      const found = `Found ${result?.created ?? 0} new memories (${result?.merged ?? 0} matched ones you already had).`
+      if (result?.stopped) setNote(`${result.stopped} ${found} Run it again once it's back to finish.`)
+      else if (result?.failed) setNote(`${found} ${result.failed} blocks timed out; run it again to retry them.`)
+      else setNote(found)
       refresh()
     } catch (e) {
       setJob(null)

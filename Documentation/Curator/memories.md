@@ -26,7 +26,7 @@ Runs as a background job after import, and again for a conversation when it is a
 
    `short_lived` is true for things that are only true today ("was out all day"). `mentions_person` is a name that is not a known author ("arnav").
 
-3. Drop `NONE` results.
+3. Drop `NONE` results. A block is marked in `memory_scans` once the model has answered for it. If the request fails (a timeout, say), the block stays unscanned so the next run retries it. If `llama-server` stops answering, the job stops early and reports `stopped`.
 4. **Dedupe:** embed the note (same MiniLM model as `memory_service`). If an existing memory for the same author has cosine ≥ 0.9, add this block's messages to that memory's `memory_sources` instead of creating a new row. The UI shows that as "2 sources".
 5. Insert with `status='new'`.
 
