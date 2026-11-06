@@ -16,6 +16,26 @@ DISCORD_SAMPLE_RATE = 44100
 IDLE_SECONDS = 10   # how long the call has to be quiet before Ohm might talk on his own
 IDLE_CHANCE = 0.5   # chance he does each time that happens, so it feels occasional, not like a timer
 logger = logging.getLogger(__name__)
+
+# What to do when someone talks over him (a plain word check, no LLM call, so it's instant)
+FILLER = {"yeah", "yea", "yep", "yup", "ya", "yes", "ok", "okay", "k", "right", "true", "sure", "mhm", "mm",
+          "hmm", "hm", "uh", "huh", "um", "ah", "oh", "lol", "lmao", "haha", "ha", "nice", "cool", "facts", "fair", "word"}
+STOP_PHRASES = ("shut up", "stfu", "stop", "be quiet", "quiet", "enough", "shush", "shh", "nobody asked")
+STOP_MAX_WORDS = 5   # "dude just shut up ohm" counts, a longer sentence that happens to say "stop" doesn't
+FILLER_MAX_WORDS = 3
+
+def classify_interruption(text: str, bot_name: str = "") -> str:
+    """'ignore' (backchannel, keep talking), 'stop' (go quiet, don't reply) or 'answer' (stop and reply)."""
+    words = "".join(c if c.isalnum() or c == "'" else " " for c in text.lower()).split()
+    words = [w for w in words if w != bot_name.lower()]   # "okay ohm" is still just "okay"
+    if not words:
+        return "ignore"
+    phrase = " ".join(words)
+    if len(words) <= STOP_MAX_WORDS and any(f" {p} " in f" {phrase} " for p in STOP_PHRASES):
+        return "stop"
+    if len(words) <= FILLER_MAX_WORDS and all(w in FILLER for w in words):
+        return "ignore"
+    return "answer"
 # ? Discord sends RTCP sender reports that voice_recv logs on every packet, they're harmless
 logging.getLogger("discord.ext.voice_recv.reader").setLevel(logging.WARNING)
 import wave
@@ -97,6 +117,15 @@ class DiscordVoice:
 
             if self.is_busy():
                 was_talking = self.vc.is_playing()
+                if was_talking:
+                    action = classify_interruption(" ".join(said_by.values()), self.discord_client.model.name)
+                    if action == "ignore":
+                        print("[voice] Backchannel, still talking")
+                        continue
+                    if action == "stop":
+                        await self.interrupt()
+                        print("[voice] Told to stop")
+                        continue
                 previous = self.current_prompt
                 if not was_talking and self.current_turn is not None:
                     # Nobody heard that reply, so don't keep it in the conversation
