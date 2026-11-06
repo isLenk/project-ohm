@@ -1,28 +1,16 @@
 import requests
 import os
 import json
-from sentence_transformers import SentenceTransformer
+from controller.memory import memory
 
 interface_api = "http://localhost:3001"
-encoder = SentenceTransformer("all-MiniLM-L6-v2")
+INTERFACE_TIMEOUT = 3
 
 def get_interface_api():
     """
     Get the interface API URL.
     """
     return interface_api
-
-def get_encoding(text: str):
-    """
-    Get the encoding for a given text.
-    """
-    return encoder.encode(text)
-
-def get_vectorsize():
-    """
-    Get the size of the vectors used by the encoder.
-    """
-    return encoder.get_sentence_embedding_dimension()
 
 # ? Interface Related Functions Below
 
@@ -43,9 +31,13 @@ def send_modules_to_interface():
                     body = f.read()
                 body = json.loads(body)
                 
-                # Send to interface
-                response = requests.post(f"{interface_api}/api/modules", json=body)
-                if response.status_code != 200:
+                # Send to interface (the controller app is optional)
+                try:
+                    response = requests.post(f"{interface_api}/api/modules", json=body, timeout=INTERFACE_TIMEOUT)
+                except requests.RequestException:
+                    print(f"Controller not reachable at {interface_api}; skipping module registration.")
+                    return modules
+                if response.status_code not in (200, 201):
                     print(f"Error sending module {module} to interface: {response.status_code}")
                 else:
                     print(f"Module {module} sent to interface successfully.")
@@ -56,30 +48,24 @@ def send_input_to_interface(user_input: str):
     """
     Send user input to the interface.
     """
-    response = requests.post(f"{interface_api}/api/send", json={
-        "character": "ohm",
-        "input": str(user_input),
-    })
-    
+    try:
+        response = requests.post(f"{interface_api}/api/send", json={
+            "character": "ohm",
+            "input": str(user_input),
+        }, timeout=INTERFACE_TIMEOUT)
+    except requests.RequestException:
+        print("Controller not reachable; input not sent to interface.")
+        return
+
     if response.status_code != 200:
         print(f"Error sending input to interface: {response.status_code}")
     else:
         print("Input sent to interface successfully.")
 
-def get_related_memories(text_in: str):
+def get_related_memories(text_in: str, character: str = "ohm"):
     """
-    Get related memories for a given input text.
+    Get related memories for a given input text from the memory service on the NAS.
     """
-    encoding = get_encoding(text_in)
-    vectorsize = get_vectorsize()
-    
-    response = requests.post(f"{interface_api}/api/ohm/memories", params={"input": text_in}, json={"encoding": encoding.tolist(), "vectorsize": vectorsize})
-    
-    if response.status_code == 200:
-        memories = response.json()
-        print(f"Related Memories: {memories}")
-        return memories
-    else:
-        print(f"Error fetching related memories: {response.status_code}")
-        print(f"Response: {response.text}")
-        return []
+    memories = memory.search(character, text_in)
+    print(f"Related Memories: {[m['content'] for m in memories]}")
+    return memories

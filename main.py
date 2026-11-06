@@ -1,6 +1,7 @@
 from modules.discord.DiscordClient import DiscordClient 
 from controller.model import ModelObject
 from config import constants
+from controller.memory import load_character
 import os
 from dotenv import load_dotenv
 from typing import Union
@@ -39,12 +40,16 @@ def process_user_input(model: ModelObject, user_input: str):
     
     print(f"Response: {response[0]}")
 
+def build_model() -> ModelObject:
+    # The NAS is the source of truth for characters; constants.py is the offline fallback.
+    target_model = load_character("ohm", fallback=constants.models["ohm"])
+    return ModelObject(target_model, api_key="0608da5d28eb10cea2914f3de0f3ddba")
+
 def main():
 
     token = os.getenv('DISCORD_TOKEN')
 
-    target_model = constants.models["ohm"]
-    model = ModelObject(target_model, api_key="0608da5d28eb10cea2914f3de0f3ddba")
+    model = build_model()
     # View all of the modules in the modules directory
     modules = send_modules_to_interface()
     
