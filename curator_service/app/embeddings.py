@@ -13,7 +13,7 @@ BATCH = 256
 
 _model = None
 _lock = threading.Lock()
-_cache: dict = {"key": None, "ids": [], "authors": [], "matrix": None}
+_cache: dict = {"key": None, "ids": [], "authors": [], "matrix": None, "index": {}}
 
 
 def available() -> bool:
@@ -80,8 +80,8 @@ def build(project, job) -> dict:
         step = 256
         for start in range(0, len(ids), step):
             sims = matrix[start : start + step] @ matrix.T
-            for r in range(sims.shape[0]):
-                sims[r, start + r] = -1.0
+            rows = np.arange(sims.shape[0])
+            sims[rows, start + rows] = -1.0  # not a duplicate of itself
             best = sims.argmax(axis=1)
             for r, j in enumerate(best):
                 score = float(sims[r, j])
@@ -96,7 +96,7 @@ def build(project, job) -> dict:
 
 def invalidate() -> None:
     with _lock:
-        _cache.update(key=None, ids=[], authors=[], matrix=None)
+        _cache.update(key=None, ids=[], authors=[], matrix=None, index={})
 
 
 def load(project):
@@ -118,17 +118,20 @@ def load(project):
     ids = [r["message_id"] for r in rows]
     authors = [r["author_id"] for r in rows]
     with _lock:
-        _cache.update(key=cache_key, ids=ids, authors=authors, matrix=matrix)
+        _cache.update(key=cache_key, ids=ids, authors=authors, matrix=matrix, index={m: i for i, m in enumerate(ids)})
     return ids, authors, matrix
 
 
 def nearest(project, message_id: str, exclude_author: Optional[str], limit: int, threshold: float) -> list[tuple[str, float]]:
+    import numpy as np
+
     ids, authors, matrix = load(project)
-    if matrix is None or message_id not in ids:
+    i = _cache["index"].get(message_id) if matrix is not None else None
+    if i is None:
         return []
-    i = ids.index(message_id)
     sims = matrix @ matrix[i]
-    order = sims.argsort()[::-1]
+    above = np.nonzero(sims >= threshold)[0]  # usually a handful, so sort only those
+    order = above[np.argsort(-sims[above], kind="stable")]
     out = []
     for j in order:
         if j == i or (exclude_author and authors[j] == exclude_author):

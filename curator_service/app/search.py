@@ -169,10 +169,14 @@ def run(project, q: str, mode: str = "text", limit: int = 50) -> dict:
         people = []
         if text or p["authors"]:
             needles = [a.lower() for a in p["authors"]] + ([text] if text and not p["authors"] else [])
+            matches = []
             for r in conn.execute("SELECT * FROM authors").fetchall():
                 names = [(r["name"] or "").lower(), (r["display_name"] or "").lower()]
                 if any(n and any(n.startswith(x) or x in n for x in needles) for n in names):
-                    people.append(_person(conn, r))
+                    matches.append(r)
+            if matches:
+                total = conn.execute("SELECT COUNT(*) FROM messages WHERE excluded = 0").fetchone()[0] or 1
+                people = [_person(conn, r, total) for r in matches[:5]]
 
         actions = [a for a in ACTIONS if text and text in a["label"].lower()] if text else []
     return {"messages": messages, "similar": similar, "people": people[:5], "actions": actions,
@@ -215,9 +219,8 @@ def _message_out(conn, r, highlights) -> dict:
             "highlights": highlights, "conversation_id": _conversation_id(conn, r), "excluded": bool(r["excluded"])}
 
 
-def _person(conn, r) -> dict:
+def _person(conn, r, total: int) -> dict:
     count = conn.execute("SELECT COUNT(*) FROM messages WHERE author_id = ? AND excluded = 0", (r["id"],)).fetchone()[0]
-    total = conn.execute("SELECT COUNT(*) FROM messages WHERE excluded = 0").fetchone()[0] or 1
     mems = conn.execute("SELECT COUNT(*) FROM memories WHERE author_id = ? AND status != 'forgotten'", (r["id"],)).fetchone()[0]
     return {"author_id": r["id"], "name": r["name"], "display_name": r["display_name"], "color_index": r["color_index"],
             "messages": count, "share": round(count / total, 3), "memories": mems}
