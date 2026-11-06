@@ -9,5 +9,5 @@ Loads the python files and interface
 ### run_qdrant
 Executes qdrant api for RAG
 
-### run_tabby
-Executes tabby API for text generation
+### run_llama
+Executes llama.cpp server (Gemma 4 E4B) for text generation
