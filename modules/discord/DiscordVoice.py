@@ -277,7 +277,7 @@ class DiscordVoice:
             # Connect to TTS at the same time instead of after
             turn, websocket = await asyncio.gather(
                 asyncio.to_thread(make),
-                websockets.connect("ws://localhost:8000/api/v1/tts/ws"),
+                websockets.connect("ws://127.0.0.1:8000/api/v1/tts/ws"),
             )
             self.current_turn = turn
             latency.mark("llm_stream_open")
