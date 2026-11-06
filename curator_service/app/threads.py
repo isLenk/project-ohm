@@ -286,37 +286,73 @@ def _is_question(text: str) -> bool:
     return first in QUESTION_WORDS and len(t.split()) >= 3
 
 
-def _vector(conn, message_id: str):
-    row = conn.execute("SELECT vector FROM message_embeddings WHERE message_id = ?", (message_id,)).fetchone()
-    if not row:
+class ScoreCache:
+    """Lookups the suggester repeats for every block. Neighbouring blocks share most of their
+    candidates, so one cache across a whole suggest_all run turns each into a dict hit."""
+
+    def __init__(self):
+        self.names: dict[str, Optional[re.Pattern]] = {}
+        self.words: dict[str, set[str]] = {}
+        self.mentions: dict[str, list] = {}
+        self.vectors: dict[str, object] = {}
+
+    def name_pattern(self, conn, author_id: str) -> Optional[re.Pattern]:
+        if author_id not in self.names:
+            row = conn.execute("SELECT name, display_name FROM authors WHERE id = ?", (author_id,)).fetchone()
+            names = {n.lower() for n in (row["name"], row["display_name"]) if n} if row else set()
+            self.names[author_id] = (re.compile("|".join(rf"\b{re.escape(n)}\b" for n in sorted(names)))
+                                     if names else None)
+        return self.names[author_id]
+
+    def word_set(self, msg) -> set[str]:
+        if msg["id"] not in self.words:
+            self.words[msg["id"]] = _words(msg["content_text"])
+        return self.words[msg["id"]]
+
+    def mention_ids(self, msg) -> list:
+        if msg["id"] not in self.mentions:
+            self.mentions[msg["id"]] = json.loads(msg["mentions"] or "[]")
+        return self.mentions[msg["id"]]
+
+    def vector(self, conn, message_id: str):
+        if message_id not in self.vectors:
+            row = conn.execute("SELECT vector FROM message_embeddings WHERE message_id = ?", (message_id,)).fetchone()
+            if row:
+                import numpy as np
+
+                self.vectors[message_id] = np.frombuffer(row[0], dtype="float32")
+            else:
+                self.vectors[message_id] = None
+        return self.vectors[message_id]
+
+
+def _unit_vector(conn, msgs, cache: ScoreCache):
+    vecs = [v for v in (cache.vector(conn, m["id"]) for m in msgs) if v is not None]
+    if not vecs:
         return None
     import numpy as np
 
-    return np.frombuffer(row[0], dtype="float32")
+    u = np.mean(vecs, axis=0)
+    return u, float(np.linalg.norm(u))
 
 
-def _content_score(conn, unit_text: str, unit_ids: list[str], cand) -> float:
-    vecs = [v for v in (_vector(conn, i) for i in unit_ids) if v is not None]
-    cv = _vector(conn, cand["id"])
-    if vecs and cv is not None:
+def _content_score(conn, unit_words: set[str], unit_vec, cand, cache: ScoreCache) -> float:
+    cv = cache.vector(conn, cand["id"]) if unit_vec is not None else None
+    if cv is not None:
         import numpy as np
 
-        u = np.mean(vecs, axis=0)
-        denom = float(np.linalg.norm(u) * np.linalg.norm(cv)) or 1.0
+        u, unorm = unit_vec
+        denom = float(unorm * np.linalg.norm(cv)) or 1.0
         return max(0.0, min(1.0, float(u @ cv) / denom))
-    a, b = _words(unit_text), _words(cand["content_text"])
-    if not a or not b:
+    b = cache.word_set(cand)
+    if not unit_words or not b:
         return 0.0
-    return len(a & b) / len(a | b)
+    return len(unit_words & b) / len(unit_words | b)
 
 
-def _names(conn, author_id: str) -> set[str]:
-    row = conn.execute("SELECT name, display_name FROM authors WHERE id = ?", (author_id,)).fetchone()
-    return {n.lower() for n in (row["name"], row["display_name"]) if n} if row else set()
-
-
-def score_candidates(conn, block_id: int) -> list[tuple[float, dict]]:
-    msgs = block_messages(conn, block_id)
+def score_candidates(conn, block_id: int, cache: Optional[ScoreCache] = None, msgs=None) -> list[tuple[float, dict]]:
+    cache = cache or ScoreCache()
+    msgs = msgs if msgs is not None else block_messages(conn, block_id)
     if not msgs:
         return []
     first = msgs[0]
@@ -324,42 +360,54 @@ def score_candidates(conn, block_id: int) -> list[tuple[float, dict]]:
     text = "\n".join(m["content_text"] for m in msgs)
     mentions = set()
     for m in msgs:
-        mentions.update(json.loads(m["mentions"] or "[]"))
+        mentions.update(cache.mention_ids(m))
     rejected = {r[0] for r in conn.execute(
         "SELECT parent_id FROM rejected_suggestions WHERE unit_kind = 'block' AND unit_id = ?", (str(block_id),)
     )}
     cands = conn.execute(
-        "SELECT * FROM messages WHERE channel_id = ? AND block_id != ? AND excluded = 0 AND ts >= ? "
+        # The plain `ts <= ?` gives the index an upper bound; without it the OR hides one and
+        # SQLite walks back from the end of the channel for every block.
+        "SELECT * FROM messages WHERE channel_id = ? AND block_id != ? AND excluded = 0 AND ts >= ? AND ts <= ? "
         "AND (ts < ? OR (ts = ? AND CAST(id AS INTEGER) < ?)) ORDER BY ts DESC, CAST(id AS INTEGER) DESC LIMIT ?",
-        (first["channel_id"], block_id, first["ts"] - CANDIDATE_WINDOW_MS, first["ts"], first["ts"],
+        (first["channel_id"], block_id, first["ts"] - CANDIDATE_WINDOW_MS, first["ts"], first["ts"], first["ts"],
          int(first["id"]) if first["id"].isdigit() else 0, CANDIDATE_LIMIT),
     ).fetchall()
+    if not cands:
+        return []
+    # Who spoke right before this author's previous block: answering them again is likely.
+    answered_before = None
+    prev_own = conn.execute(
+        "SELECT id, first_ts FROM blocks WHERE channel_id = ? AND author_id = ? AND first_ts < ? "
+        "ORDER BY first_ts DESC, id DESC LIMIT 1", (first["channel_id"], author, first["ts"]),
+    ).fetchone()
+    if prev_own:
+        before = conn.execute(
+            "SELECT author_id FROM blocks WHERE channel_id = ? AND first_ts < ? ORDER BY first_ts DESC, id DESC LIMIT 1",
+            (first["channel_id"], prev_own["first_ts"]),
+        ).fetchone()
+        answered_before = before["author_id"] if before else None
     lowered = text.lower()
+    unit_words = _words(text)
+    unit_vec = _unit_vector(conn, msgs, cache)
+    named: dict[str, bool] = {}
     out = []
     for distance, c in enumerate(cands):
         if c["id"] in rejected or c["author_id"] == author:
             continue
         score = 0.0
-        names = _names(conn, c["author_id"])
-        if c["author_id"] in mentions or any(re.search(rf"\b{re.escape(n)}\b", lowered) for n in names):
+        if c["author_id"] not in named:
+            pattern = cache.name_pattern(conn, c["author_id"])
+            named[c["author_id"]] = bool(pattern and pattern.search(lowered))
+        if c["author_id"] in mentions or named[c["author_id"]]:
             score += 0.35
-        if author in json.loads(c["mentions"] or "[]"):
+        if author in cache.mention_ids(c):
             score += 0.20
         if _is_question(c["content_text"]):
             score += 0.10
-        score += 0.20 * _content_score(conn, text, [m["id"] for m in msgs], c)
+        score += 0.20 * _content_score(conn, unit_words, unit_vec, c, cache)
         score += 0.15 * math.exp(-distance / 8)
-        prev_own = conn.execute(
-            "SELECT id, first_ts FROM blocks WHERE channel_id = ? AND author_id = ? AND first_ts < ? "
-            "ORDER BY first_ts DESC, id DESC LIMIT 1", (first["channel_id"], author, first["ts"]),
-        ).fetchone()
-        if prev_own:
-            before = conn.execute(
-                "SELECT author_id FROM blocks WHERE channel_id = ? AND first_ts < ? ORDER BY first_ts DESC, id DESC LIMIT 1",
-                (first["channel_id"], prev_own["first_ts"]),
-            ).fetchone()
-            if before and before["author_id"] == c["author_id"]:
-                score += 0.10
+        if answered_before is not None and answered_before == c["author_id"]:
+            score += 0.10
         out.append((min(score, 1.0), dict(c)))
     out.sort(key=lambda sc: (sc[0], key(sc[1])), reverse=True)
     return out
@@ -375,14 +423,15 @@ def _starts_fresh(conn, first) -> bool:
     return prev is None or first["ts"] - prev[0] >= ROOT_SILENCE_MS
 
 
-def suggest_block(conn, block_id: int, settings: dict) -> Optional[dict]:
+def suggest_block(conn, block_id: int, settings: dict, cache: Optional[ScoreCache] = None,
+                  check_link: bool = True) -> Optional[dict]:
     """Guess a parent for a block that has no link yet. Writes 'suggested', 'root', or nothing."""
-    if link_row(conn, "block", str(block_id)):
+    if check_link and link_row(conn, "block", str(block_id)):
         return None
     msgs = block_messages(conn, block_id)
     if not msgs or all(m["excluded"] for m in msgs):
         return None
-    scored = score_candidates(conn, block_id)
+    scored = score_candidates(conn, block_id, cache, msgs)
     best_score, best = scored[0] if scored else (0.0, None)
     if best is not None and best_score >= settings["suggest_high"]:
         _write(conn, "block", block_id, best["id"], "suggested", "suggested", round(best_score, 3))
@@ -401,8 +450,9 @@ def suggest_all(conn, settings: dict, channel_id: Optional[str] = None) -> dict:
         sql += " AND b.channel_id = ?"
         params = (channel_id,)
     counts = {"suggested": 0, "root": 0, "unattached": 0}
+    cache = ScoreCache()
     for (bid,) in conn.execute(sql + " ORDER BY b.first_ts, b.id", params).fetchall():
-        row = suggest_block(conn, bid, settings)
+        row = suggest_block(conn, bid, settings, cache, check_link=False)
         counts[row["status"] if row else "unattached"] += 1
     return counts
 
