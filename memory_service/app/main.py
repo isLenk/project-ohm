@@ -218,6 +218,12 @@ def list_facts(discord_id: str, character: str):
     )
 
 
+@app.delete("/users/{discord_id}/facts/{fact_id}", dependencies=auth)
+def delete_fact(discord_id: str, fact_id: int):
+    run("DELETE FROM user_facts WHERE id = %s AND user_id = %s", (fact_id, discord_id), None)
+    return {"deleted": fact_id}
+
+
 # ── Memories ────────────────────────────────────────────────────────────────
 class MemoryIn(BaseModel):
     character: str

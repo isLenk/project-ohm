@@ -21,6 +21,7 @@ Embeddings (all-MiniLM-L6-v2, 384-dim) are created here on the CPU, so the PC do
 | DELETE | /characters/{slug} | Delete a character **and all its memories/history** |
 | PUT | /users/{discord_id} | Create/update a user |
 | GET/POST | /users/{discord_id}/facts | Per-character facts about a user |
+| DELETE | /users/{discord_id}/facts/{id} | Forget a fact (used by the Curator's Forget) |
 | POST | /memories | Store a memory (embedded automatically) |
 | POST | /memories/search | Top memories ranked by similarity, importance, recency |
 | DELETE | /memories/{id} | Forget a memory |
