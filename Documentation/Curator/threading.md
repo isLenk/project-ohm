@@ -27,7 +27,7 @@ Each operation is one API call (see `api.md`) and one transaction. Each returns 
 | **Drag a block's dot onto message P** | Upsert the block's link: `parent_id=P, status='accepted', origin='manual'`. Split lines inside the block keep their own links. |
 | **Drag a line's dot onto message P** | Upsert a message-level link for that line. It becomes a split line. |
 | **Drag a split line back onto its own block** | Delete the message-level link. The line follows its block again. |
-| **Click an arrow** | Delete that link. The unit becomes unattached. If the deleted link was suggested, also insert into `rejected_suggestions`. |
+| **Click an arrow** | Delete that link. A block becomes unattached. A split line has no unattached state, so it rejoins its block and follows the block's arrow again. If the deleted link was suggested, also insert into `rejected_suggestions`. |
 | **✓ on a suggested arrow** | `status='accepted'`, origin stays `suggested` so we can measure suggester precision. |
 | **✕ on a suggested arrow** | Delete the link and record it in `rejected_suggestions`. Run the suggester again for that unit, which may produce the next-best candidate or leave it unattached. |
 | **Mark as thread start** | Upsert `status='root'`. |

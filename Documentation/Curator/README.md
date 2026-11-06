@@ -69,22 +69,29 @@ Why a new Python service instead of the Express server in `controller-mainframe/
 - SQLite FTS5, regex and embeddings are simpler in Python.
 - It matches `memory_service`, which is already FastAPI.
 
-The Electron main process only starts and stops `curator_service` and passes it the project path. The renderer talks to it directly.
+The Electron main process (`controller-mainframe/src/main/curator.js`) starts and stops `curator_service` and gives the renderer a per-launch token. The renderer (`controller-mainframe/src/renderer/src/curator/`) talks to the service directly.
 
-Suggested layout:
+## What's built
+
+Everything in these docs is built and tested, except the importer. Smarth owns the importer. `curator_service/README.md` lists the two functions an importer calls when it finishes.
 
 ```
 curator_service/
-  app/main.py          FastAPI routes (api.md)
-  app/project.py       open/save .ohm, migrations (data-model.md)
-  app/importer.py      export parsing (import.md)
-  app/threading.py     links, suggestions, validation (threading.md)
-  app/search.py        query parser + executor (search.md)
-  app/memories.py      extraction + sync (memories.md)
-  app/export.py        JSONL builder (training.md)
-  app/train/worker.py  training subprocess (training.md)
-  app/registry.py      models + adapters (data-model.md)
-  tests/
+  app/main.py          FastAPI routes (api.md); no /imports yet
+  app/schema.py        project + registry schemas (data-model.md); the source of truth
+  app/project.py       open/save .ohm through a working copy
+  app/threads.py       links, validation, undo, suggester (threading.md)
+  app/conversations.py stats, approval, split/merge, rebuild from silences
+  app/feed.py          paged feed for Threads and Raw
+  app/search.py        Ctrl+K grammar + execution (search.md)
+  app/embeddings.py    optional MiniLM vectors, near-duplicates
+  app/memories.py      extraction, style traits, sync (memories.md)
+  app/export.py        examples, context chains, dedupe, author cap (training.md)
+  app/gpu.py           VRAM check, pause/restart llama-server, live adapter switching
+  app/train/runs.py    run manager, progress over SSE
+  app/train/worker.py  training subprocess (Unsloth + TRL; simulate mode for UI work)
+  app/registry.py      models + adapters, app-wide
+  tests/               pytest, plus seed.py demo data
 ```
 
 ## Already decided

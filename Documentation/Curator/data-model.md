@@ -5,6 +5,16 @@ Two stores:
 - **Project file (`*.ohm`)**: a SQLite database holding one curation project. Messages, links, conversations, memories, settings.
 - **Registry (`registry.sqlite`)**: app-wide, in the user's app data folder. Base models, trained adapters, training runs. Shared by every project.
 
+`curator_service/app/schema.py` is the source of truth. It adds a few columns and tables this page doesn't show:
+- **Project file:**
+  - `memories.embedding`
+  - `memory_scans`, which records the blocks already read for memories
+  - `message_similar`, which flags near-duplicates
+- **Registry:**
+  - `base_models.fingerprint` replaces `sha256`. It is a hash of the size plus the first and last 64 MB, because hashing a whole 5 GB GGUF on click is too slow.
+  - `base_models.different_base`
+  - `train_runs.run_dir`, `pid`, `adapter_id` and `stopped_services`
+
 ## Project file
 
 A `.ohm` file is a plain SQLite 3 database.

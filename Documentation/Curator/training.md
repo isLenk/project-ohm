@@ -131,7 +131,10 @@ data: {"status":"failed","error":"CUDA out of memory at step 3","log_tail":"..."
 
 `POST /train/runs/{id}/cancel`: send SIGTERM (`CTRL_BREAK_EVENT` on Windows) to the subprocess. Wait 10 s, then kill it. Set `status='cancelled'`. Leave partial checkpoints in the run folder, but do not register an adapter.
 
-Only one run at a time. The GPU is also used by llama-server and TTS, so before starting, warn if free VRAM is under the estimate. Optionally offer to stop llama-server for the duration of the run.
+Only one run at a time. The GPU is also used by llama-server, TTS and STT, so with the bot live a 12–16 GB card won't fit a run. Before starting, the Train modal reads `nvidia-smi`. If free VRAM is under `CURATOR_TRAIN_VRAM_GB`, it lists the GPU processes and you tick which to pause.
+
+- **llama-server:** its command line is saved, and it restarts after the run with every adapter for that model loaded. The new adapter is switched on through `/lora-adapters`.
+- **Other processes (TTS, the bot):** they are stopped and listed. You start them again yourself, because relaunching them headless would hide their consoles.
 
 ## 5. After training
 
