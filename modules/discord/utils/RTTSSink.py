@@ -4,6 +4,7 @@ import numpy as np
 import soundfile as sf
 import soxr
 import time
+import traceback
 from modules.stt.parakeet import get_models
 import utils.latency as latency
 
@@ -59,9 +60,18 @@ class CustomSpeechRecognitionSink(voice_recv.AudioSink):
         return False
 
     def write(self, user, data):
+        # ? An exception escaping write() makes voice_recv stop listening for good, so never let one out
+        try:
+            self._write(user, data)
+        except Exception:
+            print(f"[stt] error handling audio from {user}, skipped:\n{traceback.format_exc()}")
+
+    def _write(self, user, data):
         self.frames += 1
         if DEBUG and self.frames % 250 == 0: # About every 5s
-            print(f"[stt] frames={self.frames} user={user} peak={np.abs(np.frombuffer(data.pcm, dtype=np.int16)).max()}")
+            # ? pcm is empty when a packet failed DAVE decryption, and .max() of nothing raises
+            samples = np.frombuffer(data.pcm or b"", dtype=np.int16)
+            print(f"[stt] frames={self.frames} user={user} peak={np.abs(samples).max() if samples.size else 'n/a'}")
             try:
                 dave = getattr(self.voice_client._connection, "dave_session", None)
                 print(f"[stt] dave_ready={dave.ready if dave else None} health={self.voice_client._reader.health()}")
