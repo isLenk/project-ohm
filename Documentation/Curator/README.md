@@ -104,4 +104,4 @@ Each has a default so work is not blocked. Change the default in code if he deci
 3. **Context across conversations.** Default: context may only come from approved conversations; the chain stops at the first unapproved message.
 4. **Per-author cap.** Default 30% of examples per author, applied at export by downsampling.
 5. **Which speakers to train.** Default: everyone, with the speaker name in the prompt. Optional filter to train on selected speakers only.
-6. **Training weights.** The GGUF in `llama.cpp/models` cannot be trained. Training needs the matching Hugging Face weights. See `training.md`.
+6. **Training weights.** The HauhauCS uncensored model only ships as GGUF, which cannot be trained. Default: train on `google/gemma-4-e4b-it`, the model it was made from, and apply the adapter to the HauhauCS GGUF. See `training.md` section 3.

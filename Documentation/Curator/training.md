@@ -64,12 +64,17 @@ All context goes into one user turn as "Name: text" lines. Keep it that way even
 
 ## 3. Training weights (important)
 
-The live model is `Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q5_K_M.gguf`, served by `llama-server` (`executables/_run_llama.cmd`). **A quantized GGUF cannot be trained.** LoRA needs the unquantized Hugging Face weights of the exact same model:
+The live model is `Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q5_K_M.gguf`, served by `llama-server` (`executables/_run_llama.cmd`). **A quantized GGUF cannot be trained.** LoRA needs unquantized Hugging Face weights.
 
-- Find the HF repo for the HauhauCS "Uncensored Aggressive" finetune and store it as `base_models.hf_path`.
-- If only the original Gemma 4 E4B is available, an adapter trained on it will be *applied to* the uncensored finetune. It will usually load, but quality is not guaranteed. Flag this in the UI.
-- Check that PEFT/TRL (or Unsloth) support the Gemma 4 E4B architecture before committing to a library. This was not verified while writing this doc.
-- `POST /train` returns `409 base_not_trainable` while `hf_path` is empty.
+Checked on 2026-11-06:
+
+- **The HauhauCS repo ships GGUF only.** [`HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive`](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive) has GGUF quants and an mmproj file. It has no safetensors. Its model card lists `google/gemma-4-e4b-it` as the base and tags it `abliterated`.
+- **So train on the original instruct model.** Train on `google/gemma-4-e4b-it`, which is under the Gemma license and needs an HF token with the license accepted. [`unsloth/gemma-4-E4B-it`](https://huggingface.co/unsloth/gemma-4-E4B-it) is an ungated copy. [`unsloth/gemma-4-E4B-it-unsloth-bnb-4bit`](https://huggingface.co/unsloth/gemma-4-E4B-it-unsloth-bnb-4bit) is a pre-quantized 4-bit copy for QLoRA.
+- **Then apply the adapter to the HauhauCS GGUF.** Abliteration edits the weights only slightly and keeps every tensor name and shape, so the adapter will load. It was still trained against slightly different weights. Compare samples from the adapter on the plain Gemma GGUF and on the HauhauCS one before trusting it. Show a "trained on a different base" note in the model dropdown.
+- **Library support exists.** Community guides and adapter repos show Gemma 4 E4B LoRA and QLoRA with Unsloth (`FastModel.get_peft_model`) and with PEFT. Use Unsloth to train, but **don't use its `save_pretrained_gguf()`** for Gemma 4: adapter authors report it is broken. Convert with llama.cpp instead (section 5).
+- **Text only.** Gemma 4 E4B is multimodal (vision and audio). Put LoRA only on the language-model layers, not the vision or audio towers.
+
+Set `base_models.hf_path` to the HF repo id or local folder used for training. `POST /train` returns `409 base_not_trainable` while it is empty.
 
 ## 4. The training worker
 
