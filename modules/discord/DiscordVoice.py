@@ -58,6 +58,7 @@ class DiscordVoice:
     current_turn = None                       # The Turn (see DiscordClient) behind that reply
     last_heard: float = 0.0                   # time.monotonic() of the last sign of conversation
     spoke_unprompted: bool = False            # Already broke the current silence; wait for someone to talk
+    barge_watch: asyncio.Task | None = None   # Resumes him if someone cut in but nothing came of it
 
     def __init__(self, client, discord_client):
         self.client = client
@@ -116,11 +117,13 @@ class DiscordVoice:
                 continue
 
             if self.is_busy():
-                was_talking = self.vc.is_playing()
+                was_talking = self.talking()
+                self.cancel_barge_watch()
                 if was_talking:
                     action = classify_interruption(" ".join(said_by.values()), self.discord_client.model.name)
                     if action == "ignore":
                         print("[voice] Backchannel, still talking")
+                        if self.vc.is_paused(): self.vc.resume()
                         continue
                     if action == "stop":
                         await self.interrupt()
@@ -143,9 +146,38 @@ class DiscordVoice:
             self.current_prompt = said_by
             self.response_task = asyncio.create_task(self.on_text(said_by))
 
+    def talking(self) -> bool:
+        """True while his audio is playing, including while paused because someone cut in.
+        ? discord.py's is_playing() is False while paused"""
+        return bool(self.vc and (self.vc.is_playing() or self.vc.is_paused()))
+
     def is_busy(self):
         """True while a reply is being generated or played"""
-        return (self.response_task is not None and not self.response_task.done()) or bool(self.vc and self.vc.is_playing())
+        return (self.response_task is not None and not self.response_task.done()) or self.talking()
+
+    def on_speech(self, user):
+        """Someone has been talking for a bit (BARGE_IN_MS) and hasn't finished yet. If he's talking,
+        pause him right away instead of waiting for their transcript; listen_worker decides what to do once it arrives."""
+        if not (self.vc and self.vc.is_playing()):
+            return
+        self.vc.pause()
+        print(f"[voice] {user} is cutting in, paused")
+        self.cancel_barge_watch()
+        self.barge_watch = asyncio.create_task(self._resume_if_nothing_said())
+
+    async def _resume_if_nothing_said(self):
+        """If they stop talking and no transcript turns up (noise, empty transcription), carry on."""
+        while self.sink.anyone_speaking():
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(0.6) # Time for the transcript to arrive (slowest path is SILENCE_MS, already waited out above)
+        if self.vc and self.vc.is_paused():
+            print("[voice] Nothing to answer, carrying on")
+            self.vc.resume()
+
+    def cancel_barge_watch(self):
+        if self.barge_watch is not None and not self.barge_watch.done():
+            self.barge_watch.cancel()
+        self.barge_watch = None
 
     async def interrupt(self):
         """Stop the current reply: cancel generation (LLM + TTS) and cut the audio"""
@@ -156,7 +188,8 @@ class DiscordVoice:
         if self.current_source is not None:
             self.current_source.clear()
             self.current_source = None
-        if self.vc and self.vc.is_playing():
+        self.cancel_barge_watch()
+        if self.talking():
             self.vc.stop()
 
     async def output_worker(self):
@@ -236,7 +269,7 @@ class DiscordVoice:
         self.idle_task = self.discord_client.add_task(self.idle_worker)
 
         # ? SilenceGeneratorSink fills in silence when Discord stops sending packets, so we can tell when someone is done talking
-        self.sink = CustomSpeechRecognitionSink(recognizer="rtts", text_cb=self.got_text)
+        self.sink = CustomSpeechRecognitionSink(recognizer="rtts", text_cb=self.got_text, speech_cb=self.on_speech)
         self.vc.listen(voice_recv.SilenceGeneratorSink(self.sink))
 
     async def on_text(self, said_by):
@@ -288,7 +321,7 @@ class DiscordVoice:
         async def fn_push(chunk):
             latency.mark("first_tts_audio")
             source.feed(chunk)
-            if not self.vc.is_playing():
+            if not self.talking():
                 self.vc.play(source, after=on_done)
 
         latency.mark("bot_got_text")

@@ -18,6 +18,7 @@ CONTEXT = 64            # ...plus the last 64 samples of the previous chunk
 EARLY_TRANSCRIBE_MS = 100 # Start transcribing after this much silence so it's ready by QUICK_SILENCE_MS
 QUICK_SILENCE_MS = 200  # If what they said ends like a sentence, reply after this (transcription takes ~60ms)
 SILENCE_MS = 900        # Otherwise wait this long in case they're mid-thought
+BARGE_IN_MS = 600       # This much speech while the bot is talking pauses it (shorter = "yeah", "mhm")
 MIN_SPEECH_MS = 250     # Ignore anything shorter than this (coughs, clicks)
 PRE_ROLL_MS = 200       # Keep a bit of audio from before speech started so the first word isn't cut off
 SPEECH_THRESHOLD = 0.5  # Silero speech probability 0-1, higher = more strict
@@ -36,11 +37,14 @@ class UserStream:
         self.silence_ms = 0
         self.speaking = False
         self.early = None # Early transcription started after QUICK_SILENCE_MS
+        self.barged = False # speech_cb already fired for this utterance
 
 class CustomSpeechRecognitionSink(voice_recv.AudioSink):
-    def __init__(self, *, text_cb=None, recognizer=None):
+    def __init__(self, *, text_cb=None, speech_cb=None, recognizer=None):
         super().__init__()
         self.text_cb = text_cb
+        # Called (on the bot's event loop) once someone has been talking for BARGE_IN_MS, before they finish
+        self.speech_cb = speech_cb
         self.recognizer_name = recognizer
 
         self.model, self.vad = get_models()
@@ -98,6 +102,9 @@ class CustomSpeechRecognitionSink(voice_recv.AudioSink):
             stream.speech_ms += CHUNK_MS
             stream.silence_ms = 0
             stream.early = None # They kept talking, throw out the early guess
+            if self.speech_cb and not stream.barged and stream.speech_ms >= BARGE_IN_MS:
+                stream.barged = True
+                self.client.loop.call_soon_threadsafe(self.speech_cb, user)
             return False
 
         if not stream.speaking:
