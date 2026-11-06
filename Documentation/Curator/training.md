@@ -47,15 +47,16 @@ Apply these in order, and report each count in `GET /export/preview`:
 
 ## 2. Prompt formatting
 
-Gemma's chat template requires turns to alternate between user and model, and has no separate system turn. So format each record as exactly two turns:
+Gemma 4's chat template has a real system turn (`<|turn>system`) and does not force user and model turns to alternate. Earlier Gemma versions lacked both, so ignore older guides on this. Format each record as three turns:
 
 ```
-user:  You are {speaker} in a Discord group chat. Reply as {speaker} would.
-
-       unanticipatedinflation: we running barotrauma this night? @KaptainDoosh
-       Zhingstin Ji: Baro could hit
-model: I’m down to baro
+system: You are {speaker} in a Discord group chat. Reply as {speaker} would.
+user:   unanticipatedinflation: we running barotrauma this night? @KaptainDoosh
+        Zhingstin Ji: Baro could hit
+model:  I’m down to baro
 ```
+
+All context goes into one user turn as "Name: text" lines. Keep it that way even though the template would allow several user turns, because the bot's live prompt sends history the same way.
 
 - Render it with the base model's own chat template from the HF tokenizer (`tokenizer.apply_chat_template`). Never hand-write the special tokens.
 - Compute loss on the model turn only (assistant-only masking, for example TRL's completion-only collator).
