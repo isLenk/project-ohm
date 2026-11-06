@@ -56,6 +56,30 @@ export default function CuratorPage() {
     }
   }, [filter, onError])
 
+  /** Put fresh stats for one conversation into the sidebar without refetching the whole list
+   *  (that list can be thousands long after a big import). */
+  const patchConvs = useCallback(
+    (updates: (Partial<ConversationStats> & { id: number })[]) => {
+      if (!updates.length) return
+      const fits = (c: ConversationStats) =>
+        filter === 'all' ? !c.archived : filter === 'approved' ? c.approved && !c.archived : c.archived
+      setConvs((list) => {
+        const byId = new Map(updates.map((u) => [u.id, u]))
+        const next: ConversationStats[] = []
+        for (const c of list) {
+          const u = byId.get(c.id)
+          byId.delete(c.id)
+          const merged = u ? { ...c, ...u } : c
+          if (fits(merged)) next.push(merged)
+        }
+        // Full stats for a conversation that just started matching the tab (approved while on "Approved").
+        for (const u of byId.values()) if ('first_ts' in u && fits(u as ConversationStats)) next.push(u as ConversationStats)
+        return next.sort((a, b) => b.first_ts - a.first_ts)
+      })
+    },
+    [filter]
+  )
+
   const loadProject = useCallback(async () => {
     try {
       const p = await get<ProjectInfo>('/project')
@@ -150,17 +174,23 @@ export default function CuratorPage() {
       feed.apply(r)
       if (r.inverse) undo.current.push(r.inverse)
       markDirty()
-      if (r.conversations_changed?.length) loadConvs()
+      patchConvs(r.conversations_changed || [])
       if (current && r.conversations_changed?.some((c) => c.id === current.id)) {
         get<ConversationStats>(`/conversations/${current.id}`).then((c) => {
           setCurrent(c)
           feed.updateConversation(c)
+          patchConvs([c])
         })
       } else if (current) {
-        get<ConversationStats>(`/conversations/${current.id}`).then(setCurrent).catch(() => {})
+        get<ConversationStats>(`/conversations/${current.id}`)
+          .then((c) => {
+            setCurrent(c)
+            patchConvs([c])
+          })
+          .catch(() => {})
       }
     },
-    [feed, markDirty, loadConvs, current]
+    [feed, markDirty, patchConvs, current]
   )
 
   const doUndo = useCallback(async () => {
@@ -170,12 +200,20 @@ export default function CuratorPage() {
       const r = await call<EditResult>(inv.method, inv.path, inv.body)
       feed.apply(r)
       markDirty()
-      loadConvs()
+      patchConvs(r.conversations_changed || [])
+      if (current) {
+        get<ConversationStats>(`/conversations/${current.id}`)
+          .then((c) => {
+            setCurrent(c)
+            patchConvs([c])
+          })
+          .catch(() => {})
+      }
       say('Undone')
     } catch (e) {
       onError(e)
     }
-  }, [feed, markDirty, loadConvs, onError])
+  }, [feed, markDirty, patchConvs, current, onError])
 
   // ── model guesses for unattached blocks ─────────────────────────────────
   const guessReplies = async (c: ConversationStats) => {
@@ -185,10 +223,10 @@ export default function CuratorPage() {
       const r = await followJob(j.id, (p) => setGuessing(p.total ? `Asking the model ${p.done}/${p.total}` : 'Asking the model…'))
       feed.apply({ units: r?.units || [] })
       if (r?.suggested) markDirty()
-      loadConvs()
       const s = await get<ConversationStats>(`/conversations/${c.id}`)
       setCurrent(s)
       feed.updateConversation(s)
+      patchConvs([s])
       if (r?.stopped) onError(new Error(`${r.stopped} ${r.suggested} guesses made before it stopped.`))
       else say(r?.suggested ? `The model guessed ${r.suggested} ${r.suggested === 1 ? 'reply' : 'replies'}` : 'The model had no guesses')
     } catch (e) {
@@ -206,7 +244,7 @@ export default function CuratorPage() {
       setCurrent(s)
       feed.updateConversation(s)
       markDirty()
-      loadConvs()
+      patchConvs([s])
       feed.reset(c.first_message_id, false) // suggested arrows just became solid
     } catch (e) {
       if (e instanceof CuratorError && e.code === 'needs_confirm') setConfirm({ conv: c, suggested: e.extra.suggested, unattached: e.extra.unattached })
@@ -220,7 +258,7 @@ export default function CuratorPage() {
       setCurrent(s)
       feed.updateConversation(s)
       markDirty()
-      loadConvs()
+      patchConvs([s])
     } catch (e) {
       onError(e)
     }
