@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from .. import export, gpu
-from ..config import REPO_ROOT, RUNS_DIR, TRAIN_SIMULATE, TRAIN_VRAM_GB
+from ..config import REPO_ROOT, RUNS_DIR, TRAIN_PYTHON, TRAIN_SIMULATE, TRAIN_VRAM_GB
 from ..errors import ApiError, not_found
 from ..project import now_ms
 
@@ -123,7 +123,7 @@ def start(project, registry, config: Optional[dict], stop_pids: list[int]) -> di
     with project.tx() as conn:
         conn.execute("INSERT OR REPLACE INTO project_runs (run_id, dataset_sha) VALUES (?, ?)", (run_id, data["sha256"]))
 
-    cmd = [sys.executable, "-m", "curator_service.app.train.worker", "--run-dir", str(run_dir)]
+    cmd = [TRAIN_PYTHON, "-m", "curator_service.app.train.worker", "--run-dir", str(run_dir)]
     if TRAIN_SIMULATE:
         cmd.append("--simulate")
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0

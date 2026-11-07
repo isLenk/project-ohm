@@ -15,11 +15,17 @@ python -m uvicorn curator_service.app.main:app --host 127.0.0.1 --port 8200
 
 When the service runs without `CURATOR_TOKEN`, it accepts calls with no token. If the app finds a service already running on :8200, it uses that one.
 
-To train on the PC with the GPU, install the extras. Install CUDA torch first.
+To train on the PC with the GPU, install the extras into a separate venv. Do not install them into the repo venv: Unsloth pulls in newer torch, numpy, transformers and setuptools, which break TTS, STT and sentence-transformers. Runs use `CURATOR_TRAIN_PYTHON` if it is set, otherwise `%APPDATA%\ohm-curator\train-venv` if it exists.
 
 ```
-pip install -r curator_service/requirements-train.txt
+py -3.12 -m venv %APPDATA%\ohm-curator\train-venv
+set TV=%APPDATA%\ohm-curator\train-venv\Scripts\python.exe
+%TV% -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+%TV% -m pip freeze | findstr /b "torch" > %TEMP%\torch-pin.txt
+%TV% -m pip install -r curator_service/requirements-train.txt gguf -c %TEMP%\torch-pin.txt --extra-index-url https://download.pytorch.org/whl/cu128
 ```
+
+The constraint keeps pip from swapping CUDA torch for the CPU build.
 
 ## Settings (root .env)
 
@@ -31,6 +37,7 @@ pip install -r curator_service/requirements-train.txt
 | `CURATOR_LLM_URL` | `http://127.0.0.1:5000/v1` | llama-server, used to extract memories |
 | `MEMORY_API_URL`, `MEMORY_API_KEY` | | Kept memories are synced here |
 | `CURATOR_TRAIN_VRAM_GB` | 11 | VRAM a run needs before it starts. Measure it on the real card. |
+| `CURATOR_TRAIN_PYTHON` | `%APPDATA%\ohm-curator\train-venv` if it exists, else the service's Python | Python that runs training (needs `requirements-train.txt`) |
 | `CURATOR_TRAIN_SIMULATE` | | Set it to `1` to fake training runs, for working on the UI without a GPU |
 
 ## Demo data and tests

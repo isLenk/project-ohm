@@ -43,5 +43,17 @@ TRAIN_SIMULATE = os.getenv("CURATOR_TRAIN_SIMULATE") == "1"
 # Rough VRAM a QLoRA run on Gemma 4 E4B needs. Measure on the real card and adjust.
 TRAIN_VRAM_GB = float(os.getenv("CURATOR_TRAIN_VRAM_GB", "11"))
 
+# Training runs in its own venv, because Unsloth's torch/numpy/transformers break the main one.
+# Uses CURATOR_TRAIN_PYTHON, then <data dir>/train-venv if it exists, then this interpreter.
+def _train_python() -> str:
+    if os.getenv("CURATOR_TRAIN_PYTHON"):
+        return os.environ["CURATOR_TRAIN_PYTHON"]
+    venv = DATA_DIR / "train-venv"
+    exe = venv / "Scripts" / "python.exe" if sys.platform == "win32" else venv / "bin" / "python"
+    return str(exe) if exe.exists() else sys.executable
+
+
+TRAIN_PYTHON = _train_python()
+
 for d in (DATA_DIR, ADAPTERS_DIR, RUNS_DIR):
     d.mkdir(parents=True, exist_ok=True)
