@@ -5,10 +5,12 @@
    Without it, the old local nedb file (characters.db) is used.
 
    The UI works with this shape:
-     { id, name, created, status, description, picture, icon }
+     { id, name, created, status, description, picture, icon, model }
    `picture` is a data: URL when the user uploaded one; otherwise the card shows `icon`.
+   `model` is { base_model_id, adapter_id, ohm_path }: the base and LoRA from the curator's
+   model registry, and the curator project the LoRA is trained from. All optional.
    On the NAS, `id` is the character slug ('ohm'), `description` is the personality,
-   and created/status/picture live in configs.ui.
+   and created/status/picture/icon/model live in configs.ui.
 */
 import { charactersDB } from './db.js'
 import { nas, nasError } from './nas.js'
@@ -22,12 +24,21 @@ function toUi(row) {
     status: ui.status || 'Inactive',
     description: row.personality || '',
     picture: ui.picture || 'default.png',
-    icon: ui.icon || 'star'
+    icon: ui.icon || 'star',
+    model: ui.model || {}
   }
 }
 
 function uiConfigs(c) {
-  return { ui: { created: c.created, status: c.status, picture: c.picture, icon: c.icon } }
+  return {
+    ui: {
+      created: c.created,
+      status: c.status,
+      picture: c.picture,
+      icon: c.icon,
+      model: c.model || {}
+    }
+  }
 }
 
 function slugify(name) {
