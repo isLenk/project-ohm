@@ -2,11 +2,22 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { modules } from './api.js'
+import { modules, listModules, setModuleEnabled, restartModule } from './api.js'
 import { logsDB, addLog } from './db.js'
 import { listCharacters, addCharacter, updateCharacter, deleteCharacter } from './characters.js'
 import { dialog } from 'electron/main'
 import { startCurator, stopCurator, curatorConfig } from './curator.js'
+import {
+  engineStatus,
+  engineOutput,
+  onEngineChange,
+  restartEngine,
+  startEngine,
+  stopEngine
+} from './engine.js'
+import { health } from './health.js'
+import { nasCall } from './nas.js'
+import { getSettings, saveSettings } from './settings.js'
 
 function createWindow() {
   // Create the browser window.
@@ -61,8 +72,31 @@ app.whenReady().then(() => {
   ipcMain.on('ping', () => console.log('pong'))
 
   ipcMain.handle('get-modules', async (event) => modules)
+  ipcMain.handle('list-modules', () => listModules())
+  ipcMain.handle('set-module-enabled', (event, name, on) => setModuleEnabled(name, on))
+  ipcMain.handle('restart-module', (event, name) => restartModule(name))
 
-  // Characters live on the NAS when MAIN_VITE_MEMORY_API_URL is set (see characters.js).
+  // The Python side (main.py). The Engine panel also gets every change pushed to it.
+  ipcMain.handle('engine-status', () => engineStatus())
+  ipcMain.handle('engine-start', () => startEngine())
+  ipcMain.handle('engine-stop', () => stopEngine())
+  ipcMain.handle('engine-restart', () => restartEngine())
+  ipcMain.handle('engine-output', () => engineOutput())
+  onEngineChange((status) => {
+    for (const window of BrowserWindow.getAllWindows())
+      window.webContents.send('engine-changed', status)
+  })
+  app.on('will-quit', () => {
+    // Leave a main.py that was started by hand alone
+    if (!engineStatus().external) stopEngine()
+  })
+
+  ipcMain.handle('health', (event, days) => health(days))
+  ipcMain.handle('nas', (event, method, path, body) => nasCall(method, path, body))
+  ipcMain.handle('get-settings', () => getSettings())
+  ipcMain.handle('save-settings', (event, values) => saveSettings(values))
+
+  // Characters live on the NAS when its address is set (see characters.js).
   ipcMain.handle('get-characters', () => listCharacters())
   ipcMain.handle('add-character', (event, character) => addCharacter(character))
   ipcMain.handle('update-character', (event, character) => updateCharacter(character))
