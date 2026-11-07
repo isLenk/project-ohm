@@ -13,6 +13,8 @@ from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
 from controller import modules
 from controller.memory import memory, HISTORY_LIMIT, HISTORY_MINUTES
+from config.constants import strip_voice_tags
+from utils.VoiceTags import VoiceTagFilter
 testing_channel = 1335351030308802630
 VOICE_MAX_TOKENS = 120  # ~20s of speech at most per voice reply
 voice_channel = 1335374964445941812
@@ -148,6 +150,8 @@ class DiscordClient(discord.Client):
 
         # Drop "Ohm:" labels at the start of any line (any case/spacing)
         response = re.sub(rf"(?im)^\s*{re.escape(self.model.name)}\s*:\s*", "", response)
+        # Voice replies in the history can teach him tags; they'd show up literally in text chat
+        response = strip_voice_tags(response)
 
         turn.reply = response
         turn.commit()
@@ -221,11 +225,14 @@ class Turn:
         self._chunks = iter(())
         self._finished = False
         self._lock = threading.Lock()
+        # Voice only: keep stage directions to tags the TTS can perform (see utils/VoiceTags.py)
+        self._tags = VoiceTagFilter(client.model.name) if source == "voice" else None
+        self._last = None  # last text chunk, used as the template for the filter's final flush
 
     def prompt(self, text, memories=None):
         """Open the LLM stream (with the conversation so far as context)."""
         # ? In voice, a hard cap so a "how do I..." question can't turn into a minute-long lecture
-        limit = {"max_tokens": VOICE_MAX_TOKENS} if self.source == "voice" else {}
+        limit = {"max_tokens": VOICE_MAX_TOKENS, "voice": True} if self.source == "voice" else {}
         self._stream = self.client.model.generate_stream_text(
             text, related_memories=memories, history=self.client.history(self.channel_id), **limit,
         )
@@ -237,8 +244,22 @@ class Turn:
     def __next__(self):
         if self._finished:
             raise StopIteration
-        chunk = next(self._chunks)
+        try:
+            chunk = next(self._chunks)
+        except StopIteration:
+            # Whatever the filter was still holding back (an unclosed *..)
+            rest = self._tags.flush() if self._tags else ""
+            if not rest or self._last is None:
+                raise
+            chunk, self._last = self._last.model_copy(deep=True), None
+            chunk.choices[0].delta.content = rest
+            self.reply += rest
+            return chunk
         if chunk.choices and chunk.choices[0].delta.content:
+            if self._tags:
+                # ? Rewrite the chunk in place so the TTS and the saved reply both get the cleaned text
+                chunk.choices[0].delta.content = self._tags.feed(chunk.choices[0].delta.content)
+                self._last = chunk
             self.reply += chunk.choices[0].delta.content
         return chunk
 

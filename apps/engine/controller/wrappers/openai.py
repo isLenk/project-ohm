@@ -2,6 +2,8 @@
 # Implements the OpenAI API for LlamaChat 
 import openai
 
+from config.constants import VOICE_PROMPT
+
 class OpenAIModel:
     client: openai.OpenAI
     model: str
@@ -65,9 +67,11 @@ class OpenAIModel:
             configs["top_p"] = self.top_p
         return configs
 
-    def create(self, prompt, system=None, assistant="aight lol", related_memories=None, history=None, **kwargs):
+    def create(self, prompt, system=None, assistant="aight lol", related_memories=None, history=None, voice=False, **kwargs):
         if system is None:
             system = self.system.strip()
+            if voice:
+                system += "\n\n" + VOICE_PROMPT.strip()
         if related_memories:
             notes = "\n".join(f"- {m['content']}" for m in related_memories)
             system += "\n\nThings you remember (only bring them up if they fit the conversation):\n" + notes

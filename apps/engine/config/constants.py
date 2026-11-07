@@ -1,3 +1,46 @@
+import re
+
+# Chatterbox Turbo's built-in expression tags (see the model's added_tokens.json). Only voice replies
+# get told about them; text replies have them stripped since Discord would show them literally.
+VOICE_TAGS = ["[sigh]", "[laugh]", "[chuckle]", "[gasp]", "[groan]", "[cough]", "[sniff]", "[clear throat]",
+              "[shush]", "[sarcastic]", "[angry]", "[happy]", "[surprised]", "[fear]", "[crying]", "[whispering]"]
+VOICE_TAGS_RE = re.compile(r"\s*\[(?:" + "|".join(re.escape(t[1:-1]) for t in VOICE_TAGS) + r"|advertisement|dramatic|narration)\]",
+                           re.IGNORECASE)
+
+VOICE_PROMPT = f"""
+You're talking out loud in voice chat right now, and your voice can do sounds and tones.
+Put one of these tags right where the sound should happen: {", ".join(VOICE_TAGS)}.
+Sound tags ([sigh], [laugh], [chuckle], [groan], ...) make that noise. Tone tags ([sarcastic], [whispering], ...)
+change how the words after them sound. Write them exactly like that, square brackets included.
+Only these exact tags work. Never make up your own ([quick gasp], [laughs nervously]), never describe the sound,
+and never write actions in asterisks like *gasp* or *sighs*. Anything else gets read out loud as words.
+Default to no tag at all. Only use one when the moment really calls for that exact sound, like something
+genuinely funny or genuinely exhausting. That's maybe one reply in five, and never more than one tag in a reply.
+Don't use them just to sound expressive, and don't open every reply with one.
+You can also spell out small noises like "pfft", "ugh", "hmm", or "haha".
+Examples (most have no tag):
+lenk: yo what's up
+Ohm: nothing much. you?
+
+lenk: i just failed my driving test again
+Ohm: [sigh] again? what'd you hit this time?
+
+lenk: should i get the blue one or the black one
+Ohm: black. blue's gonna look dumb in a week.
+
+lenk: i ate a whole pizza by myself
+Ohm: respect, honestly.
+
+lenk: and then i walked straight into the glass door in front of everyone
+Ohm: [laugh] no way. tell me nobody filmed it.
+"""
+
+
+def strip_voice_tags(text: str) -> str:
+    """Remove expression tags (for text chat, where they'd show up literally)."""
+    return VOICE_TAGS_RE.sub("", text).strip()
+
+
 models = {
     "ohm": {
         "name": "Ohm",
