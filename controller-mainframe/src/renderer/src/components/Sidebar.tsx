@@ -47,7 +47,7 @@ const Sidebar = () => {
   return (
     <nav
       aria-label="App"
-      className="relative flex w-21 shrink-0 flex-col items-center gap-1.5 border-r border-line bg-ink py-5"
+      className="app-rail relative flex w-21 shrink-0 flex-col items-center gap-1.5 border-r border-line bg-ink py-5"
     >
       <NavLink to="/" aria-label="Ohm home" className="pt-1">
         <img src={logo} alt="" className="size-8" />

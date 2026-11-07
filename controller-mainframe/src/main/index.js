@@ -28,6 +28,13 @@ function createWindow() {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
+    // No title bar: the page headers are the drag area (.app-titlebar in main.css) and the
+    // system's minimise/maximise/close buttons are drawn over the top right, in the page's colours.
+    titleBarStyle: 'hidden',
+    ...(process.platform === 'darwin'
+      ? {}
+      : { titleBarOverlay: { color: '#111214', symbolColor: '#a0a3ab', height: 40 } }),
+    backgroundColor: '#111214',
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

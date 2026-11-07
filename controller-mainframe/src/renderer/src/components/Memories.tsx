@@ -227,7 +227,7 @@ const Memories = () => {
       </nav>
 
       <main className="flex min-w-0 flex-[999_1_520px] flex-col">
-        <header className="flex min-h-14 flex-wrap items-center gap-3 border-b border-line px-8 py-2.5">
+        <header className="app-titlebar flex min-h-14 flex-wrap items-center gap-3 border-b border-line px-8 py-2.5">
           <h2 className="text-[15px] font-semibold">{title[0]}</h2>
           <span className="text-[12.5px] text-muted">{title[1]}</span>
         </header>
