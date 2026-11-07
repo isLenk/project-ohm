@@ -1,8 +1,8 @@
 """One-time import of existing data into the NAS memory service. Run from the PC:
 
-    Scripts\\python.exe apps\\memory\\migrate.py              # characters + Qdrant memories
-    Scripts\\python.exe apps\\memory\\migrate.py --dry-run    # show what would be imported
-    Scripts\\python.exe apps\\memory\\migrate.py --qdrant http://<host>:6333
+    .venv\\Scripts\\python.exe apps\\memory\\migrate.py              # characters + Qdrant memories
+    .venv\\Scripts\\python.exe apps\\memory\\migrate.py --dry-run    # show what would be imported
+    .venv\\Scripts\\python.exe apps\\memory\\migrate.py --qdrant http://<host>:6333
 
 Imports:
   * apps/engine/config/constants.py characters (personality, model, configs)

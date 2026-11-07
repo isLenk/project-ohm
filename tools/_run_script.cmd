@@ -1,4 +1,4 @@
-call ..\Scripts\activate
+call ..\.venv\Scripts\activate
 cd ..\apps\engine
 
 :execute

@@ -17,3 +17,6 @@ __pycache__/
 *.pyc
 *.log
 /output.wav
+
+# Python venv (uv sync --all-packages)
+/.venv/

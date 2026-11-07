@@ -3,7 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
-    "dev:all": "node scripts/dev.mjs all"
+    "setup": "uv sync --all-packages && npm --prefix apps/mainframe install",
+    "dev": "node tools/dev.mjs",
+    "dev:all": "node tools/dev.mjs all",
+    "build": "npm --prefix apps/mainframe run build",
+    "build:win": "npm --prefix apps/mainframe run build:win",
+    "lint": "npm --prefix apps/mainframe run lint",
+    "test": "uv run --directory apps/curator pytest curator_service/tests -q"
   }
 }

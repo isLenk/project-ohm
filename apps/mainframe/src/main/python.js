@@ -1,5 +1,6 @@
 // Where the repo is and which Python to run it with, for the processes the app starts.
-// Python is found in this order: CURATOR_PYTHON, the repo's venv (Scripts\python.exe or bin/python), python.
+// Python is found in this order: CURATOR_PYTHON, the repo's .venv (made by `uv sync --all-packages`),
+// the old venv in the repo root itself, python.
 import { app } from 'electron'
 import { existsSync } from 'fs'
 import { join, resolve } from 'path'
@@ -16,8 +17,8 @@ export function python(root = repoRoot()) {
   if (setting('CURATOR_PYTHON')) return setting('CURATOR_PYTHON')
   const candidates =
     process.platform === 'win32'
-      ? [join(root, 'Scripts', 'python.exe')]
-      : [join(root, 'bin', 'python'), join(root, '.venv', 'bin', 'python')]
+      ? [join(root, '.venv', 'Scripts', 'python.exe'), join(root, 'Scripts', 'python.exe')]
+      : [join(root, '.venv', 'bin', 'python'), join(root, 'bin', 'python')]
   return (
     candidates.find((p) => existsSync(p)) || (process.platform === 'win32' ? 'python' : 'python3')
   )
