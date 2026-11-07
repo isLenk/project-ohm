@@ -1,10 +1,20 @@
-import requests
-import os
+import asyncio
 import json
+import os
+import socket
+import threading
+import time
+from urllib.parse import urlsplit
+
+import requests
+
+from controller import modules
 from controller.memory import memory
+from modules.tts.tts_module import TTS_URL, TTSModule
 
 interface_api = "http://localhost:3001"
 INTERFACE_TIMEOUT = 3
+HEARTBEAT_SECONDS = 5
 
 def get_interface_api():
     """
@@ -69,3 +79,69 @@ def get_related_memories(text_in: str, character: str = "ohm"):
     memories = memory.search(character, text_in)
     print(f"Related Memories: {[m['content'] for m in memories]}")
     return memories
+
+
+# ? Module health and restarts
+
+def _reachable(url: str) -> bool:
+    parts = urlsplit(url)
+    try:
+        with socket.create_connection((parts.hostname, parts.port or 80), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def module_health(client) -> dict:
+    """{module: {ok, detail}} for every module. The controller turns changes in `ok` into uptime."""
+    voice = client.voice
+    vc = getattr(voice, "vc", None)
+    in_call = vc is not None and vc.is_connected()
+    checks = {
+        "discord": lambda: (client.is_ready(), f"Connected as {client.user}" if client.is_ready() else "Not connected to Discord"),
+        "memory": lambda: (memory.health(), f"Memory service at {memory.url}") if memory.url else (False, "MEMORY_API_URL isn't set"),
+        "tts": lambda: (_reachable(TTS_URL), f"TTS server at {TTS_URL}") if _reachable(TTS_URL) else (False, f"Can't reach the TTS server at {TTS_URL}"),
+        # Out of a call there's nothing to hear, which isn't a failure
+        "stt": lambda: (vc.is_listening(), f"Listening in {vc.channel}") if in_call else (True, "Ready, not in a voice call"),
+    }
+    health = {}
+    for name, check in checks.items():
+        if not modules.enabled(name):
+            health[name] = {"ok": False, "off": True, "detail": "Turned off"}
+            continue
+        try:
+            ok, detail = check()
+        except Exception as e:
+            ok, detail = False, str(e)
+        health[name] = {"ok": bool(ok), "detail": detail}
+    return health
+
+
+def restart_module(client, name: str):
+    """What Restart means for each module. They all live in this process, so this resets their state."""
+    print(f"[controller] Restarting {name}")
+    if name == "memory":
+        memory.reset()
+    elif name == "tts":
+        client.voice.tts = TTSModule()
+        client.voice.tts_module = TTSModule()
+    elif name in ("stt", "discord") and client.is_ready():
+        # Rejoining the call gets a new speech-to-text sink and new voice workers
+        asyncio.run_coroutine_threadsafe(client.voice.rejoin(), client.loop)
+
+
+def start_heartbeat(client):
+    """Report module health to the controller every few seconds and run the restarts it hands back."""
+    def beat():
+        while True:
+            try:
+                response = requests.post(f"{interface_api}/api/modules/heartbeat",
+                                         json={"pid": os.getpid(), "modules": module_health(client)},
+                                         timeout=INTERFACE_TIMEOUT)
+                for name in response.json().get("restart", []):
+                    restart_module(client, name)
+            except (requests.RequestException, ValueError):
+                pass  # the controller app is optional
+            time.sleep(HEARTBEAT_SECONDS)
+
+    threading.Thread(target=beat, daemon=True, name="controller-heartbeat").start()

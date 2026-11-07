@@ -49,6 +49,13 @@ class MemoryClient:
     def enabled(self) -> bool:
         return bool(self.url) and time.monotonic() >= self._down_until
 
+    def reset(self):
+        """Forget a past failure and open a fresh connection (the controller's Restart button)."""
+        key = self.session.headers.get("X-API-Key", "")
+        self.session = requests.Session()
+        self.session.headers["X-API-Key"] = key
+        self._down_until = 0.0
+
     def _request(self, method: str, path: str, **kwargs):
         if not self.enabled:
             return None

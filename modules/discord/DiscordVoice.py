@@ -246,6 +246,18 @@ class DiscordVoice:
         finally:
             self.vc = None
 
+    async def rejoin(self) -> None:
+        """Leave the call and join it again: fresh workers and a fresh speech-to-text sink (the controller's Restart)."""
+        if self.vc is None:
+            return
+        channel = self.vc.channel
+        await self.interrupt()
+        for task in (self.listener_worker, self.output_worker, self.idle_task):
+            task.cancel()
+        await self.vc.disconnect()
+        self.vc = None
+        await self.join_channel(channel)
+
     def got_text(self, user, text):
         """Callback for when text is received from the listener"""
         # If text is empty, return

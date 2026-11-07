@@ -5,7 +5,7 @@ from controller.memory import load_character
 import os
 from dotenv import load_dotenv
 from typing import Union
-from pyhandler import get_related_memories, get_interface_api, send_input_to_interface, send_modules_to_interface, send_input_to_interface
+from pyhandler import get_related_memories, get_interface_api, send_input_to_interface, send_modules_to_interface, start_heartbeat
 
 VERBOSE = True
 
@@ -23,6 +23,7 @@ This script is responsible for initializing the python side of the application.
 
 def run_discord_client(model: ModelObject, token: Union[str, None] = None):
     discord_client = DiscordClient.initialize(model)
+    start_heartbeat(discord_client)
     discord_client.run(token)
 
 def process_user_input(model: ModelObject, user_input: str):
