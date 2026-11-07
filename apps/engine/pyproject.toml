@@ -1,0 +1,29 @@
+[project]
+name = "ohm-engine"
+version = "0.1.0"
+description = "The assistant itself: Discord bot, STT, TTS client, memory and modules"
+requires-python = "==3.12.*"
+dependencies = [
+    "RealtimeSTT",
+    # Parakeet STT - onnxruntime-gpu 1.23 is the last CUDA 12 build
+    "onnx-asr[gpu,hub]==0.12.0",
+    "onnxruntime-gpu==1.23.2",
+    "soxr",
+    "python-dotenv",
+    "discord.py[voice]==2.7.1",
+    "davey==0.1.6", # 0.2.0 never becomes ready with discord.py 2.7.1
+    "openai",
+    # DAVE (E2EE) receive support from upstream PR #54 - swap back to PyPI once merged
+    "discord-ext-voice-recv @ git+https://github.com/rdphillips7/discord-ext-voice-recv@e0cc062ee2fe10311ffacdd4a4d00de707d6b1a7",
+    "numpy",
+    "realtimetts[all]",
+    "fastapi[standard]",
+    "websockets",
+    "watchfiles", # dev.py
+    "torch==2.5.1",
+    "torchaudio==2.5.1",
+]
+
+[tool.uv]
+# Runs from this folder (python main.py), not installed as a package
+package = false

@@ -86,7 +86,7 @@ CREATE TABLE messages (
   attachments   TEXT NOT NULL DEFAULT '[]',   -- JSON
   block_id      INTEGER NOT NULL REFERENCES blocks(id),
   excluded      INTEGER NOT NULL DEFAULT 0,
-  exclude_reason TEXT                   -- 'manual' | 'bot' | 'empty' | 'filter:<rule id>'
+  exclude_reason TEXT                   -- 'manual' | 'bot' | 'system' | 'filter:<rule id>'
 );
 CREATE INDEX messages_feed ON messages (channel_id, ts, CAST(id AS INTEGER));  -- matches the feed's ORDER BY
 CREATE INDEX messages_author ON messages (author_id, ts);

@@ -1,0 +1,9 @@
+# Only needed on the PC that trains LoRAs (NVIDIA GPU). Install into its own venv with CUDA torch,
+# NOT the repo venv: these upgrade torch/numpy/transformers and break TTS/STT. See apps/curator/README.md.
+unsloth
+trl
+peft
+datasets
+transformers
+bitsandbytes
+accelerate

@@ -4,7 +4,21 @@
 
 ## Supported input
 
-Version 1 reads **DiscordChatExporter JSON** (`--format Json`), one channel per file. This is an assumption. Confirm with Lance which exporter he uses before writing the parser. Keep the parser behind an interface so a second format (for example, a backfill from our own bot with `discord.py`'s `channel.history()`) can be added later.
+Version 1 reads **DiscordChatExporter JSON** (`--format Json`), one channel per file. Lance's training data is in this format. Keep the parser behind an interface so a second format (for example, a backfill from our own bot with `discord.py`'s `channel.history()`) can be added later.
+
+Threads come as their own files. Their `channel.type` is `GuildPublicThread`, and `channel.categoryId` is the parent channel.
+
+The importer also reads the files from Lance's preprocessing dump (`app/formats.py`). You can pick them together with the export, or pick the whole folder:
+
+| File | What happens |
+|---|---|
+| `messages.jsonl` | Converted to one DiscordChatExporter document per channel, then imported like an export. Authors and avatars come from the project and from exports in the same import. Ids already in the project are skipped, and real exports are imported first, so a real export always wins. The JSONL has lost edit times, attachment URLs and reaction users. |
+| `speakers.json` | An `alias` becomes that person's display name. Names fill in for people no export covers. |
+| `conversations.json` | Skipped. The Curator builds conversations from silences. |
+
+A JSONL file records one `sources` row per channel it added messages to, with `sha256` = `<file hash>:<channel id>`.
+
+`curator_service/tools/jsonl_to_dce.py` writes the same conversion out as files, if you want to look at them.
 
 Fields used from each message:
 
@@ -27,11 +41,10 @@ Run the whole import inside one transaction. If any step fails, nothing is writt
 
 1. **Hash the file.** If `sources.sha256` already has it, return `409 already_imported`.
 2. **Upsert authors.** New authors get the next free `color_index`. Existing authors keep theirs, so colors and lanes never shuffle between imports.
-3. **Insert messages.** Skip ids that already exist; overlapping exports are fine. Build `content_text` by replacing `<@id>`, `<@!id>`, `<#id>`, `<@&id>` with readable names.
+3. **Insert messages.** Skip ids that already exist; overlapping exports are fine. Leave out messages with no text (only images, attachments or nothing): there's nothing to thread or train on. A reply to a left-out message counts as a reply to whatever that message replied to. Projects imported before this drop them when opened (`textless.py`). Build `content_text` by replacing `<@id>`, `<@!id>`, `<#id>`, `<@&id>` with readable names.
 4. **Auto-exclude.** Set `excluded = 1` with a reason for:
    - bot authors → `bot`
    - system message types (joins, pins, boosts) → `system`
-   - empty content with no attachment → `empty`
    - any enabled `filter_rules` match → `filter:<id>`
 
    Excluded messages stay in the feed, dimmed. The user can un-exclude.
@@ -42,12 +55,20 @@ Run the whole import inside one transaction. If any step fails, nothing is writt
 9. **Embeddings.** Queue background embedding of `content_text` for `is:similar`. Import returns before this finishes.
 10. **Memories.** Queue memory extraction (`memories.md`). Also runs in the background.
 
-Return the import summary right after step 8:
+`POST /imports` runs steps 1–8 as a background job and starts embeddings when it finishes. The job's `result` is the summary:
 
 ```json
-{ "source_id": 3, "messages": 1284, "new_authors": 2, "conversations": 41,
-  "links": { "discord": 212, "suggested": 380, "root": 97, "unattached": 55 } }
+{ "source_ids": [3], "messages": 1284, "duplicates": 0, "empty": 37, "new_authors": 2, "channels": 1, "conversations": 41,
+  "excluded": { "bot": 12, "system": 3 },
+  "links": { "discord": 212, "suggested": 380, "root": 97, "unattached": 55 },
+  "files": [{ "file": "general.json", "kind": "dce", "status": "imported", "messages": 1284 }] }
 ```
+
+Built as specified, with two simplifications:
+- Excluded messages follow the normal block rules. A bot message between two of Lenk's messages still starts its own block.
+- New messages from an overlapping export only join the block of the message right before them. They never merge into a later block.
+
+Memories are not queued. Extraction picks up new blocks the next time it runs, and it needs the LLM.
 
 ## Blocks
 

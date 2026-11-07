@@ -4,63 +4,65 @@ Approved conversations become JSONL examples. JSONL is used to train a LoRA adap
 
 ## 1. Building examples
 
-One example per **unit**, meaning a block or a split line, that meets all of these:
+Examples use **rotation**, from Smarth's `training/discord_dataset.py` (PR #3). Every approved, non-archived conversation is replayed once per person in it. In each replay:
 
-- it is in a conversation that is approved and not archived
-- its link is `accepted` or `root`, or `suggested` and accepted on approve
-- it has at least one non-excluded message
-- its author is not a bot
+- **That person's messages** become `assistant` turns. The model learns to answer as Ohm in that person's voice.
+- **Everyone else's messages** become `user` turns written as `Name: text`. Back-to-back runs from one person are joined, and so are back-to-back user turns.
+- **The replayed person's name becomes `Ohm`** anywhere in the text (whole word, case-insensitive, `@` kept). So `@KaptainDoosh are we on?` reads `@Ohm are we on?` in KaptainDoosh's replay, the way people will actually talk to the bot.
 
-**Target text:** the unit's non-excluded messages' `content_text`, joined with `\n`. For a block, leave out lines that are split lines, because they are their own units.
+Which messages go where:
 
-**Context:** walk effective parents from the unit up to its root, then reverse so the oldest comes first. Each step contributes the *parent unit*: the block containing the parent message, or the split line itself.
+- **Excluded messages** are left out entirely.
+- **Bots** are context only, never replayed.
+- **Unattached messages** (their unit has no link) still show as context when someone else is replayed, because the bot sees everything said in the channel. They are never trained as replies.
+- **Short replies** (`lol`, `ok`, `same`, … under 2 characters after trimming) are mostly dropped as targets. A fixed 10% stays, picked by message id, so the model still says "lol" sometimes.
+- **Replies over 600 characters** are dropped as targets.
+- **Turn order:** a replay starts on a user turn and ends on an assistant turn. A person's opening message, with nothing before it, is not a target. The bot only ever answers.
 
-- Skip excluded messages inside a context unit. If a whole unit is excluded, keep walking past it.
-- **Approval rule (default):** stop walking at the first unit that is in an unapproved or archived conversation. Context may cross conversation splits, but only into approved ones.
-- **Length cap:** if the formatted prompt exceeds `max_len - target_tokens`, drop context from the oldest end, but always keep the root.
+**Chunking:** conversations longer than `max_len` are split at turn pairs, repeating the last 2 pairs at the start of the next chunk. The budget is `max_len × 3` characters minus the system prompt. The worker still drops anything that tokenizes over `max_len`.
 
-A root unit becomes an example with empty context. That teaches the model how this person opens a topic.
+The thread links don't shape the context. A replay is linear by time, like the bot's own channel history.
 
 ### Export record (`/export/jsonl`)
 
-This is the model-agnostic format. Write one record per line.
+One record per line. `messages` is exactly what gets trained:
 
 ```json
-{"id": "blk:881", "speaker": "KaptainDoosh", "speaker_id": "1234",
- "context": [
-   {"speaker": "unanticipatedinflation", "text": "we running barotrauma this night? @KaptainDoosh"},
-   {"speaker": "Zhingstin Ji", "text": "Baro could hit"}
- ],
- "target": "I’m down to baro",
- "conversation_id": 12, "source_message_ids": ["...", "..."]}
+{"id": "conv:12:1234:0", "conversation_id": 12, "speaker": "KaptainDoosh", "speaker_id": "1234",
+ "chunk": 0, "chunks": 1, "assistant_turns": 1, "source_message_ids": ["...", "..."],
+ "messages": [
+   {"role": "system", "content": "<Ohm's personality>"},
+   {"role": "user", "content": "unanticipatedinflation: we running barotrauma this night? @Ohm\nZhingstin Ji: Baro could hit"},
+   {"role": "assistant", "content": "Mb I was out all day and just got home\nI’m down to baro"}
+ ]}
 ```
 
-### Balancing and cleanup at export time
+### Balancing at export time
 
-Apply these in order, and report each count in `GET /export/preview`:
+Apply these, and report each count in `GET /export/preview` (`dropped`):
 
-1. **Duplicates:** if two targets by the same author have cosine ≥ 0.95, keep the one with the longer context.
-2. **Author cap:** if an author has more than `author_cap` (default 30%) of the examples, downsample them at random with a fixed seed (the dataset hash) until they are at the cap. The UI's author-skew bar shows the pre-cap shares.
-3. **Speaker filter:** optional `speakers: [...]` in the training config limits targets to those people.
+1. **Speaker filter:** optional `speakers: [...]` in the training config limits which people are replayed. Everyone else is still context.
+2. **Author cap:** nobody gets much more than `author_cap` (default 30%) of all assistant turns. Whole examples from over-cap people are dropped at random with a fixed seed (from the example ids). With n people the cap is at least 1/n, and everyone keeps at least one example. The UI's author-skew bar shows assistant-turn shares before and after the cap.
 
 `dataset_sha` is the sha256 of the final JSONL. It is stored on the run, so a run can always be traced back to its exact data.
 
 ## 2. Prompt formatting
 
-Gemma 4's chat template has a real system turn (`<|turn>system`) and does not force user and model turns to alternate. Earlier Gemma versions lacked both, so ignore older guides on this. Format each record as three turns:
+The format is the one the bot already sends (`controller/wrappers/openai.py`, `modules/discord/DiscordClient.py`):
 
 ```
-system: You are {speaker} in a Discord group chat. Reply as {speaker} would.
-user:   unanticipatedinflation: we running barotrauma this night? @KaptainDoosh
-        Zhingstin Ji: Baro could hit
-model:  I’m down to baro
+system:    Ohm's personality (config/constants.py, models["ohm"]["personality"].strip())
+user:      unanticipatedinflation: we running barotrauma this night? @Ohm
+           Zhingstin Ji: Baro could hit
+assistant: Mb I was out all day and just got home
+user:      ...
+assistant: ...
 ```
 
-All context goes into one user turn as "Name: text" lines. Keep it that way even though the template would allow several user turns, because the bot's live prompt sends history the same way.
+At runtime the bot sends the last 30 minutes of channel history the same way: `Name: text` user turns, its own replies as assistant turns, and same-role turns merged (`_merge_same_role`). The only difference is the "Things you remember" notes it appends to the system prompt. If the personality text in `config/constants.py` changes, retrain, because the system prompt is part of every example.
 
-- Render it with the base model's own chat template from the HF tokenizer (`tokenizer.apply_chat_template`). Never hand-write the special tokens.
-- Compute loss on the model turn only (assistant-only masking, for example TRL's completion-only collator).
-- At inference, the bot's prompt must use the same "You are {speaker}" framing and "Name: text" history lines, or the adapter won't fire the way it was trained. Coordinate with `controller/wrappers/openai.py`, which already merges same-role turns (`_merge_same_role`).
+- Render it with the base model's own chat template from the HF tokenizer (`tokenizer.apply_chat_template`). Gemma 4 has a real system turn, so ignore older Gemma guides on this. Never hand-write the special tokens.
+- Compute loss on the assistant turns only (`train_on_responses_only`), so every Ohm turn in a multi-turn example is trained and no user turn is.
 
 ## 3. Training weights (important)
 
@@ -85,7 +87,7 @@ Default config, matching the Train modal:
 ```json
 { "method": "lora", "r": 16, "alpha": 32, "dropout": 0.05,
   "target_modules": "all-linear", "lr": 2e-4, "epochs": 3,
-  "max_len": 1024, "batch_size": "auto", "grad_accum": "auto",
+  "max_len": 2048, "batch_size": "auto", "grad_accum": "auto",
   "load_in_4bit": true, "seed": 1337, "speakers": null }
 ```
 

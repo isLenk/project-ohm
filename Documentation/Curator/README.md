@@ -53,31 +53,33 @@ There is no "pending" status. A conversation is either approved, archived, or ne
 ## Architecture
 
 ```
-Electron renderer (React, controller-mainframe)
+Electron renderer (React, apps/mainframe)
         │  HTTP + SSE, localhost:8200
         ▼
-curator_service  (new, Python FastAPI, runs on the PC with the GPU)
+curator_service  (apps/curator, Python FastAPI, runs on the PC with the GPU)
   ├── open .ohm project  → SQLite file (one per project)
   ├── registry.sqlite    → base models + adapters, app-wide
   ├── training worker    → subprocess, PEFT/TRL on HF weights
   ├── llama-server :5000 → used for memory extraction + suggestions (optional)
-  └── memory_service (NAS :8100) → kept memories pushed as user_facts
+  └── memory service (apps/memory, NAS :8100) → kept memories pushed as user_facts
 ```
 
-Why a new Python service instead of the Express server in `controller-mainframe/src/main/api.js`:
+Why a new Python service instead of the Express server in `apps/mainframe/src/main/api.js`:
 - Training is Python (PEFT/TRL or Unsloth) and needs the PC's GPU.
 - SQLite FTS5, regex and embeddings are simpler in Python.
 - It matches `memory_service`, which is already FastAPI.
 
-The Electron main process (`controller-mainframe/src/main/curator.js`) starts and stops `curator_service` and gives the renderer a per-launch token. The renderer (`controller-mainframe/src/renderer/src/curator/`) talks to the service directly.
+The Electron main process (`apps/mainframe/src/main/curator.js`) starts and stops `curator_service` and gives the renderer a per-launch token. The renderer (`apps/mainframe/src/renderer/src/curator/`) talks to the service directly.
 
 ## What's built
 
-Everything in these docs is built and tested, except the importer. Smarth owns the importer. `curator_service/README.md` lists the two functions an importer calls when it finishes.
+Everything in these docs is built and tested.
 
 ```
-curator_service/
-  app/main.py          FastAPI routes (api.md); no /imports yet
+apps/curator/curator_service/
+  app/main.py          FastAPI routes (api.md)
+  app/importer.py      Import file: authors, messages, blocks, native links, then conversations + suggestions (import.md)
+  app/formats.py       input formats: DiscordChatExporter JSON, messages.jsonl, speakers.json
   app/schema.py        project + registry schemas (data-model.md); the source of truth
   app/project.py       open/save .ohm through a working copy
   app/threads.py       links, validation, undo, suggester (threading.md)
@@ -92,6 +94,7 @@ curator_service/
   app/train/worker.py  training subprocess (Unsloth + TRL; simulate mode for UI work)
   app/registry.py      models + adapters, app-wide
   tests/               pytest, plus seed.py demo data
+  tools/jsonl_to_dce.py  write a messages.jsonl dump out as DiscordChatExporter files (optional; import reads JSONL directly)
 ```
 
 ## Already decided
@@ -107,7 +110,7 @@ curator_service/
 Each has a default so work is not blocked. Change the default in code if he decides otherwise.
 
 1. **Split gap.** Default 30 minutes, editable per project.
-2. **Approving with leftovers.** Default: approving accepts remaining suggested links and drops unattached units from the export. The confirm dialog states both counts.
+2. **Approving with leftovers.** Approving accepts remaining suggested links (heuristic and model) without asking. Unattached units are dropped from the export, so only those trigger a confirm dialog.
 3. **Context across conversations.** Default: context may only come from approved conversations; the chain stops at the first unapproved message.
 4. **Per-author cap.** Default 30% of examples per author, applied at export by downsampling.
 5. **Which speakers to train.** Default: everyone, with the speaker name in the prompt. Optional filter to train on selected speakers only.

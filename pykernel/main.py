@@ -1,5 +1,5 @@
 
-executable_path = "executables"
+executable_path = "tools"
 import os
 import sys
 from fastapi import FastAPI

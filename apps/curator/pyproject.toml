@@ -1,0 +1,27 @@
+[project]
+name = "curator-service"
+version = "0.1.0"
+description = "Conversation Curator backend, started by the Electron app"
+requires-python = "==3.12.*"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic>=2",
+    "requests",
+    "python-dotenv",
+    "psutil",
+    "regex",
+    "numpy",
+    # Similarity search, duplicate detection and memory dedupe. Optional: the service runs without it.
+    "sentence-transformers",
+    # "From Hugging Face…" in the model menu
+    "huggingface_hub",
+]
+
+[dependency-groups]
+dev = ["pytest", "httpx"]
+
+[tool.uv]
+# Runs from this folder (python -m uvicorn curator_service.app.main:app), not installed as a package.
+# Training needs its own venv, see requirements-train.txt.
+package = false

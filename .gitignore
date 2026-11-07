@@ -7,7 +7,16 @@
 /playground
 models
 ckernel
-/tts_api/tts_env
-/tts_api/tts_api
-/memory_service/data
+/apps/tts/tts_env
+/apps/tts/tts_api
+/apps/memory/data
 stt_debug.wav
+
+# Generated
+__pycache__/
+*.pyc
+*.log
+/output.wav
+
+# Python venv (uv sync --all-packages)
+/.venv/
