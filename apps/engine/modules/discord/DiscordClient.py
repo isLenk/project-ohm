@@ -3,6 +3,7 @@
 
 
 import asyncio
+import re
 import threading
 import time
 from collections import deque
@@ -145,9 +146,8 @@ class DiscordClient(discord.Client):
             turn.line, related_memories=memories, history=self.history(turn.channel_id),
         )
 
-        # If response contains it's name at the start, remove it
-        if response.startswith(self.model.name + ":"):
-            response = response[len(self.model.name)+1:].lstrip()
+        # Drop "Ohm:" labels at the start of any line (any case/spacing)
+        response = re.sub(rf"(?im)^\s*{re.escape(self.model.name)}\s*:\s*", "", response)
 
         turn.reply = response
         turn.commit()
