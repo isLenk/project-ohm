@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "setup": "uv sync --all-packages && npm --prefix apps/mainframe install",
+    "setup": "uv sync --all-packages && cd apps/mainframe && npm ci",
     "dev": "node tools/dev.mjs",
     "dev:all": "node tools/dev.mjs all",
     "build": "npm --prefix apps/mainframe run build",
