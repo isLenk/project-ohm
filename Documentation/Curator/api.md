@@ -99,7 +99,7 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 | Method | Path | Body / query | Notes |
 |---|---|---|---|
 | GET | `/conversations` | `?filter=all\|approved\|archived` | sidebar list: `id, first_ts, last_ts, people, messages, author colors, approved, archived` |
-| POST | `/conversations/{id}/approve` | `{ confirm?: true }` | `409 needs_confirm` with `{ suggested, unattached }` until confirmed |
+| POST | `/conversations/{id}/approve` | `{ confirm?: true }` | Accepts the conversation's suggested links. `409 needs_confirm` with `{ suggested, unattached }` until confirmed, only when some blocks are unattached |
 | POST | `/conversations/{id}/unapprove` | — | |
 | POST | `/conversations/{id}/archive` | — | |
 | POST | `/conversations/{id}/unarchive` | — | |

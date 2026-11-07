@@ -132,14 +132,19 @@ def listing(conn, filter_: str = "all") -> list[dict]:
 def approve(conn, conversation_id: int, confirm: bool) -> dict:
     conv = get(conn, conversation_id)
     s = stats(conn, conv)
-    if not confirm and (s["suggested"] or s["unattached"]):
+    # Approving accepts the predicted arrows without asking. Only unattached blocks need a yes,
+    # because they're left out of training.
+    if not confirm and s["unattached"]:
         raise ApiError(409, "needs_confirm", "Some replies still need a decision.",
                        suggested=s["suggested"], unattached=s["unattached"])
+    accepted = []  # what approving changed, so undo can put the suggestions back (POST /links/restore)
     for u in units_in(conn, conv):
         if u["link"] and u["link"]["status"] == "suggested":
             conn.execute("UPDATE links SET status = 'accepted', updated_at = ? WHERE id = ?", (now_ms(), u["link"]["id"]))
+            accepted.append({"unit_kind": u["kind"], "unit_id": u["id"],
+                             "link": {k: u["link"][k] for k in ("parent_id", "status", "origin", "score")}})
     conn.execute("UPDATE conversations SET approved_at = ? WHERE id = ?", (now_ms(), conversation_id))
-    return stats(conn, get(conn, conversation_id))
+    return {**stats(conn, get(conn, conversation_id)), "accepted": accepted}
 
 
 def set_flag(conn, conversation_id: int, column: str, on: bool) -> dict:

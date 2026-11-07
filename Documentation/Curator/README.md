@@ -110,7 +110,7 @@ curator_service/
 Each has a default so work is not blocked. Change the default in code if he decides otherwise.
 
 1. **Split gap.** Default 30 minutes, editable per project.
-2. **Approving with leftovers.** Default: approving accepts remaining suggested links and drops unattached units from the export. The confirm dialog states both counts.
+2. **Approving with leftovers.** Approving accepts remaining suggested links (heuristic and model) without asking. Unattached units are dropped from the export, so only those trigger a confirm dialog.
 3. **Context across conversations.** Default: context may only come from approved conversations; the chain stops at the first unapproved message.
 4. **Per-author cap.** Default 30% of examples per author, applied at export by downsampling.
 5. **Which speakers to train.** Default: everyone, with the speaker name in the prompt. Optional filter to train on selected speakers only.

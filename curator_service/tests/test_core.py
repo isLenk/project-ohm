@@ -133,6 +133,13 @@ def test_approve_needs_confirm_when_undecided(project):
     with project.tx() as conn:
         s = conversations.approve(conn, 1, confirm=True)
     assert s["approved"] and s["suggested"] == 0
+    # it reports what it accepted, so undo can put the suggestions back
+    assert s["accepted"] and all(a["link"]["status"] == "suggested" for a in s["accepted"])
+    with project.tx() as conn:
+        for a in s["accepted"]:
+            threads.restore(conn, a["unit_kind"], a["unit_id"], a["link"])
+    for a in s["accepted"]:
+        assert threads.link_row(project.conn, a["unit_kind"], a["unit_id"])["status"] == "suggested"
 
 
 # ── split / merge ───────────────────────────────────────────────────────────
