@@ -21,12 +21,26 @@ DUPLICATE = 0.9
 STYLE_MIN_BLOCKS = 10
 STYLE_MIN_SHARE = 0.2
 
+CONTEXT_MESSAGES = 8
+CONTEXT_CHARS = 300
+VAGUE_ENDINGS = {"it", "this", "that", "them", "there", "participate", "join", "help", "come", "go", "too", "so", "in"}
+
 EXTRACT_SYSTEM = (
-    "You decide what's worth remembering long-term about a person from what they said in a group chat.\n"
-    "Worth remembering: their name, likes and dislikes, plans, job or school, pets, relationships, games they "
-    "play, life events, opinions they clearly hold, people they spend time with.\n"
-    "Not worth remembering: greetings, filler, questions, reactions, insults, jokes, small talk, or anything "
-    "about the conversation or a bot. Requests to a bot are not facts about the person either.\n"
+    "You decide what's worth remembering long-term about one person from what they said in a group chat.\n"
+    "You get the last few messages before theirs as context, then their messages. Only make notes about the "
+    "person whose messages you are given; use the context only to understand what they mean.\n"
+    "Worth remembering: lasting things such as likes and dislikes, hobbies, games they play, job or school, where "
+    "they live, pets, family, partners and friends, plans with a date, life events, and opinions they clearly hold.\n"
+    "Not worth remembering: greetings, filler, questions, reactions, jokes, insults, small talk, agreeing or "
+    "saying yes or no to something, being free or busy for one event, anything about the conversation itself, "
+    "and requests to a bot.\n"
+    "The note must make sense on its own months later, read by someone who never saw the chat. Say what the "
+    "thing is: name the game, the person, the place, the event. If you can't tell what they mean, even with the "
+    "context, nothing is worth remembering.\n"
+    "Good: \"KaptainDoosh plays Barotrauma with the group most weekends.\" "
+    "\"KaptainDoosh is studying nursing at college.\"\n"
+    "Bad: \"KaptainDoosh is down to participate.\" (in what?) \"KaptainDoosh agrees.\" "
+    "\"KaptainDoosh likes it.\" (likes what?) \"KaptainDoosh asked a question.\"\n"
     "Reply with JSON only, one object:\n"
     '{"note": "<one short third-person sentence that starts with their name>", '
     '"category": "fact" or "relationship", '
@@ -34,6 +48,34 @@ EXTRACT_SYSTEM = (
     '"mentions_person": "<a person they mention by name who is not in the chat>" or null}\n'
     'If nothing is worth remembering reply exactly {"note": null}.'
 )
+
+
+def _vague(note: str) -> bool:
+    """Notes that end on a pronoun or a bare verb ("is down to participate") don't say what they're about."""
+    words = re.findall(r"[a-z']+", note.lower())
+    return len(words) < 3 or words[-1] in VAGUE_ENDINGS
+
+
+def _prompt(project, b, msgs) -> str:
+    """The person's messages, after the few channel messages before them so the model knows what they refer to."""
+    before = project.all(
+        "SELECT COALESCE(a.display_name, a.name) AS who, m.content_text FROM messages m JOIN authors a ON a.id = m.author_id "
+        "WHERE m.channel_id = ? AND m.ts < ? AND m.excluded = 0 AND m.content_text != '' "
+        "ORDER BY m.ts DESC, CAST(m.id AS INTEGER) DESC LIMIT ?",
+        (b["channel_id"], b["first_ts"], CONTEXT_MESSAGES),
+    )
+    have = {m["id"] for m in msgs}
+    replied = [m["reply_to_id"] for m in msgs if m["reply_to_id"] and m["reply_to_id"] not in have]
+    quoted = project.all(
+        "SELECT COALESCE(a.display_name, a.name) AS who, m.content_text FROM messages m JOIN authors a ON a.id = m.author_id "
+        f"WHERE m.id IN ({','.join('?' * len(replied))})", replied
+    ) if replied else []
+    lines = [f"{r['who']}: {r['content_text'][:CONTEXT_CHARS]}" for r in reversed(before)]
+    lines += [f"{r['who']} (replied to): {r['content_text'][:CONTEXT_CHARS]}" for r in quoted]
+    name = b["display_name"] or b["name"]
+    context = "\n".join(lines) or "(nothing before this)"
+    said = "\n".join(m["content_text"] for m in msgs)
+    return f"Context, earlier in the chat:\n{context}\n\nWhat {name} said:\n{said}"
 
 
 def _memory_out(conn, r) -> dict:
@@ -85,7 +127,10 @@ def listing(conn, author_id: str, status: Optional[str]) -> list[dict]:
     if status:
         sql += " AND status = ?"
         params.append(status)
-    rows = conn.execute(sql + " ORDER BY category, created_at", params).fetchall()
+    # Newest first: by the latest message a memory came from, then by when it was added.
+    sql += (" ORDER BY (SELECT MAX(m.ts) FROM memory_sources s JOIN messages m ON m.id = s.message_id "
+            "WHERE s.memory_id = memories.id) DESC, created_at DESC")
+    rows = conn.execute(sql, params).fetchall()
     return [_memory_out(conn, r) for r in rows]
 
 
@@ -162,10 +207,10 @@ def _same_text(conn, author_id: str, text: str) -> Optional[int]:
 
 
 def extract(project, job, conversation_id: Optional[int] = None) -> dict:
-    """Ask the local LLM about every unscanned block (or one conversation's blocks)."""
+    """Ask the local LLM about every unscanned block (or one conversation's blocks), newest first."""
     if not llm.up():
         raise ApiError(503, "llm_down", "llama-server isn't running on :5000, so memories can't be extracted.")
-    sql = ("SELECT b.id, b.author_id, a.name, a.display_name FROM blocks b JOIN authors a ON a.id = b.author_id "
+    sql = ("SELECT b.id, b.author_id, b.channel_id, b.first_ts, a.name, a.display_name FROM blocks b JOIN authors a ON a.id = b.author_id "
            "LEFT JOIN memory_scans s ON s.block_id = b.id WHERE s.block_id IS NULL AND a.is_bot = 0")
     params: list = []
     if conversation_id is not None:
@@ -174,7 +219,7 @@ def extract(project, job, conversation_id: Optional[int] = None) -> dict:
             raise not_found("Conversation")
         sql += " AND b.channel_id = ? AND b.first_ts BETWEEN ? AND ?"
         params += [conv["channel_id"], conv["first_ts"], conv["last_ts"]]
-    blocks = project.all(sql + " ORDER BY b.first_ts", params)
+    blocks = project.all(sql + " ORDER BY b.first_ts DESC, b.id DESC", params)
     use_vectors = embeddings.available()
     created = merged = failed = 0
     stopped = None
@@ -183,14 +228,13 @@ def extract(project, job, conversation_id: Optional[int] = None) -> dict:
             break
         job.progress(i, len(blocks), "reading messages")
         msgs = project.all(
-            "SELECT id, content_text FROM messages WHERE block_id = ? AND excluded = 0 ORDER BY ts", (b["id"],)
+            "SELECT id, content_text, reply_to_id FROM messages WHERE block_id = ? AND excluded = 0 ORDER BY ts", (b["id"],)
         )
         text = "\n".join(m["content_text"] for m in msgs)
-        name = b["display_name"] or b["name"]
         result = None
         if len(text.split()) >= MIN_WORDS:
             try:
-                result = llm.chat_json(EXTRACT_SYSTEM, f"{name}:\n{text}")
+                result = llm.chat_json(EXTRACT_SYSTEM, _prompt(project, b, msgs))
             except requests.RequestException:
                 # Leave the block unscanned so the next run asks again.
                 if not llm.up():
@@ -203,6 +247,8 @@ def extract(project, job, conversation_id: Optional[int] = None) -> dict:
             if not isinstance(result, dict) or not result.get("note"):
                 continue
             note = str(result["note"]).strip().strip('"')[:300]
+            if _vague(note):
+                continue
             category = "relationship" if result.get("category") == "relationship" else "fact"
             vec = embeddings.encode([note])[0] if use_vectors else None
             existing = _similar_existing(conn, b["author_id"], vec) if use_vectors else _same_text(conn, b["author_id"], note)
