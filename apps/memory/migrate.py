@@ -1,8 +1,8 @@
 """One-time import of existing data into the NAS memory service. Run from the PC:
 
-    Scripts\\python.exe memory_service\\migrate.py              # characters + Qdrant memories
-    Scripts\\python.exe memory_service\\migrate.py --dry-run    # show what would be imported
-    Scripts\\python.exe memory_service\\migrate.py --qdrant http://<host>:6333
+    Scripts\\python.exe apps\\memory\\migrate.py              # characters + Qdrant memories
+    Scripts\\python.exe apps\\memory\\migrate.py --dry-run    # show what would be imported
+    Scripts\\python.exe apps\\memory\\migrate.py --qdrant http://<host>:6333
 
 Imports:
   * apps/engine/config/constants.py characters (personality, model, configs)
@@ -23,7 +23,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]  # apps/memory/migrate.py
 sys.path.insert(0, str(ROOT / "apps" / "engine"))  # for config.constants
 load_dotenv(ROOT / ".env")
 

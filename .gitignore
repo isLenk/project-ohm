@@ -9,7 +9,7 @@ models
 ckernel
 /tts_api/tts_env
 /tts_api/tts_api
-/memory_service/data
+/apps/memory/data
 stt_debug.wav
 
 # Generated
