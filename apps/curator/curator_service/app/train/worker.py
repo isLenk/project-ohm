@@ -188,7 +188,7 @@ def train(run_dir: Path, rep: Reporter, cfg: dict) -> None:
 
 
 def convert(peft_dir: Path, cfg: dict, run_dir: Path) -> Path:
-    llama_dir = Path(os.getenv("LLAMA_CPP_DIR") or Path(__file__).resolve().parents[3].parent / "llama.cpp")
+    llama_dir = Path(os.getenv("LLAMA_CPP_DIR") or Path(__file__).resolve().parents[6] / "llama.cpp")
     script = llama_dir / "convert_lora_to_gguf.py"
     if not script.exists():
         raise RuntimeError(f"Can't find {script}. Set LLAMA_CPP_DIR to your llama.cpp checkout.")

@@ -2,7 +2,7 @@
 import { spawn } from 'child_process'
 import { randomBytes } from 'crypto'
 import axios from 'axios'
-import { python, repoRoot } from './python.js'
+import { appDir, python } from './python.js'
 import { childEnv, setting } from './settings.js'
 
 const PORT = Number(setting('CURATOR_PORT') || 8200)
@@ -31,9 +31,8 @@ async function launch() {
     console.log(`[curator] using the service already on ${URL}`)
     return
   }
-  const root = repoRoot()
   token = randomBytes(24).toString('hex')
-  const py = python(root)
+  const py = python()
   child = spawn(
     py,
     [
@@ -45,7 +44,7 @@ async function launch() {
       '--port',
       String(PORT)
     ],
-    { cwd: root, env: childEnv({ CURATOR_TOKEN: token, PYTHONUNBUFFERED: '1' }), windowsHide: true }
+    { cwd: appDir('curator'), env: childEnv({ CURATOR_TOKEN: token, PYTHONUNBUFFERED: '1' }), windowsHide: true }
   )
   child.stdout.on('data', (d) => process.stdout.write(`[curator] ${d}`))
   child.stderr.on('data', (d) => process.stdout.write(`[curator] ${d}`))

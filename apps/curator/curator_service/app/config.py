@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[4]  # apps/curator/curator_service/app/config.py
 load_dotenv(REPO_ROOT / ".env")
 
 

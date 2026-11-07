@@ -1,4 +1,4 @@
-# Curator service. Install into the repo's venv: pip install -r curator_service/requirements.txt
+# Curator service. Install into the repo's venv: pip install -r apps/curator/requirements.txt
 fastapi
 uvicorn
 pydantic>=2

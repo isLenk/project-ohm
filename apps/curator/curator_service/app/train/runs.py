@@ -128,7 +128,7 @@ def start(project, registry, config: Optional[dict], stop_pids: list[int]) -> di
         cmd.append("--simulate")
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
     log = open(run_dir / "worker.log", "w", encoding="utf-8")
-    proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
+    proc = subprocess.Popen(cmd, cwd=REPO_ROOT / "apps" / "curator", stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
     _procs[run_id] = proc
     registry.run("UPDATE train_runs SET pid = ? WHERE id = ?", (proc.pid, run_id))
     threading.Thread(target=_monitor, args=(registry, run_id, proc), daemon=True).start()
