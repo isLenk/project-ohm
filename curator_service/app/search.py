@@ -223,4 +223,4 @@ def _person(conn, r, total: int) -> dict:
     count = conn.execute("SELECT COUNT(*) FROM messages WHERE author_id = ? AND excluded = 0", (r["id"],)).fetchone()[0]
     mems = conn.execute("SELECT COUNT(*) FROM memories WHERE author_id = ? AND status != 'forgotten'", (r["id"],)).fetchone()[0]
     return {"author_id": r["id"], "name": r["name"], "display_name": r["display_name"], "color_index": r["color_index"],
-            "messages": count, "share": round(count / total, 3), "memories": mems}
+            "avatar_url": r["avatar_url"], "messages": count, "share": round(count / total, 3), "memories": mems}

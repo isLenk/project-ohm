@@ -72,7 +72,7 @@ def people(conn) -> list[dict]:
         ).fetchall())
         out.append({
             "author_id": r["id"], "name": r["name"], "display_name": r["display_name"], "color_index": r["color_index"],
-            "is_bot": bool(r["is_bot"]), "messages": r["messages"], "conversations": in_convs.get(r["id"], 0),
+            "avatar_url": r["avatar_url"], "is_bot": bool(r["is_bot"]), "messages": r["messages"], "conversations": in_convs.get(r["id"], 0),
             "share": round(r["messages"] / total, 3),
             "memories": {"new": counts.get("new", 0), "kept": counts.get("kept", 0), "forgotten": counts.get("forgotten", 0)},
         })
