@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from . import conversations
+from . import conversations, threads
 from .config import REPO_ROOT
 
 CHARACTER = "ohm"
@@ -95,6 +95,8 @@ def _rotation(conv: dict, runs: list[dict], target: str, people: dict, attached:
             turns.append({"role": role, "content": content, "ids": list(ids)})
 
     for r in runs:
+        if r.get("context") and r["author"] == target:
+            continue  # their own earlier words: Ohm's line from before, not something to answer
         if r["author"] != target:
             text = repl("\n".join(m["content_text"] for m in r["msgs"]))
             add("user", f"{people[r['author']]['label']}: {text}", [])
@@ -133,6 +135,29 @@ def _rotation(conv: dict, runs: list[dict], target: str, people: dict, attached:
     } for k, ch in enumerate(chunks)]
 
 
+def _carried(conn, conv_messages: list, units: list[dict]) -> dict[str, list]:
+    """Context for replies whose parent is in an earlier conversation.
+
+    {id of the reply's first kept message: the parent's block up to and including the parent}.
+    Without it a reply that opens a conversation has nothing before it and is never trained.
+    """
+    inside = {m["id"] for m in conv_messages}
+    out = {}
+    for u in units:
+        link = u["link"]
+        if not link or not link["parent_id"] or link["parent_id"] in inside:
+            continue
+        anchor = next((m for m in u["messages"] if not m["excluded"]), None)
+        parent = conn.execute("SELECT * FROM messages WHERE id = ?", (link["parent_id"],)).fetchone()
+        if anchor is None or parent is None:
+            continue
+        ctx = [m for m in threads.block_messages(conn, parent["block_id"])
+               if threads.key(m) <= threads.key(parent) and not m["excluded"]]
+        if ctx:
+            out[anchor["id"]] = ctx
+    return out
+
+
 def _people(conn) -> dict:
     out = {}
     for r in conn.execute("SELECT id, name, display_name, is_bot FROM authors"):
@@ -156,21 +181,30 @@ def build(project, speakers: Optional[list[str]] = None, max_len: int = DEFAULT_
         snap = conversations._snapshot(conn, convs)
         people = _people(conn)
         for conv in convs:
-            attached = {m["id"]: u["link"] is not None for u in snap[conv["id"]]["units"] for m in u["messages"]}
+            units = snap[conv["id"]]["units"]
+            attached = {m["id"]: u["link"] is not None for u in units for m in u["messages"]}
+            carried = _carried(conn, snap[conv["id"]]["messages"], units)
+            shown: set[str] = set()
             runs: list[dict] = []
             for m in snap[conv["id"]]["messages"]:
                 if m["excluded"]:
                     dropped["excluded"] += 1
                     continue
+                # A reply to an earlier conversation gets what it answers right before it, as context only
+                ctx = [c for c in carried.get(m["id"], []) if c["id"] not in shown]
+                if ctx:
+                    shown.update(c["id"] for c in ctx)
+                    people.setdefault(ctx[0]["author_id"], {"label": ctx[0]["author_id"], "names": [], "bot": False})
+                    runs.append({"author": ctx[0]["author_id"], "msgs": ctx, "context": True})
                 if m["author_id"] not in people:
                     people[m["author_id"]] = {"label": m["author_id"], "names": [], "bot": False}
-                if runs and runs[-1]["author"] == m["author_id"]:
+                if runs and runs[-1]["author"] == m["author_id"] and not runs[-1].get("context"):
                     runs[-1]["msgs"].append(m)
                 else:
                     runs.append({"author": m["author_id"], "msgs": [m]})
-            for target in dict.fromkeys(r["author"] for r in runs):
+            for target in dict.fromkeys(r["author"] for r in runs if not r.get("context")):
                 if people[target]["bot"]:
-                    dropped["bots"] += sum(len(r["msgs"]) for r in runs if r["author"] == target)
+                    dropped["bots"] += sum(len(r["msgs"]) for r in runs if r["author"] == target and not r.get("context"))
                     continue
                 if speakers and target not in speakers:
                     continue

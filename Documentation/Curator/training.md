@@ -23,6 +23,8 @@ Which messages go where:
 
 The thread links don't shape the context. A replay is linear by time, like the bot's own channel history.
 
+One exception: a reply whose parent is in an **earlier conversation** gets the parent's block, up to and including the parent message, as a `user` turn right before it. Without it, a reply that opens its own conversation (after a long gap) would have nothing before it and never be trained. The carried block is context only: it is never a target, and it is left out of its own author's replay.
+
 ### Export record (`/export/jsonl`)
 
 One record per line. `messages` is exactly what gets trained:

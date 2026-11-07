@@ -225,6 +225,24 @@ def test_export_replays_each_person_as_ohm(project):
         e["assistant_turns"] for e in data["examples"])
 
 
+def test_export_carries_parent_into_a_later_conversation(project):
+    # Conversation 2 opens with Zhingstin answering KaptainDoosh's 1010 from the night before
+    with project.tx() as conn:
+        threads._write(conn, "block", block_of(project, "1013"), "1011", "accepted", "manual")
+        conversations.approve(conn, 2, confirm=True)
+    data = export.build(project)
+    zhing = next(e for e in data["examples"] if e["speaker"] == "Zhingstin Ji")
+    context, reply = zhing["messages"][1]["content"], zhing["messages"][2]["content"]
+    assert context.startswith("KaptainDoosh: @ELEVIST")
+    assert "@Ohm" in context  # Zhingstin's name becomes Ohm in their own replay
+    assert reply == "im in, give me 5"
+    assert "1010" not in zhing["source_message_ids"]  # context, never a target
+    # KaptainDoosh isn't replayed against their own carried-over line
+    kaptain = next(e for e in data["examples"] if e["speaker"] == "KaptainDoosh")
+    assert "@ELEVIST" not in kaptain["messages"][1]["content"]
+    assert kaptain["messages"][-1]["content"] == "pulling up now"
+
+
 def test_export_chunks_long_conversations():
     turns = []
     for i in range(10):
