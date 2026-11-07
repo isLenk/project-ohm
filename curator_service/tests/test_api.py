@@ -52,7 +52,7 @@ def test_full_flow(tmp_path):
     assert c.post("/links/guess", json={}).json()["error"] == "llm_down"
 
     prev = c.get("/export/preview").json()
-    assert prev["examples"] > 0 and len(prev["sample"][0]) == 3
+    assert prev["examples"] > 0 and prev["sample"][0][0]["role"] == "system"
     out = c.post("/export/jsonl", json={"path": str(tmp_path / "out.jsonl")}).json()
     assert (tmp_path / "out.jsonl").read_text().count("\n") == out["examples"]
 

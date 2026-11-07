@@ -145,7 +145,7 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/export/preview` | — | `{ examples, by_author: [...], dropped: { unattached, excluded, capped, duplicates } }` |
+| GET | `/export/preview` | — | `{ examples, conversations, by_author: [...], after_cap: [...], dropped: { excluded, unattached, short, "too long", bots, capped }, sample: [messages, ...] }` |
 | POST | `/export/jsonl` | `{ path }` | `{ path, examples, sha256 }` |
 | POST | `/train` | `{ config?: {...} }` | `{ run_id }`; `409` if a run is active or the base has no `hf_path` |
 | GET | `/train/runs` | — | runs from the registry |
