@@ -1,8 +1,11 @@
 # Text Generation Web UI Handler
 # Implements the OpenAI API for LlamaChat 
+from datetime import date
+
 import openai
 
 from config.constants import VOICE_PROMPT
+from utils.WebSearch import web_search
 
 class OpenAIModel:
     client: openai.OpenAI
@@ -67,7 +70,8 @@ class OpenAIModel:
             configs["top_p"] = self.top_p
         return configs
 
-    def create(self, prompt, system=None, assistant="aight lol", related_memories=None, history=None, voice=False, **kwargs):
+    def create(self, prompt, system=None, assistant="aight lol", related_memories=None, history=None, voice=False,
+               web_results=None, **kwargs):
         if system is None:
             system = self.system.strip()
             if voice:
@@ -75,6 +79,9 @@ class OpenAIModel:
         if related_memories:
             notes = "\n".join(f"- {m['content']}" for m in related_memories)
             system += "\n\nThings you remember (only bring them up if they fit the conversation):\n" + notes
+        if web_results:
+            system += ("\n\nYou just looked this up online. Use it to answer, in your own words. "
+                       "Don't read out links or say \"according to\":\n" + web_results)
 
         messages = [{"role": "system", "content": system}]
         if history:
@@ -91,11 +98,36 @@ class OpenAIModel:
             **params,
         )
 
+    def search_query(self, prompt):
+        """Return a web search query if answering `prompt` needs one, else None. Quick and cheap (~0.1s)."""
+        system = (
+            f"Today is {date.today():%B %d, %Y}.\n"
+            "You decide whether a chat message needs a web search to answer well.\n"
+            "Search for: news, sports results, weather, prices, release dates, game updates, recent events, "
+            "or specific facts (people, places, numbers) that could have changed or that you might get wrong.\n"
+            "Don't search for: greetings, small talk, jokes, opinions, feelings, advice, "
+            "or anything about the people in the chat.\n"
+            "If it needs a search, reply with only a short search query. Otherwise reply with exactly: NONE"
+        )
+        response = self.create(prompt, system=system, assistant="", temperature=0, max_tokens=24)
+        query = (response.choices[0].message.content or "").strip()
+        query = query.removeprefix("Search for:").strip().strip('"').strip()
+        if not query or query.upper().startswith("NONE"):
+            return None
+        return query
+
+    def look_up(self, prompt):
+        """Search the web if `prompt` needs it. Returns the results as text, or None."""
+        query = self.search_query(prompt)
+        return web_search(query) if query else None
+
     def generate_stream_text(self, prompt, user="user", related_memories=None, history=None, **kwargs):
-        return self.create(prompt, related_memories=related_memories, history=history, stream=True, **kwargs)
+        return self.create(prompt, related_memories=related_memories, history=history, stream=True,
+                           web_results=self.look_up(prompt), **kwargs)
 
     def generate_text(self, prompt, related_memories=None, user="user", history=None):
-        response = self.create(prompt, related_memories=related_memories, history=history)
+        response = self.create(prompt, related_memories=related_memories, history=history,
+                               web_results=self.look_up(prompt))
         text = response.choices[0].message.content or ""
         return (text, "[INTENT]" in text)
 
