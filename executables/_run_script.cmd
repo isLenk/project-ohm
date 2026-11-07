@@ -1,4 +1,5 @@
 call ..\Scripts\activate
+cd ..\apps\engine
 
 :execute
 python main.py

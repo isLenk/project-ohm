@@ -7,7 +7,7 @@
 */
 import { execFile, spawn } from 'child_process'
 import { addEvent, addLog } from './db.js'
-import { python, repoRoot } from './python.js'
+import { appDir, python } from './python.js'
 import { childEnv } from './settings.js'
 
 const HEARTBEAT_TIMEOUT = 20000 // ms of silence before a main.py we didn't start counts as gone
@@ -72,11 +72,10 @@ export function heard(beatPid) {
 
 export function startEngine() {
   if (state !== 'stopped') return engineStatus()
-  const root = repoRoot()
-  const py = python(root)
+  const py = python()
   stopping = false
   child = spawn(py, ['main.py'], {
-    cwd: root,
+    cwd: appDir('engine'),
     env: childEnv({ PYTHONUNBUFFERED: '1' }),
     windowsHide: true
   })

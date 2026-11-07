@@ -4,7 +4,7 @@ import { join } from 'path'
 import { addEvent, addLog } from './db.js'
 import { engineStatus, heard, onEngineChange } from './engine.js'
 import { nas } from './nas.js'
-import { repoRoot } from './python.js'
+import { appDir } from './python.js'
 import { saveSettings, setting } from './settings.js'
 
 const api = express()
@@ -19,7 +19,7 @@ export const modules = {}
 const restarts = new Set() // modules to restart, handed to main.py with the next heartbeat
 
 function loadModules() {
-  const dir = join(repoRoot(), 'modules')
+  const dir = join(appDir('engine'), 'modules')
   if (!existsSync(dir)) return
   for (const folder of readdirSync(dir)) {
     const body = join(dir, folder, 'body.json')

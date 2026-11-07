@@ -9,6 +9,9 @@ export function repoRoot() {
   return process.env.CURATOR_REPO || resolve(app.getAppPath(), '..', '..')
 }
 
+// Where each Python app lives in the repo
+export const appDir = (name) => join(repoRoot(), 'apps', name)
+
 export function python(root = repoRoot()) {
   if (setting('CURATOR_PYTHON')) return setting('CURATOR_PYTHON')
   const candidates =

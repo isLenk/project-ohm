@@ -5,7 +5,7 @@
     Scripts\\python.exe memory_service\\migrate.py --qdrant http://<host>:6333
 
 Imports:
-  * config/constants.py characters (personality, model, configs)
+  * apps/engine/config/constants.py characters (personality, model, configs)
   * apps/mainframe/characters.db (nedb) characters not already in constants.py
   * every Qdrant collection named memories_<character> (payload.value), with original timestamps
 
@@ -24,7 +24,7 @@ import requests
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "apps" / "engine"))  # for config.constants
 load_dotenv(ROOT / ".env")
 
 
