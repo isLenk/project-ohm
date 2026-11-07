@@ -1,8 +1,14 @@
 # Responsible for the model of the application
+import os
+
+from dotenv import load_dotenv
+
 from controller.wrappers.openai import OpenAIModel
 
+load_dotenv()
 
-DEFAULT_ENDPOINT = "http://127.0.0.1:5000/v1"  # ? not localhost: on Windows that tries IPv6 ::1 first and waits ~2s for it to fail
+
+DEFAULT_ENDPOINT = os.getenv("LLM_URL", "http://127.0.0.1:5000/v1")  # ? not localhost: on Windows that tries IPv6 ::1 first and waits ~2s for it to fail
 # Handles sending requests to the Text Generation Web UI
 class ModelObject:
     def __init__(self, model, api_key="None", endpoint=DEFAULT_ENDPOINT):

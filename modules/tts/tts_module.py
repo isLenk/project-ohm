@@ -1,4 +1,6 @@
+import os
 import requests
+from dotenv import load_dotenv
 from urllib.parse import urlencode
 import aiohttp
 import asyncio
@@ -12,8 +14,10 @@ import utils.latency as latency
 VOICE = "Morgan_Freeman CC3.wav"
 ENDPOINT = "http://localhost:7851/api/tts-generate-streaming"
 
-DOMAIN="127.0.0.1"
-PORT=8000
+load_dotenv()
+# tts_api/ (set TTS_URL in Settings when it runs somewhere else)
+TTS_URL = os.getenv("TTS_URL", "http://127.0.0.1:8000").rstrip("/")
+WS_URL = TTS_URL.replace("http", "ws", 1) + "/api/v1/tts/ws"
 
 class TTSModule:
 
@@ -21,7 +25,7 @@ class TTSModule:
         self.voice = VOICE
 
     async def get_request_stream(self, text):
-        url = f"http://{DOMAIN}:{PORT}/api/v1/tts/feed_input"
+        url = f"{TTS_URL}/api/v1/tts/feed_input"
         data = {"input": text}
         try:
             async with aiohttp.ClientSession() as session:

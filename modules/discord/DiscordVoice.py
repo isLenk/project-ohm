@@ -1,5 +1,5 @@
 from discord.ext import voice_recv
-from modules.tts.tts_module import TTSModule
+from modules.tts.tts_module import TTSModule, WS_URL
 import numpy as np
 import discord
 import asyncio
@@ -358,7 +358,7 @@ class DiscordVoice:
             # Connect to TTS at the same time instead of after
             turn, websocket = await asyncio.gather(
                 asyncio.to_thread(make),
-                websockets.connect("ws://127.0.0.1:8000/api/v1/tts/ws"),
+                websockets.connect(WS_URL),
             )
             self.current_turn = turn
             latency.mark("llm_stream_open")
