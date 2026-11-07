@@ -37,6 +37,7 @@ class MemoryClient:
         self.session = requests.Session()
         self.session.headers["X-API-Key"] = api_key or os.getenv("MEMORY_API_KEY", "")
         self._down_until = 0.0
+        self._names = {}  # user id -> name already sent, so it's only sent again when it changes
         # With the memory module off, the NAS is still used for characters and the message log
         # (the dashboard reads it); nothing is recalled into prompts or stored as a memory.
         self.recall = modules.enabled("memory")
@@ -83,6 +84,9 @@ class MemoryClient:
             body["user_id"] = str(user_id)
         return self._request("POST", "/memories/search", json=body) or []
 
+    def people(self, character: str, limit: int = 500) -> list[dict]:
+        return self._request("GET", "/people", params={"character": character, "limit": limit}) or []
+
     def get_character(self, slug: str) -> Optional[dict]:
         return self._request("GET", f"/characters/{slug}")
 
@@ -121,8 +125,18 @@ class MemoryClient:
             "kind": kind,
         })
 
+    def set_name(self, user_id, name: str):
+        """Tell the NAS what to call someone. Without it, people show up as their Discord id."""
+        user_id = str(user_id)
+        if not name or self._names.get(user_id) == name:
+            return
+        if self._request("PUT", f"/users/{user_id}", json={"display_name": name}) is not None:
+            self._names[user_id] = name
+
     def log_message(self, character: str, role: str, content: str, user_id=None,
-                    source: str = "text", guild_id=None, channel_id=None):
+                    source: str = "text", guild_id=None, channel_id=None, display_name=None):
+        if user_id and display_name:
+            self.set_name(user_id, display_name)
         return self._request("POST", "/messages", json={
             "character": character,
             "role": role,

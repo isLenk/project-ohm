@@ -2,6 +2,7 @@
 # Description: Discord module for the bot
 
 
+import asyncio
 import threading
 import time
 from collections import deque
@@ -47,6 +48,7 @@ class DiscordClient(discord.Client):
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
+        self.add_task(self.name_unnamed_people)
         # A voice call needs both ears and a mouth
         off = [name for name in ("stt", "tts") if not modules.enabled(name)]
         if off:
@@ -54,6 +56,22 @@ class DiscordClient(discord.Client):
             return
         await self.join_testing_channel(vc=True)
     
+    async def name_unnamed_people(self):
+        """Send names for people the NAS only knows by id (logged before names were sent along)."""
+        people = await asyncio.to_thread(memory.people, self.character)
+        for p in people:
+            if p["name"] != p["user_id"] or not p["user_id"].isdigit():
+                continue
+            uid = int(p["user_id"])
+            # A server member's display name is what everyone sees in chat, so prefer it
+            user = next((m for g in self.guilds if (m := g.get_member(uid))), None) or self.get_user(uid)
+            if user is None:
+                try:
+                    user = await self.fetch_user(uid)
+                except discord.HTTPException:
+                    continue
+            await asyncio.to_thread(memory.set_name, uid, self.speaker_name(user))
+
     @property
     def character(self) -> str:
         return self.model.name.lower()
@@ -252,7 +270,7 @@ class Turn:
             content = f"{client.speaker_name(user)}: {text}"
             convo.append({"role": "user", "content": content, "time": now})
             memory.log_message_async(
-                client.character, "user", content, user_id=user_id,
+                client.character, "user", content, user_id=user_id, display_name=client.speaker_name(user),
                 source=self.source, guild_id=self.guild_id, channel_id=self.channel_id,
             )
             memory.remember_if_relevant_async(
