@@ -20,11 +20,30 @@ The project uses three models.
 
 
 ---
+### Layout
+| Folder | What it is |
+| --- | --- |
+| `apps/mainframe` | Electron + React interface. Starts the curator and the engine |
+| `apps/engine` | The assistant: Discord bot, STT, memory and modules (`main.py`, `dev.py`) |
+| `apps/curator` | Conversation Curator backend (FastAPI, port 8200) |
+| `apps/memory` | Memory service (FastAPI + Postgres), runs in Docker on the NAS |
+| `apps/tts` | TTS API, with its own Python 3.11 venv |
+| `tools` | `.cmd` launchers and the dev runner |
+| `Documentation` | Specs and banners |
+
+The engine and curator share one venv (`.venv`), managed with [uv](https://docs.astral.sh/uv/) from the root `pyproject.toml`.
+
+### Setup
+1. Install uv (`winget install astral-sh.uv`) and Node.js
+2. `npm run setup` creates `.venv` and installs the interface's packages
+3. The TTS API runs from its own Python 3.11 venv at `apps/tts/tts_api` (the deepspeed wheel it needs is in `apps/tts`)
+
 ### How to Launch
-1. Execute `run_tabby.cmd`
-2. Execute `tts_api.cmd`
-3. Wait for the two processes to be ready
-4. Execute `run_script.cmd` 
+- `npm run dev:all` starts llama-server, the TTS API and the interface. Start the engine from the interface
+- `npm run dev` starts only the interface
+- Or double-click the launchers in `tools/`: `_run_llama.cmd`, `_run_tts_api.cmd`, then `_run_script.cmd`
+
+`npm test` runs the curator tests.
 
 ---
 # Machine Specs used:
