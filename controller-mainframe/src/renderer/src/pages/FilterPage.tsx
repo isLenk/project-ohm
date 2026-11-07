@@ -4,8 +4,8 @@ import PageHeader from '../components/PageHeader'
 
 type Lane = 'bleep' | 'block'
 const LANES: Record<Lane, { title: string; chip: string }> = {
-  bleep: { title: 'Bleep', chip: 'border-amber-900 bg-[#2e2a22] text-amber-200' },
-  block: { title: 'Block', chip: 'border-red-900 bg-[#2e2222] text-red-200' }
+  bleep: { title: 'Bleep', chip: 'border-[#4a3d24] bg-[#1e1b14] text-[#f2d49a]' },
+  block: { title: 'Block', chip: 'border-[#4a2a2a] bg-[#1e1515] text-[#f4b4b4]' }
 }
 const other = (lane: Lane): Lane => (lane === 'bleep' ? 'block' : 'bleep')
 
@@ -46,68 +46,98 @@ const FilterPage = () => {
     <>
       <PageHeader
         title="Filters"
-        sub="Click a word to move it to the other lane. Bleeped words are masked; blocked words stop the reply."
+        sub="Bleeped words are masked. Blocked words stop the reply. Click a word to move it."
       />
 
-      <form onSubmit={add} className="panel mb-5 flex flex-wrap items-end gap-2.5 p-4">
-        <label className="flex flex-1 basis-60 flex-col gap-1.5 text-xs text-muted">
-          Add a word
-          <input className="field" value={draft} onChange={(e) => setDraft(e.target.value)} />
-        </label>
-        <div className="flex overflow-hidden rounded-lg border border-line">
-          {(['bleep', 'block'] as Lane[]).map((l) => (
-            <button
-              key={l}
-              type="button"
-              aria-pressed={lane === l}
-              onClick={() => setLane(l)}
-              className={`btn min-h-11 rounded-none ${lane === l ? 'bg-gray-100 text-ink' : 'bg-field text-muted'}`}
-            >
-              {LANES[l].title}
-            </button>
-          ))}
-        </div>
-        <button className="btn min-h-11 bg-accent text-ink">Add</button>
-      </form>
+      <div className="flex flex-col gap-7 px-8 pt-6 pb-12">
+        <form onSubmit={add} className="flex max-w-[760px] flex-wrap items-end gap-2.5">
+          <label className="flex flex-[1_1_260px] flex-col gap-1.5 text-[12.5px] text-soft">
+            Add a word
+            <input
+              className="field font-mono"
+              placeholder="word or phrase"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+          </label>
+          <div
+            role="radiogroup"
+            aria-label="Lane"
+            className="flex gap-0.5 rounded-md border border-edge p-[3px]"
+          >
+            {(['bleep', 'block'] as Lane[]).map((l) => (
+              <button
+                key={l}
+                type="button"
+                role="radio"
+                aria-checked={lane === l}
+                onClick={() => setLane(l)}
+                className={`h-7 cursor-pointer rounded px-3 text-[12.5px] font-medium ${lane === l ? 'bg-[#26272b] text-gray-100' : 'text-muted'}`}
+              >
+                {LANES[l].title}
+              </button>
+            ))}
+          </div>
+          <button className="btn btn-primary">Add</button>
+        </form>
 
-      <div className="grid gap-5 md:grid-cols-2">
-        {(['bleep', 'block'] as Lane[]).map((l) => {
-          const hidden = l === 'block' && !reveal
-          return (
-            <section key={l} className="panel flex min-h-72 flex-col gap-4 p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="font-display text-xl">{LANES[l].title}</h2>
-                {l === 'block' ? (
-                  <button onClick={() => setReveal(!reveal)} className="btn min-h-9 rounded-full border border-line">
-                    {reveal ? 'Hide' : 'Reveal'}
-                  </button>
-                ) : (
-                  <span className="font-mono text-xs text-muted">{words[l].length} words</span>
-                )}
-              </div>
-              <div className={`flex flex-wrap gap-2 ${hidden ? 'pointer-events-none blur-md' : ''}`}>
-                {words[l].map((w) => (
-                  <span key={w} className={`inline-flex items-center rounded-full border ${LANES[l].chip}`}>
-                    <button
-                      onClick={() => put(w, other(l))}
-                      title={`Move to ${LANES[other(l)].title}`}
-                      className="min-h-10 cursor-pointer pr-1.5 pl-4 font-mono text-sm"
-                    >
-                      {w}
-                    </button>
-                    <button
-                      onClick={() => setWords(remove(w))}
-                      aria-label={`Remove ${w}`}
-                      className="grid size-10 cursor-pointer place-items-center text-muted"
-                    >
-                      <LuX />
-                    </button>
+        <div className="flex flex-wrap gap-x-12 gap-y-7">
+          {(['bleep', 'block'] as Lane[]).map((l) => {
+            const hidden = l === 'block' && !reveal
+            return (
+              <section
+                key={l}
+                aria-label={LANES[l].title}
+                className="flex min-w-0 flex-[1_1_360px] flex-col"
+              >
+                <div className="flex min-h-12 items-center gap-3 border-b border-line">
+                  <h2 className="text-[15px] font-semibold">{LANES[l].title}</h2>
+                  <span className="font-mono text-[11.5px] text-muted">
+                    {words[l].length} words
                   </span>
-                ))}
-              </div>
-            </section>
-          )
-        })}
+                  <span className="flex-1" />
+                  {l === 'block' && (
+                    <button
+                      onClick={() => setReveal(!reveal)}
+                      aria-pressed={reveal}
+                      className="btn h-8"
+                    >
+                      {reveal ? 'Hide' : 'Reveal'}
+                    </button>
+                  )}
+                </div>
+                <div
+                  className={`flex flex-wrap gap-2 pt-4 ${hidden ? 'pointer-events-none blur-[6px]' : ''}`}
+                >
+                  {words[l].map((w) => (
+                    <span
+                      key={w}
+                      className={`inline-flex items-center rounded-md border ${LANES[l].chip}`}
+                    >
+                      <button
+                        onClick={() => put(w, other(l))}
+                        title={`Move to ${LANES[other(l)].title}`}
+                        className="h-8 cursor-pointer pr-1 pl-3 font-mono text-[13px]"
+                      >
+                        {w}
+                      </button>
+                      <button
+                        onClick={() => setWords(remove(w))}
+                        aria-label={`Remove ${w}`}
+                        className="grid size-8 cursor-pointer place-items-center opacity-60 hover:opacity-100"
+                      >
+                        <LuX />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+        <p className="text-[12.5px] text-muted">
+          Not wired to the bot yet. Lists are kept in this window only.
+        </p>
       </div>
     </>
   )
