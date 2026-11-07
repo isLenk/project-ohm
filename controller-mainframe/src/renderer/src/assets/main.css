@@ -1,36 +1,58 @@
 @import './base.css';
-@import '@fontsource/space-grotesk/700.css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
 @import '@fontsource/jetbrains-mono/400.css';
 @import 'tailwindcss';
 
+/* Same look as the Curator: near-black ground, hairline dividers, one clay accent. */
 @theme {
-  --color-ink: #1b1b1f;
-  --color-page: #212229;
-  --color-panel: #2b2a30;
-  --color-raised: #31343e;
-  --color-field: #25262d;
-  --color-line: #3f4049;
-  --color-muted: #9ca3af;
-  --color-accent: #fbbf24;
+  --color-ink: #0b0b0c; /* the rail, and text on light buttons */
+  --color-page: #111214;
+  --color-panel: #141517; /* menus and dialogs */
+  --color-raised: #1b1c1f; /* hover and selected rows */
+  --color-field: #17181a;
+  --color-line: #232428; /* dividers */
+  --color-edge: #2c2e33; /* control borders */
+  --color-soft: #a0a3ab; /* secondary text */
+  --color-muted: #7c7f87; /* labels and hints */
+  --color-accent: #c4664a; /* the rail's active tile, switches */
+  --color-clay: #e3967f; /* clay text on dark */
+  --color-good: #6ccb98;
+  --color-warn: #e0b25c;
+  --color-bad: #f08a8a;
   --color-card: #f4f1ea;
-  --font-display: 'Space Grotesk', 'Segoe UI', sans-serif;
+  --font-sans: 'Inter', system-ui, 'Segoe UI', sans-serif;
+  --font-display: 'Inter', system-ui, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', Consolas, monospace;
 }
 
 body {
   background: var(--color-page);
-  color: #f3f4f6;
+  color: #ececee;
+  font-family: var(--font-sans);
   user-select: none;
 }
 
-.panel {
-  @apply rounded-xl bg-panel;
-}
+/* In the components layer so utilities on an element (h-auto, px-0, ...) still win. */
+@layer components {
+  .panel {
+    @apply rounded-lg border border-line;
+  }
 
-.btn {
-  @apply inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold;
-}
+  .btn {
+    @apply inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-edge px-3 text-[13px] font-medium whitespace-nowrap text-gray-100 hover:bg-raised disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent;
+  }
 
-.field {
-  @apply min-h-11 w-full rounded-lg border border-line bg-field px-3.5 text-[15px] text-gray-100 outline-none focus:border-accent;
+  .btn-primary {
+    @apply border-[#ececee] bg-[#ececee] font-semibold text-ink hover:bg-white;
+  }
+
+  .field {
+    @apply h-9 w-full rounded-md border border-edge bg-transparent px-2.5 text-[13.5px] text-gray-100 outline-none placeholder:text-muted focus:border-soft;
+  }
+
+  .tab {
+    @apply -mb-px h-10 cursor-pointer border-b-2 border-transparent text-[13px] font-medium text-muted hover:text-gray-100 aria-selected:border-gray-100 aria-selected:text-gray-100;
+  }
 }

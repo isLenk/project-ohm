@@ -1,13 +1,19 @@
+import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   LuLayoutGrid,
   LuUsers,
+  LuMessagesSquare,
   LuLayers,
   LuDatabase,
   LuFilter,
   LuSlidersHorizontal,
-  LuMessagesSquare
+  LuPower
 } from 'react-icons/lu'
+import logo from '../assets/ohm-logo.svg'
+import EnginePanel from './EnginePanel'
+import { useEngine, usePoll } from '../lib/ohm'
+import { get } from '../curator/api'
 
 const LINKS = [
   ['/', 'Dashboard', LuLayoutGrid],
@@ -19,35 +25,62 @@ const LINKS = [
   ['/settings', 'Settings', LuSlidersHorizontal]
 ] as const
 
-const Sidebar = () => (
-  <nav className="flex w-56 shrink-0 flex-col gap-7 border-r border-[#34353d] bg-ink px-4 py-6">
-    <NavLink to="/" className="flex items-center gap-3 px-2">
-      <span className="grid size-9 place-items-center rounded-lg bg-accent font-display text-xl text-ink">
-        Ω
-      </span>
-      <span className="flex flex-col leading-tight">
-        <span className="font-display text-lg tracking-[0.12em]">OHM</span>
-        <span className="font-mono text-[11px] tracking-widest text-muted">INTERFACE</span>
-      </span>
-    </NavLink>
-    <div className="flex flex-col gap-1">
+const tile =
+  'grid size-12 place-items-center rounded-[10px] text-soft hover:bg-raised hover:text-gray-100'
+
+const Sidebar = () => {
+  const [open, setOpen] = useState(false)
+  const engine = useEngine()
+  const { data: llm } = usePoll(() => get('/llm/status'), 10000)
+
+  // Green when everything is up, grey when it's all off, amber for anything in between
+  const py = engine?.state === 'running'
+  const model = Boolean(llm?.ready)
+  const dot =
+    py && model
+      ? 'bg-good'
+      : !py && !llm?.running && engine?.state === 'stopped'
+        ? 'bg-[#4a4d55]'
+        : 'bg-warn'
+  const label = py && model ? 'ready' : dot === 'bg-warn' ? 'partly up' : 'off'
+
+  return (
+    <nav
+      aria-label="App"
+      className="relative flex w-21 shrink-0 flex-col items-center gap-1.5 border-r border-line bg-ink py-5"
+    >
+      <NavLink to="/" aria-label="Ohm home" className="pt-1">
+        <img src={logo} alt="" className="size-8" />
+      </NavLink>
+      <span className="flex-1" />
       {LINKS.map(([to, label, Icon]) => (
         <NavLink
           key={to}
           to={to}
           end
+          aria-label={label}
+          title={label}
           className={({ isActive }) =>
-            `group flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium ${
-              isActive ? 'active bg-raised text-gray-100' : 'text-muted hover:text-gray-100'
-            }`
+            isActive ? `${tile} bg-accent text-white hover:bg-accent` : tile
           }
         >
-          <Icon className="size-[18px] group-[.active]:text-accent" />
-          {label}
+          <Icon className="size-5" />
         </NavLink>
       ))}
-    </div>
-  </nav>
-)
+      <span className="flex-[1.4]" />
+      <button
+        onClick={() => setOpen(!open)}
+        aria-label={`Engine: ${label}`}
+        aria-expanded={open}
+        title="Engine"
+        className={`${tile} relative cursor-pointer ${open ? 'bg-raised text-gray-100' : ''}`}
+      >
+        <LuPower className="size-5" />
+        <span className={`absolute top-2.5 right-2.5 size-2 rounded-full ring-2 ring-ink ${dot}`} />
+      </button>
+      {open && <EnginePanel llm={llm} onClose={() => setOpen(false)} />}
+    </nav>
+  )
+}
 
 export default Sidebar
