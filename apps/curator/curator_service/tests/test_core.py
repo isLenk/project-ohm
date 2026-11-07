@@ -133,6 +133,13 @@ def test_approve_needs_confirm_when_undecided(project):
     with project.tx() as conn:
         s = conversations.approve(conn, 1, confirm=True)
     assert s["approved"] and s["suggested"] == 0
+    # it reports what it accepted, so undo can put the suggestions back
+    assert s["accepted"] and all(a["link"]["status"] == "suggested" for a in s["accepted"])
+    with project.tx() as conn:
+        for a in s["accepted"]:
+            threads.restore(conn, a["unit_kind"], a["unit_id"], a["link"])
+    for a in s["accepted"]:
+        assert threads.link_row(project.conn, a["unit_kind"], a["unit_id"])["status"] == "suggested"
 
 
 # ── split / merge ───────────────────────────────────────────────────────────
@@ -195,65 +202,80 @@ def test_search_operators(project):
 
 
 # ── export ──────────────────────────────────────────────────────────────────
-def test_export_context_chain_and_cap(project):
+def test_export_replays_each_person_as_ohm(project):
     with project.tx() as conn:
-        threads.set_parent(conn, "block", block_of(project, "1005"), "1003")
-        threads.set_parent(conn, "message", "1007", "1005")
         conversations.approve(conn, 1, confirm=True)
     data = export.build(project)
-    ex = next(e for e in data["examples"] if e["id"] == "msg:1007") if any(
-        e["id"] == "msg:1007" for e in data["examples"]) else None
-    pre = {e["name"]: e["share"] for e in data["by_author"]}
-    assert pre["KaptainDoosh"] > 0.3
-    for s in data["after_cap"]:
-        assert s["share"] <= max(0.3, 1 / len(data["after_cap"])) + 0.15
-    if ex:
-        assert [c["speaker"] for c in ex["context"]][-2:] == ["unanticipatedinflation", "Zhingstin Ji"]
-    # context never reaches into an unapproved conversation, and nothing from conversation 2 is a target
-    assert all(e["conversation_id"] == 1 for e in data["examples"])
-    msgs = export.chat_messages(data["examples"][0])
-    assert [m["role"] for m in msgs] == ["system", "user", "assistant"]
+    system = export.system_prompt()
+    assert data["examples"] and all(e["conversation_id"] == 1 for e in data["examples"])
+    for e in data["examples"]:
+        roles = [m["role"] for m in e["messages"]]
+        assert roles[0] == "system" and e["messages"][0]["content"] == system
+        assert roles[1:] == ["user", "assistant"] * (len(roles[1:]) // 2)
+        assert e["assistant_turns"] == roles.count("assistant")
+    kaptain = next(e for e in data["examples"] if e["speaker"] == "KaptainDoosh")
+    context, reply = kaptain["messages"][1]["content"], kaptain["messages"][2]["content"]
+    assert "unanticipatedinflation: we running barotrauma this night? @Ohm" in context
+    assert "KaptainDoosh" not in context
+    assert reply.startswith("Mb I was out all day")  # back-to-back lines are one turn
+    # in someone else's replay KaptainDoosh keeps their name
+    other = next(e for e in data["examples"] if e["speaker"] == "420yolocoon")
+    assert "@KaptainDoosh" in other["messages"][1]["content"]
+    assert data["by_author"] and sum(s["count"] for s in data["after_cap"]) == sum(
+        e["assistant_turns"] for e in data["examples"])
 
 
-def test_near_duplicates_keep_the_one_with_more_context(project, monkeypatch):
-    import numpy as np
-
-    # "same" and "same again" point the same way; everything else is orthogonal.
-    basis = {"same": 0, "same again": 0, "other": 1, "third": 2}
-    monkeypatch.setattr(export.embeddings, "available", lambda: True)
-    monkeypatch.setattr(export.embeddings, "encode",
-                        lambda texts: np.eye(4, dtype="float32")[[basis[t] for t in texts]])
-    examples = [
-        {"speaker_id": "a", "target": "same", "context": [1], "source_message_ids": ["x", "y"]},
-        {"speaker_id": "a", "target": "other", "context": [], "source_message_ids": ["x", "y"]},
-        {"speaker_id": "a", "target": "same again", "context": [1, 2], "source_message_ids": ["x", "y"]},
-        {"speaker_id": "b", "target": "same", "context": [], "source_message_ids": ["x", "y"]},
-        {"speaker_id": "a", "target": "third", "context": [], "source_message_ids": ["x", "y"]},
-    ]
-    out, removed = export._dedupe(project, examples)
-    assert removed == 1
-    assert [e["target"] for e in out] == ["other", "same again", "same", "third"]
+def test_export_chunks_long_conversations():
+    turns = []
+    for i in range(10):
+        turns += [{"role": "user", "content": "u" * 100, "ids": []}, {"role": "assistant", "content": "a" * 100, "ids": [str(i)]}]
+    chunks = export._chunk(turns, 600)
+    assert len(chunks) > 1
+    for ch in chunks:
+        assert ch[0]["role"] == "user" and ch[-1]["role"] == "assistant"
+    # every reply is trained at least once, and chunks overlap by OVERLAP_PAIRS pairs
+    assert {i for ch in chunks for t in ch for i in t["ids"]} == {str(i) for i in range(10)}
+    assert chunks[1][:2 * export.OVERLAP_PAIRS] == chunks[0][-2 * export.OVERLAP_PAIRS:]
 
 
-def test_near_pairs_matches_a_nested_loop():
-    import numpy as np
-
-    rng = np.random.default_rng(1)
-    vecs = rng.normal(size=(300, 8)).astype("float32")
-    vecs[150] = vecs[3]
-    vecs[299] = vecs[3]
-    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-    sims = vecs @ vecs.T
-    expected = [(i, j) for i in range(300) for j in range(i + 1, 300) if sims[i, j] >= 0.7]
-    assert list(export._near_pairs(vecs, 0.7, chunk=64)) == expected
-
-
-def test_cap_is_feasible_with_two_people():
-    examples = [{"id": str(i), "speaker_id": "a" if i < 70 else "b", "speaker": "x", "context": [], "target": str(i)}
-                for i in range(100)]
+def test_cap_limits_assistant_turns():
+    examples = [{"id": str(i), "speaker_id": "a" if i < 70 else "b", "assistant_turns": 1} for i in range(100)]
     out, removed = export._cap(examples, 0.3, "seed")
     counts = {a: sum(e["speaker_id"] == a for e in out) for a in "ab"}
     assert counts == {"a": 30, "b": 30} and removed == 40
+
+
+def test_textless_messages_removed_on_open(tmp_path):
+    path = tmp_path / "pics.ohm"
+    p = Project.create(path, "Pics")
+    seed(p)
+    with p.tx() as conn:
+        # 1003 becomes an image-only message that 1006 replied to; it continued from 1000.
+        conn.execute("UPDATE messages SET content = '', content_text = ' ', attachments = '[{\"name\": \"y.png\"}]' "
+                     "WHERE id IN ('1003', '1013')")
+        threads._write(conn, "block", block_of(p, "1003"), "1000", "accepted", "manual")
+    gone_block = block_of(p, "1003")
+    p.save()
+    p.close()
+    raw = sqlite3.connect(path)
+    raw.execute("PRAGMA user_version = 4")
+    raw.commit()
+    raw.close()
+
+    p = Project.open(path)
+    try:
+        assert p.scalar("PRAGMA user_version") == schema.PROJECT_VERSION
+        assert p.scalar("SELECT COUNT(*) FROM messages WHERE id IN ('1003', '1013')") == 0
+        assert p.scalar("SELECT COUNT(*) FROM blocks WHERE id = ?", (gone_block,)) == 0
+        # the reply to the picture now continues the picture's thread
+        assert threads.link_row(p.conn, "block", str(block_of(p, "1006")))["parent_id"] == "1000"
+        assert p.scalar("SELECT reply_to_id FROM messages WHERE id = '1006'") is None
+        assert p.scalar("SELECT COUNT(*) FROM links WHERE parent_id IN ('1003', '1013')") == 0
+        # the second conversation ended on the picture; it now ends on the last message with text
+        assert p.scalar("SELECT last_message_id FROM conversations ORDER BY first_ts DESC LIMIT 1") == "1012"
+        assert p.scalar("PRAGMA foreign_key_check") is None
+    finally:
+        p.close()
 
 
 def test_old_project_migrates(tmp_path):

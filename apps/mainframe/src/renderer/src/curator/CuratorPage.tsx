@@ -1,20 +1,42 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { LuAlignLeft, LuArchive, LuBrain, LuCheck, LuFilePlus, LuGitBranch, LuSearch, LuSparkles, LuX } from 'react-icons/lu'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { LuAlignLeft, LuArchive, LuBot, LuBrain, LuCheck, LuFilePlus, LuGitBranch, LuLoader, LuMerge, LuSearch, LuSparkles, LuX } from 'react-icons/lu'
 import { CuratorError, call, dialog, followJob, get, post, type ConversationStats, type EditResult } from './api'
 import { useFeed } from './useFeed'
+import { useHistory, type Step } from './history'
+import { Avatar } from './Avatar'
+import { VirtualRows } from './VirtualRows'
+import { FilterButton, NO_FILTERS, activeCount, applyFilters, loadFilters, saveFilters, type ConvFilters } from './ConversationFilters'
 import ThreadsView from './ThreadsView'
 import RawView from './RawView'
 import MemoriesView from './MemoriesView'
 import SearchPalette from './SearchPalette'
 import TrainModal from './TrainModal'
 import { ModelMenu, SaveMenu } from './Menus'
-import { color, cx, fmtDay, fmtRange, pct } from './util'
+import { approveHover, color, cx, fmtDay, fmtDuration, fmtRange, pct } from './util'
 
 type View = 'threads' | 'raw' | 'memories'
 type Filter = 'all' | 'approved' | 'archived'
+
+/** A link as it was before approval accepted it; POST /links/restore puts it back. */
+type Restore = { unit_kind: 'block' | 'message'; unit_id: string; link: { parent_id: string | null; status: string; origin: string; score: number | null } }
+
+/** What undo/redo steps call on the page (always this render's versions). */
+type Ops = {
+  applyEdit: (r: EditResult) => void
+  applyConv: (s: ConversationStats, focus: boolean) => void
+  doApprove: (id: number, confirmed?: boolean) => Promise<Restore[]>
+  doSplit: (messageId: string) => Promise<{ before?: ConversationStats; after?: ConversationStats; was: boolean }>
+  doMerge: (id: number, firstMessageId: string) => Promise<ConversationStats>
+  mergeApprovals: (c: ConversationStats) => { aboveWas: boolean; ownWas: boolean }
+}
 type ProjectInfo = { open: boolean; path?: string; name?: string; dirty?: boolean; saved_at?: number | null; recent?: string[] }
 
+// Sidebar rows are a fixed height so the list can be virtualized.
+const ROW_HEIGHT = 72
+
 const OHM_FILTER = [{ name: 'Ohm project', extensions: ['ohm'] }]
+// DiscordChatExporter .json, a messages.jsonl dump, and the speakers.json that comes with it.
+const IMPORT_FILTER = [{ name: 'Discord export', extensions: ['json', 'jsonl'] }]
 
 export default function CuratorPage() {
   const feed = useFeed()
@@ -22,6 +44,10 @@ export default function CuratorPage() {
   const [view, setView] = useState<View>('threads')
   const [filter, setFilter] = useState<Filter>('all')
   const [convs, setConvs] = useState<ConversationStats[]>([])
+  // Which tab `convs` was fetched for. Until it matches `filter` the list is still the old tab's, so show a spinner.
+  const [convsFor, setConvsFor] = useState<Filter | null>(null)
+  const filterNow = useRef(filter)
+  filterNow.current = filter
   const [current, setCurrent] = useState<ConversationStats | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -33,7 +59,18 @@ export default function CuratorPage() {
   const [modelsKey, setModelsKey] = useState(0)
   const [recover, setRecover] = useState<string | null>(null)
   const [guessing, setGuessing] = useState<string | null>(null)
-  const undo = useRef<EditResult['inverse'][]>([])
+  // Leave bots out of the feed entirely. A view setting, so it's kept per app, not per project.
+  const [hideBots, setHideBots] = useState(() => localStorage.getItem('curator.hideBots') === '1')
+  const toggleBots = () =>
+    setHideBots((on) => {
+      localStorage.setItem('curator.hideBots', on ? '0' : '1')
+      return !on
+    })
+  // An Approve button is hovered or focused: the feed highlights the conversation it would approve.
+  const [approvingId, setApprovingId] = useState<number | null>(null)
+  const [importing, setImporting] = useState<string | null>(null)
+  const [listFilters, setListFilters] = useState<ConvFilters>(NO_FILTERS)
+  const [guessAll, setGuessAll] = useState<{ id: string; done: number; total: number; note: string | null; left: number | null } | null>(null)
 
   const onError = useCallback((e: unknown) => {
     const msg = e instanceof Error ? e.message : String(e)
@@ -46,15 +83,33 @@ export default function CuratorPage() {
   }
 
   const markDirty = useCallback(() => setProject((p) => (p ? { ...p, dirty: true } : p)), [])
+  const history = useHistory(onError, say)
+
+  // Set when a project opens or an import lands: the feed then starts at the top of the list
+  // (the newest conversation), not the channel's oldest message. Otherwise the feed reports that
+  // oldest conversation as current and the sidebar scrolls to the bottom to show it.
+  const openAtTop = useRef(false)
 
   const loadConvs = useCallback(async () => {
     try {
       const r = await get<{ conversations: ConversationStats[] }>(`/conversations?filter=${filter}`)
+      if (filterNow.current !== filter) return // switched tabs while this was loading
       setConvs(r.conversations)
+      setConvsFor(filter)
+      if (openAtTop.current) {
+        openAtTop.current = false
+        const top = r.conversations[0]
+        feed.reset(top?.first_message_id, top ? 'top' : true)
+      }
     } catch (e) {
       if (!(e instanceof CuratorError && e.code === 'no_project')) onError(e)
+      if (filterNow.current === filter) setConvsFor(filter) // don't spin forever; the error banner explains
+      if (openAtTop.current) {
+        openAtTop.current = false
+        feed.reset()
+      }
     }
-  }, [filter, onError])
+  }, [filter, onError]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Put fresh stats for one conversation into the sidebar without refetching the whole list
    *  (that list can be thousands long after a big import). */
@@ -85,7 +140,8 @@ export default function CuratorPage() {
       const p = await get<ProjectInfo>('/project')
       setProject(p)
       if (p.open) {
-        feed.reset()
+        openAtTop.current = true
+        setConvsFor(null)
         loadConvs()
       }
     } catch (e) {
@@ -105,8 +161,9 @@ export default function CuratorPage() {
   // ── project file ────────────────────────────────────────────────────────
   const opened = (p: any) => {
     setProject({ open: true, ...p })
-    undo.current = []
-    feed.reset()
+    history.clear()
+    openAtTop.current = true
+    setConvsFor(null)
     loadConvs()
   }
 
@@ -169,51 +226,269 @@ export default function CuratorPage() {
   }
 
   // ── edits & undo ────────────────────────────────────────────────────────
+  // Undo steps run later, so they reach the page through `ops`, which always holds this render's
+  // functions; a step's own closure would see stale state (current conversation, list tab, feed).
+  const ops = useRef<Ops>(null!)
+
+  /** Show an edit's result: swapped units, approval it cleared, fresh stats for the header. */
+  const applyEdit = (r: EditResult) => {
+    feed.apply(r)
+    markDirty()
+    patchConvs(r.conversations_changed || [])
+    if (!current) return
+    const touched = r.conversations_changed?.some((c) => c.id === current.id)
+    get<ConversationStats>(`/conversations/${current.id}`)
+      .then((c) => {
+        setCurrent(c)
+        if (touched) feed.updateConversation(c)
+        patchConvs([c])
+      })
+      .catch(() => {})
+  }
+
+  /** Show a conversation's new stats everywhere. The header moves to it only if `focus`. */
+  const applyConv = (s: ConversationStats, focus: boolean) => {
+    setCurrent((cur) => (focus || !cur || cur.id === s.id ? s : cur))
+    feed.updateConversation(s)
+    markDirty()
+    patchConvs([s])
+  }
+
+  // Arrow and exclude edits: the service hands back the request that reverses each one.
+  const editStep = (inv: EditResult['inverse']): Step => ({
+    label: inv.path.startsWith('/messages/') ? 'exclude' : 'arrow change',
+    run: async () => {
+      const r = await call<EditResult>(inv.method, inv.path, inv.body)
+      ops.current.applyEdit(r)
+      return r.inverse ? editStep(r.inverse) : null
+    }
+  })
+
   const onEdit = useCallback(
     (r: EditResult) => {
-      feed.apply(r)
-      if (r.inverse) undo.current.push(r.inverse)
-      markDirty()
-      patchConvs(r.conversations_changed || [])
-      if (current && r.conversations_changed?.some((c) => c.id === current.id)) {
-        get<ConversationStats>(`/conversations/${current.id}`).then((c) => {
-          setCurrent(c)
-          feed.updateConversation(c)
-          patchConvs([c])
-        })
-      } else if (current) {
-        get<ConversationStats>(`/conversations/${current.id}`)
-          .then((c) => {
-            setCurrent(c)
-            patchConvs([c])
-          })
-          .catch(() => {})
-      }
+      ops.current.applyEdit(r)
+      if (r.inverse) history.record(editStep(r.inverse))
     },
-    [feed, markDirty, patchConvs, current]
+    [history.record] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
-  const doUndo = useCallback(async () => {
-    const inv = undo.current.pop()
-    if (!inv) return
+  // ── list filters (saved per project file) ──────────────────────────────
+  useEffect(() => setListFilters(loadFilters(project?.path)), [project?.path])
+  const changeFilters = (f: ConvFilters) => {
+    setListFilters(f)
+    saveFilters(project?.path, f)
+  }
+  const convsLoading = convsFor !== filter
+  const visible = useMemo(() => (convsLoading ? [] : applyFilters(convs, listFilters)), [convs, listFilters, convsLoading])
+  const filtering = activeCount(listFilters) > 0
+  const currentId = current?.id
+  const activeRow = useMemo(() => visible.findIndex((cv) => cv.id === currentId), [visible, currentId])
+
+  // ── import ──────────────────────────────────────────────────────────────
+  const importFiles = async () => {
+    const r = await dialog('showOpenDialog', {
+      title: 'Import Discord chats',
+      buttonLabel: 'Import',
+      properties: ['openFile', 'multiSelections'],
+      filters: IMPORT_FILTER
+    })
+    if (r.canceled || !r.filePaths?.length) return
+    setImporting('Starting import…')
     try {
-      const r = await call<EditResult>(inv.method, inv.path, inv.body)
-      feed.apply(r)
-      markDirty()
-      patchConvs(r.conversations_changed || [])
-      if (current) {
-        get<ConversationStats>(`/conversations/${current.id}`)
-          .then((c) => {
-            setCurrent(c)
-            patchConvs([c])
-          })
-          .catch(() => {})
-      }
-      say('Undone')
+      const j = await post('/imports', { paths: r.filePaths })
+      const s = await followJob(j.id, (p) => {
+        const step = p.note || 'Importing…'
+        setImporting(p.total ? `${step} ${pct(p.done / p.total)}` : step)
+      })
+      setProject({ open: true, ...(await get('/project')) })
+      history.clear()
+      openAtTop.current = true
+      loadConvs()
+      const skipped = (s.files || []).filter((f: any) => f.status === 'skipped' && f.kind !== 'conversations')
+      say(
+        s.messages
+          ? `Imported ${s.messages.toLocaleString()} messages · ${s.conversations.toLocaleString()} conversations` +
+              (s.duplicates ? ` · ${s.duplicates.toLocaleString()} already here` : '') +
+              (s.empty ? ` · ${s.empty.toLocaleString()} without text left out` : '') +
+              (skipped.length ? ` · skipped ${skipped.map((f: any) => f.file).join(', ')}` : '')
+          : 'Nothing new in those files'
+      )
+    } catch (e) {
+      onError(e)
+    } finally {
+      setImporting(null)
+    }
+  }
+
+  /** Was conversation `id` approved, as far as the loaded feed and the list know. */
+  const isApproved = (id: number | null | undefined) => {
+    if (id == null) return false
+    for (const it of feed.items) {
+      if (it.type === 'conversation_start' && it.conversation.id === id) return it.conversation.approved
+      if (it.type === 'block' && it.conversation_id === id && it.conversation_approved != null) return it.conversation_approved
+    }
+    return convs.find((c) => c.id === id)?.approved ?? false
+  }
+
+  // Splitting and merging clear approval. Undo puts it back, so it remembers who was approved.
+  const mergeApprovals = (c: ConversationStats) => {
+    let above: number | null = null
+    for (const it of feed.items) {
+      if (it.type !== 'conversation_start') continue
+      if (it.conversation.id === c.id) break
+      if (it.conversation.channel_id === c.channel_id) above = it.conversation.id
+    }
+    if (above == null) {
+      above = convs.filter((x) => x.channel_id === c.channel_id && x.first_ts < c.first_ts).sort((x, y) => y.first_ts - x.first_ts)[0]?.id ?? null
+    }
+    return { aboveWas: isApproved(above), ownWas: isApproved(c.id) }
+  }
+
+  const doMerge = async (id: number, firstMessageId: string) => {
+    const s = await post<ConversationStats>(`/conversations/${id}/merge-up`)
+    markDirty()
+    setCurrent(s)
+    await feed.reset(firstMessageId)
+    loadConvs()
+    return s
+  }
+
+  const doSplit = async (messageId: string) => {
+    const convId = feed.blocks.find((b) => b.messages.some((m) => m.id === messageId))?.conversation_id
+    const was = isApproved(convId)
+    const r = await post<{ conversations: ConversationStats[] }>('/conversations/split', { before_message_id: messageId })
+    markDirty()
+    const [before, after] = r.conversations
+    if (after) setCurrent(after) // the new conversation, starting at messageId
+    await feed.reset(messageId)
+    loadConvs()
+    return { before, after, was }
+  }
+
+  // undoes a split: merge the new conversation back, re-approving if the split one was approved
+  const splitUndo = (after: ConversationStats, was: boolean): Step => ({
+    label: 'split',
+    run: async () => {
+      const merged = await ops.current.doMerge(after.id, after.first_message_id)
+      if (was) await ops.current.doApprove(merged.id)
+      return splitStep(after.first_message_id)
+    }
+  })
+  const splitStep = (messageId: string): Step => ({
+    label: 'split',
+    run: async () => {
+      const { after, was } = await ops.current.doSplit(messageId)
+      return after ? splitUndo(after, was) : null
+    }
+  })
+  // undoes a merge: split it apart again and restore both halves' approval
+  const mergeUndo = (firstMessageId: string, aboveWas: boolean, ownWas: boolean): Step => ({
+    label: 'merge',
+    run: async () => {
+      const { before, after } = await ops.current.doSplit(firstMessageId)
+      if (aboveWas && before) await ops.current.doApprove(before.id)
+      if (ownWas && after) await ops.current.doApprove(after.id)
+      return after ? mergeStep(after) : null
+    }
+  })
+  const mergeStep = (c: ConversationStats): Step => ({
+    label: 'merge',
+    run: async () => {
+      const { aboveWas, ownWas } = ops.current.mergeApprovals(c)
+      await ops.current.doMerge(c.id, c.first_message_id)
+      return mergeUndo(c.first_message_id, aboveWas, ownWas)
+    }
+  })
+
+  // ── join a conversation onto the one before it ──────────────────────────
+  const mergeUp = async (c: ConversationStats) => {
+    try {
+      const { aboveWas, ownWas } = mergeApprovals(c)
+      const s = await doMerge(c.id, c.first_message_id)
+      history.record(mergeUndo(c.first_message_id, aboveWas, ownWas))
+      say(`Merged into one conversation · ${s.messages} messages, ${s.people} people. Ctrl+Z undoes it.`)
     } catch (e) {
       onError(e)
     }
-  }, [feed, markDirty, patchConvs, current, onError])
+  }
+
+  // ── start a new conversation at a message ───────────────────────────────
+  const splitAt = async (messageId: string) => {
+    try {
+      const { after, was } = await doSplit(messageId)
+      if (after) history.record(splitUndo(after, was))
+      say('Split into a new conversation. Ctrl+Z undoes it.')
+    } catch (e) {
+      onError(e)
+    }
+  }
+
+  // ── model guesses for every unattached block in the project ─────────────
+  const followGuessAll = useCallback(
+    async (id: string) => {
+      setGuessAll({ id, done: 0, total: 0, note: null, left: null })
+      let start: { t: number; done: number } | null = null
+      let last = ''
+      try {
+        const r = await followJob(id, (p) => {
+          last = p.note || last
+          if (!start && p.total) start = { t: Date.now(), done: p.done }
+          const rate = start && p.done > start.done ? (p.done - start.done) / ((Date.now() - start.t) / 1000) : 0
+          setGuessAll({ id, done: p.done, total: p.total, note: p.note, left: rate ? (p.total - p.done) / rate : null })
+        })
+        if (r?.stopped) onError(new Error(`${r.stopped} ${r.suggested} guesses made before it stopped. Start llama-server and run Guess all again to continue.`))
+        else say(`Guess all finished · ${r?.suggested ?? 0} guesses`)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (msg === 'cancelled') say(`Guess all stopped · ${last || 'no guesses'}. Run it again to pick up where it left off.`)
+        else onError(e)
+      } finally {
+        setGuessAll(null)
+        markDirty()
+        feed.reset()
+        loadConvs()
+      }
+    },
+    [feed, loadConvs, markDirty, onError] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+
+  const startGuessAll = async () => {
+    try {
+      const { blocks } = await get<{ blocks: number }>('/links/guess/pending')
+      if (!blocks) return say('Every block already has an arrow or a model guess')
+      const est = fmtDuration(blocks * 0.16) // measured ~0.15 s per block on the 3090 with Gemma 4 E4B
+      const ok = window.confirm(
+        `Ask the model about ${blocks.toLocaleString()} unattached blocks?
+
+` +
+          `Roughly ${est} (h:mm:ss) on this GPU. You can keep working while it runs, and cancel any time; ` +
+          `a later run picks up where it stopped. Training a LoRA stops it, because training needs the GPU.
+
+` +
+          `Newest conversations go first. Its arrows show as dashed predictions; approving a conversation accepts them. Save the project when it's done.`
+      )
+      if (!ok) return
+      const j = await post('/links/guess', {})
+      followGuessAll(j.id)
+    } catch (e) {
+      onError(e)
+    }
+  }
+
+  const cancelGuessAll = async () => {
+    if (guessAll) await post(`/jobs/${guessAll.id}/cancel`).catch(onError)
+  }
+
+  // Reattach to a run that was going before the window reloaded.
+  useEffect(() => {
+    if (!project?.open) return
+    get<{ jobs: any[] }>('/jobs')
+      .then((r) => {
+        const running = r.jobs.find((j) => j.kind === 'link_guess_all' && j.status === 'running')
+        if (running) followGuessAll(running.id)
+      })
+      .catch(() => {})
+  }, [project?.open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── model guesses for unattached blocks ─────────────────────────────────
   const guessReplies = async (c: ConversationStats) => {
@@ -237,32 +512,59 @@ export default function CuratorPage() {
   }
 
   // ── approval ────────────────────────────────────────────────────────────
+  /** Approve; returns the suggestions it accepted, so undo can put them back. */
+  const doApprove = async (id: number, confirmed = true) => {
+    const { accepted, ...s } = await post<ConversationStats & { accepted?: Restore[] }>(`/conversations/${id}/approve`, { confirm: confirmed })
+    // Approving from a feed header leaves the header on the conversation you were reading.
+    applyConv(s, false)
+    feed.acceptSuggested(s.id) // suggested arrows just became solid; reloading the feed would jump the scroll
+    return accepted || []
+  }
+
+  // undoes an approval: the accepted guesses go back to suggestions, then approval comes off
+  const approvedUndo = (id: number, accepted: Restore[], label: string): Step => ({
+    label,
+    run: async () => {
+      for (const a of accepted) feed.apply(await post<EditResult>('/links/restore', a))
+      ops.current.applyConv(await post<ConversationStats>(`/conversations/${id}/unapprove`), false)
+      return approveStep(id, label)
+    }
+  })
+  const approveStep = (id: number, label: string): Step => ({
+    label,
+    run: async () => approvedUndo(id, await ops.current.doApprove(id), label)
+  })
+
   const approve = async (c: ConversationStats, confirmed = false) => {
     try {
-      const s = await post<ConversationStats>(`/conversations/${c.id}/approve`, { confirm: confirmed })
+      const accepted = await doApprove(c.id, confirmed)
       setConfirm(null)
-      setCurrent(s)
-      feed.updateConversation(s)
-      markDirty()
-      patchConvs([s])
-      feed.reset(c.first_message_id, false) // suggested arrows just became solid
+      history.record(approvedUndo(c.id, accepted, 'approve'))
     } catch (e) {
       if (e instanceof CuratorError && e.code === 'needs_confirm') setConfirm({ conv: c, suggested: e.extra.suggested, unattached: e.extra.unattached })
       else onError(e)
     }
   }
 
-  const setFlag = async (c: ConversationStats, path: string) => {
+  // archive <-> unarchive; unapprove is undone by approving again
+  const flagStep = (id: number, path: 'archive' | 'unarchive'): Step => ({
+    label: path,
+    run: async () => {
+      ops.current.applyConv(await post<ConversationStats>(`/conversations/${id}/${path}`), true)
+      return flagStep(id, path === 'archive' ? 'unarchive' : 'archive')
+    }
+  })
+
+  const setFlag = async (c: ConversationStats, path: 'archive' | 'unarchive' | 'unapprove') => {
     try {
-      const s = await post<ConversationStats>(`/conversations/${c.id}/${path}`)
-      setCurrent(s)
-      feed.updateConversation(s)
-      markDirty()
-      patchConvs([s])
+      applyConv(await post<ConversationStats>(`/conversations/${c.id}/${path}`), true)
+      history.record(path === 'unapprove' ? approveStep(c.id, 'unapprove') : flagStep(c.id, path === 'archive' ? 'unarchive' : 'archive'))
     } catch (e) {
       onError(e)
     }
   }
+
+  ops.current = { applyEdit, applyConv, doApprove, doSplit, doMerge, mergeApprovals }
 
   const jumpTo = (messageId: string, to: View = 'threads') => {
     setView(to)
@@ -287,12 +589,16 @@ export default function CuratorPage() {
         openProject()
       } else if (key === 'z' && !typing) {
         e.preventDefault()
-        doUndo()
+        if (e.shiftKey) history.redo()
+        else history.undo()
+      } else if (key === 'y' && !typing) {
+        e.preventDefault()
+        history.redo()
       }
     }
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
-  }, [project?.open, save, saveAs, doUndo]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project?.open, save, saveAs, history.undo, history.redo]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── active training run, for the Train button ───────────────────────────
   useEffect(() => {
@@ -418,13 +724,32 @@ export default function CuratorPage() {
               {f}
             </button>
           ))}
+          <FilterButton filters={listFilters} onChange={changeFilters} authors={feed.authors} />
         </div>
-        <div className="min-h-0 flex-1 overflow-auto py-1.5">
-          {convs.map((cv) => (
+        {filtering && !convsLoading && convs.length > 0 && (
+          <div className="flex items-center gap-2 border-b border-[#2f3037] px-5 py-1.5 text-[11.5px] text-muted">
+            <span className="flex-1">
+              Showing {visible.length.toLocaleString()} of {convs.length.toLocaleString()}
+            </span>
+            <button onClick={() => changeFilters(NO_FILTERS)} className="text-gray-300 hover:text-white">
+              Clear filters
+            </button>
+          </div>
+        )}
+        <VirtualRows
+          items={visible}
+          rowHeight={ROW_HEIGHT}
+          activeIndex={activeRow}
+          className="min-h-0 flex-1 overflow-auto"
+          row={(cv) => (
             <button
               key={cv.id}
-              onClick={() => jumpTo(cv.first_message_id, view === 'memories' ? 'threads' : view)}
-              className={cx('flex w-full flex-col gap-2 px-5 py-3.5 text-left [contain-intrinsic-size:auto_72px] [content-visibility:auto]', c?.id === cv.id ? 'bg-raised shadow-[inset_2px_0_0_#f3f4f6]' : 'hover:bg-[#26272d]')}
+              onClick={() => {
+                setCurrent(cv)
+                jumpTo(cv.first_message_id, view === 'memories' ? 'threads' : view)
+              }}
+              style={{ height: ROW_HEIGHT }}
+              className={cx('flex w-full flex-col justify-center gap-2 px-5 text-left', c?.id === cv.id ? 'bg-raised shadow-[inset_2px_0_0_#f3f4f6]' : 'hover:bg-[#26272d]')}
             >
               <span className="flex w-full items-center gap-2">
                 <span className="flex-1 text-sm font-semibold">{fmtRange(cv.first_ts, cv.last_ts)}</span>
@@ -432,27 +757,98 @@ export default function CuratorPage() {
                 <span className="text-xs text-muted">{fmtDay(cv.first_ts)}</span>
               </span>
               <span className="flex items-center gap-1.5 text-xs text-muted">
-                {cv.skew.slice(0, 6).map((s) => (
-                  <span key={s.author_id} className="size-2 rounded-full" style={{ background: color(feed.authors[s.author_id]?.color_index) }} />
-                ))}
+                <span className="flex items-center pl-0.5">
+                  {cv.skew.slice(0, 6).map((s, i) => (
+                    <Avatar key={s.author_id} who={feed.authors[s.author_id]} size={16} className={i ? '-ml-1' : ''} />
+                  ))}
+                </span>
                 <span className="ml-1">
                   {cv.people} people · {cv.messages} msgs
                 </span>
               </span>
             </button>
-          ))}
-          {!convs.length && <p className="px-5 py-4 text-xs text-muted">{filter === 'all' ? 'Nothing imported yet.' : `No ${filter} conversations.`}</p>}
-        </div>
+          )}
+        >
+          {convsLoading && (
+            <div className="flex justify-center py-6 text-muted" role="status" aria-label="Loading conversations">
+              <LuLoader className="size-4 animate-spin" />
+            </div>
+          )}
+          {!convsLoading && !convs.length && filter === 'all' && (
+            <div className="px-5 py-4 text-xs text-muted">
+              Nothing imported yet.
+              <button onClick={importFiles} disabled={!!importing} className="mt-3 flex h-8 items-center gap-2 rounded-md border border-line px-3 text-[13px] text-gray-200 hover:bg-raised disabled:opacity-60">
+                <LuFilePlus className="size-4" /> Import Discord chats…
+              </button>
+            </div>
+          )}
+          {!convsLoading && !convs.length && filter !== 'all' && <p className="px-5 py-4 text-xs text-muted">No {filter} conversations.</p>}
+          {!convsLoading && convs.length > 0 && !visible.length && (
+            <p className="px-5 py-4 text-xs text-muted">
+              No conversations match the filters.{' '}
+              <button onClick={() => changeFilters(NO_FILTERS)} className="text-gray-300 underline hover:text-white">
+                Clear
+              </button>
+            </p>
+          )}
+        </VirtualRows>
         <ApprovedFooter refresh={convs} />
       </nav>
 
       {/* ── main ── */}
       <main className="flex h-full min-w-0 flex-[999_1_560px] flex-col">
-        <header className="flex min-h-[57px] flex-wrap items-center gap-2 border-b border-[#2f3037] px-6">
-          <button disabled title="Import isn't wired up yet" aria-label="Import file" className="grid size-9 place-items-center rounded-md border border-line text-muted opacity-50">
-            <LuFilePlus className="size-4" />
+        <header className="app-titlebar flex min-h-[57px] flex-wrap items-center gap-2 border-b border-[#2f3037] px-6 py-2.5">
+          <button
+            onClick={importFiles}
+            disabled={!!importing}
+            title="Import Discord exports (.json), messages.jsonl or speakers.json. Pick several at once."
+            aria-label="Import file"
+            className={cx(
+              'flex h-9 items-center gap-2 rounded-md border border-line text-[13px] hover:bg-raised disabled:opacity-60',
+              importing ? 'px-3' : 'w-9 justify-center'
+            )}
+          >
+            <LuFilePlus className="size-4 shrink-0" />
+            {importing && <span className="max-w-[320px] truncate text-muted">{importing}</span>}
+          </button>
+          <button
+            onClick={toggleBots}
+            aria-pressed={hideBots}
+            aria-label="Hide bots"
+            title={hideBots ? 'Bots are hidden. Click to show their messages again.' : 'Hide bots: leave their messages out of the feed. They are never trained on.'}
+            className={cx(
+              'relative grid size-9 place-items-center rounded-md border hover:bg-raised',
+              hideBots ? 'border-gray-500 bg-raised text-gray-100' : 'border-line text-muted'
+            )}
+          >
+            <LuBot className="size-4" />
+            {hideBots && <span className="absolute top-1/2 left-1/2 h-[1.5px] w-5 -translate-x-1/2 -translate-y-1/2 -rotate-45 rounded bg-current" />}
           </button>
           <ModelMenu onError={onError} refreshKey={modelsKey} />
+          {guessAll ? (
+            <span className="flex h-9 items-center gap-2 rounded-md border border-line pr-1 pl-3 text-[13px]" title="The model is guessing reply arrows for every unattached block">
+              <LuSparkles className="size-4 shrink-0 text-[#A78BFA]" />
+              <span className="text-gray-200">{guessAll.total ? pct(guessAll.done / guessAll.total) : 'Starting…'}</span>
+              {guessAll.total > 0 && (
+                <span className="text-muted">
+                  {guessAll.done.toLocaleString()}/{guessAll.total.toLocaleString()}
+                  {guessAll.note ? ` · ${guessAll.note}` : ''}
+                  {guessAll.left != null ? ` · ${fmtDuration(guessAll.left)} left` : ''}
+                </span>
+              )}
+              <button onClick={cancelGuessAll} title="Stop guessing" aria-label="Stop guessing" className="grid size-7 place-items-center rounded hover:bg-raised">
+                <LuX className="size-3.5" />
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={startGuessAll}
+              title="Ask the local model which message every unattached block replies to"
+              className="flex h-9 items-center gap-2 rounded-md border border-line px-3 text-[13px] hover:bg-raised"
+            >
+              <LuSparkles className="size-4" /> Guess all
+            </button>
+          )}
           <span className="flex-1" />
           <span className="mr-1.5 text-xs text-muted">{project.dirty ? 'Unsaved changes' : 'Saved'}</span>
           <SaveMenu
@@ -509,6 +905,14 @@ export default function CuratorPage() {
             )}
             {c.suggested > 0 && <span className="text-[12.5px] text-muted">{c.suggested} suggested</span>}
             <button
+              onClick={() => mergeUp(c)}
+              title="Still the same conversation as the one before it? Join them. Clears approval; Ctrl+Z undoes it."
+              aria-label="Merge with previous conversation"
+              className="grid size-9 place-items-center rounded-md border border-line hover:bg-raised"
+            >
+              <LuMerge className="size-4" />
+            </button>
+            <button
               onClick={() => setFlag(c, c.archived ? 'unarchive' : 'archive')}
               title={c.archived ? 'Unarchive' : 'Archive'}
               aria-label={c.archived ? 'Unarchive conversation' : 'Archive conversation'}
@@ -521,15 +925,49 @@ export default function CuratorPage() {
                 <LuCheck className="size-4 text-[#6CCB98]" /> Approved
               </button>
             ) : (
-              <button onClick={() => approve(c)} className="h-9 rounded-md bg-gray-100 px-3.5 text-[13px] font-semibold text-ink hover:bg-white">
+              <button
+                onClick={() => {
+                  setApprovingId(null) // the button is replaced, so it never gets a mouseleave
+                  approve(c)
+                }}
+                {...approveHover(c.id, setApprovingId)}
+                className="h-9 rounded-md bg-gray-100 px-3.5 text-[13px] font-semibold text-ink hover:bg-white"
+              >
                 Approve
               </button>
             )}
           </section>
         )}
 
-        {view === 'threads' && <ThreadsView feed={feed} onEdit={onEdit} onError={onError} onCurrent={setCurrent} />}
-        {view === 'raw' && <RawView feed={feed} onChanged={() => (markDirty(), loadConvs())} onError={onError} openInThreads={(id) => jumpTo(id, 'threads')} />}
+        {view === 'threads' && (
+          <ThreadsView
+            feed={feed}
+            onEdit={onEdit}
+            onError={onError}
+            onCurrent={setCurrent}
+            onMerge={mergeUp}
+            onSplit={splitAt}
+            currentId={c?.id}
+            approvingId={approvingId}
+            onApproving={setApprovingId}
+            onApprove={approve}
+            hideBots={hideBots}
+          />
+        )}
+        {view === 'raw' && (
+          <RawView
+            feed={feed}
+            onSplit={splitAt}
+            onMerge={mergeUp}
+            onError={onError}
+            openInThreads={(id) => jumpTo(id, 'threads')}
+            currentId={c?.id}
+            approvingId={approvingId}
+            onApproving={setApprovingId}
+            onApprove={approve}
+            hideBots={hideBots}
+          />
+        )}
         {view === 'memories' && (
           <MemoriesView selected={person} onSelect={setPerson} onDirty={markDirty} onError={onError} openMessage={(id) => jumpTo(id, 'threads')} />
         )}
@@ -565,7 +1003,7 @@ export default function CuratorPage() {
       )}
       {confirm && (
         <Dialog
-          title="Approve with replies still open?"
+          title="Approve with unattached messages?"
           body={[
             confirm.suggested ? `${confirm.suggested} suggested ${confirm.suggested === 1 ? 'reply' : 'replies'} will be accepted.` : '',
             confirm.unattached ? `${confirm.unattached} unattached ${confirm.unattached === 1 ? 'message' : 'messages'} will be left out of training.` : ''
@@ -626,7 +1064,7 @@ function Dialog(props: { title: string; body: string; primary: string; secondary
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-gray-300">{props.body}</p>
         <div className="mt-5 flex justify-end gap-2">
-          <button onClick={props.onSecondary} className="h-9 rounded-md border border-line px-3.5 text-[13px] hover:bg-raised">
+          <button onClick={props.onSecondary} className="h-9 rounded-md border border-line px-3.5 text-[13px] hover:bg-menu-hover">
             {props.secondary}
           </button>
           <button autoFocus onClick={props.onPrimary} className="h-9 rounded-md bg-gray-100 px-3.5 text-[13px] font-semibold text-ink hover:bg-white">

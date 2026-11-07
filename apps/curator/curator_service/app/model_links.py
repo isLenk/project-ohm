@@ -2,7 +2,8 @@
 
 The heuristic in threads.py ranks earlier messages; the model reads the top few and picks
 one (or none). Its picks are ordinary suggestions with origin 'model', so they go through
-the same accept/reject flow. See Documentation/Curator/threading.md.
+the same accept/reject flow, and approving a conversation accepts them.
+Runs go newest first. See Documentation/Curator/threading.md.
 """
 
 import re
@@ -64,7 +65,12 @@ def _pending(project, conversation_id: Optional[int]) -> list[int]:
             raise not_found("Conversation")
         sql += " AND b.channel_id = ? AND b.first_ts BETWEEN ? AND ?"
         params += [conv["channel_id"], conv["first_ts"], conv["last_ts"]]
-    return [r["id"] for r in project.all(sql + " ORDER BY b.first_ts, b.id", params)]
+    # Newest first: recent chat is what gets curated and trained on first.
+    return [r["id"] for r in project.all(sql + " ORDER BY b.first_ts DESC, b.id DESC", params)]
+
+
+def pending_count(project) -> int:
+    return len(_pending(project, None))
 
 
 def _mark(conn, block_id: int) -> None:
@@ -85,7 +91,7 @@ def guess(project, job, conversation_id: Optional[int] = None) -> dict:
     for i, bid in enumerate(blocks):
         if job.cancelled:
             break
-        job.progress(i, len(blocks), "asking the model")
+        job.progress(i, len(blocks), f"{suggested} guessed")
         with project.lock:
             msgs = [m for m in threads.block_messages(project.conn, bid) if not m["excluded"]]
             scored = threads.score_candidates(project.conn, bid)[:CHOICES]
@@ -123,11 +129,14 @@ def guess(project, job, conversation_id: Optional[int] = None) -> dict:
             threads._write(conn, "block", bid, parent["id"], "suggested", "model", round(score, 3))
             suggested += 1
             changed.append(bid)
-    job.progress(len(blocks), len(blocks), "done")
+    job.progress(len(blocks), len(blocks), f"{suggested} guessed")
 
     from .feed import block_item  # feed imports threads
 
-    with project.lock:
-        units = [block_item(project.conn, b, page_ids=None) for b in changed]
+    # A project-wide run can change thousands of blocks; the UI reloads the feed instead.
+    units = []
+    if conversation_id is not None:
+        with project.lock:
+            units = [block_item(project.conn, b, page_ids=None) for b in changed]
     return {"blocks": len(blocks), "suggested": suggested, "no_reply": no_reply, "failed": failed,
             "stopped": stopped, "units": units}

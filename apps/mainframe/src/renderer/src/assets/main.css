@@ -11,6 +11,7 @@
   --color-page: #111214;
   --color-panel: #141517; /* menus and dialogs */
   --color-raised: #1b1c1f; /* hover and selected rows */
+  --color-menu-hover: #2a2b31; /* hover rows inside menus and dialogs (#1d1e22), where raised is darker than the panel */
   --color-field: #17181a;
   --color-line: #232428; /* dividers */
   --color-edge: #2c2e33; /* control borders */
@@ -32,6 +33,50 @@ body {
   color: #ececee;
   font-family: var(--font-sans);
   user-select: none;
+}
+
+/* The window has no title bar. Page headers (and the rail) drag the window; anything you can
+   click inside them doesn't. Popovers and dialogs never drag, even where they cover a header.
+   The window buttons sit over the top right (titleBarOverlay in src/main/index.js), so the
+   header keeps its right edge clear of them. */
+.app-titlebar,
+.app-rail {
+  -webkit-app-region: drag;
+}
+
+.app-titlebar :is(button, a, input, select, textarea, label, [role], .absolute),
+.app-rail :is(button, a, [role], .absolute),
+.fixed {
+  -webkit-app-region: no-drag;
+}
+
+.app-titlebar {
+  padding-right: max(1.5rem, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 1rem));
+}
+
+/* Slim scrollbars that match the dark ground: no arrows, no track, a rounded thumb. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--color-edge) padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #3a3c42;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
 }
 
 /* In the components layer so utilities on an element (h-auto, px-0, ...) still win. */

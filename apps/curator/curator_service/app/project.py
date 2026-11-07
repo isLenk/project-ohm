@@ -51,7 +51,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if version > schema.PROJECT_VERSION:
         raise ApiError(422, "newer_project", "This project was made by a newer version of the Curator.")
     for step in schema.PROJECT_MIGRATIONS[version - 1 : schema.PROJECT_VERSION - 1]:
-        conn.executescript(step)
+        if isinstance(step, str):
+            conn.executescript(step)
+            continue
+        conn.execute("BEGIN")
+        try:
+            step(conn)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
     conn.execute(f"PRAGMA user_version = {schema.PROJECT_VERSION}")
 
 

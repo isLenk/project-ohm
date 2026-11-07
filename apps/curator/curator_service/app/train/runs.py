@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from .. import export, gpu
-from ..config import REPO_ROOT, RUNS_DIR, TRAIN_SIMULATE, TRAIN_VRAM_GB
+from ..config import REPO_ROOT, RUNS_DIR, TRAIN_PYTHON, TRAIN_SIMULATE, TRAIN_VRAM_GB
 from ..errors import ApiError, not_found
 from ..project import now_ms
 
@@ -20,7 +20,7 @@ FINAL = {"succeeded", "failed", "cancelled"}
 
 DEFAULT_CONFIG = {
     "method": "lora", "r": 16, "alpha": 32, "dropout": 0.05, "target_modules": "all-linear",
-    "lr": 2e-4, "epochs": 3, "max_len": 1024, "batch_size": "auto", "grad_accum": "auto",
+    "lr": 2e-4, "epochs": 3, "max_len": export.DEFAULT_MAX_LEN, "batch_size": "auto", "grad_accum": "auto",
     "load_in_4bit": True, "seed": 1337, "speakers": None,
 }
 
@@ -64,7 +64,8 @@ def preflight(project, registry, config: dict) -> dict:
     """What the Train modal shows before starting: examples, VRAM, trainability."""
     act = registry.get("active", {}) or {}
     base = registry.one("SELECT * FROM base_models WHERE id = ?", (act.get("base_model_id"),)) if act.get("base_model_id") else None
-    prev = export.preview(project, speakers=config.get("speakers"))
+    prev = export.preview(project, speakers=config.get("speakers"),
+                          max_len=config.get("max_len") or export.DEFAULT_MAX_LEN)
     status = gpu.status()
     need = TRAIN_VRAM_GB
     return {
@@ -95,7 +96,7 @@ def start(project, registry, config: Optional[dict], stop_pids: list[int]) -> di
             raise ApiError(409, "not_enough_vram", "Not enough free VRAM to train.",
                            free_gb=status["free_gb"], need_gb=TRAIN_VRAM_GB, processes=status["processes"])
 
-    data = export.build(project, speakers=config.get("speakers"))
+    data = export.build(project, speakers=config.get("speakers"), max_len=config["max_len"])
     if not data["examples"]:
         raise ApiError(422, "no_examples", "Approve at least one conversation with replies first.")
 
@@ -104,7 +105,7 @@ def start(project, registry, config: Optional[dict], stop_pids: list[int]) -> di
     run_dir.mkdir(parents=True)
     with open(run_dir / "dataset.jsonl", "w", encoding="utf-8") as f:
         for e in data["examples"]:
-            f.write(json.dumps({**e, "messages": export.chat_messages(e)}, ensure_ascii=False) + "\n")
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
     (run_dir / "config.json").write_text(json.dumps({
         **config, "hf_path": base["hf_path"], "base_model_id": base["id"], "run_id": run_id,
         "examples": len(data["examples"]),
@@ -123,7 +124,7 @@ def start(project, registry, config: Optional[dict], stop_pids: list[int]) -> di
     with project.tx() as conn:
         conn.execute("INSERT OR REPLACE INTO project_runs (run_id, dataset_sha) VALUES (?, ?)", (run_id, data["sha256"]))
 
-    cmd = [sys.executable, "-m", "curator_service.app.train.worker", "--run-dir", str(run_dir)]
+    cmd = [TRAIN_PYTHON, "-m", "curator_service.app.train.worker", "--run-dir", str(run_dir)]
     if TRAIN_SIMULATE:
         cmd.append("--simulate")
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0

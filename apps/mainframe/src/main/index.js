@@ -1,6 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { modules, listModules, setModuleEnabled, restartModule } from './api.js'
 import { logsDB, addLog } from './db.js'
@@ -28,6 +28,13 @@ function createWindow() {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
+    // No title bar: the page headers are the drag area (.app-titlebar in main.css) and the
+    // system's minimise/maximise/close buttons are drawn over the top right, in the page's colours.
+    titleBarStyle: 'hidden',
+    ...(process.platform === 'darwin'
+      ? {}
+      : { titleBarOverlay: { color: '#111214', symbolColor: '#a0a3ab', height: 40 } }),
+    backgroundColor: '#111214',
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -58,8 +65,10 @@ function createWindow() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
-  // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
+  // Windows groups taskbar buttons by this id. It matches appId in electron-builder.yml and the
+  // id on the Ohm launcher shortcut, so the window joins the pinned launcher. Set directly rather
+  // than through electronApp.setAppUserModelId, which swaps in electron.exe's path in dev.
+  if (process.platform === 'win32') app.setAppUserModelId('com.ohm.app')
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
@@ -93,6 +102,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('health', (event, days) => health(days))
   ipcMain.handle('nas', (event, method, path, body) => nasCall(method, path, body))
+  saveSettings({}) // encrypts secrets saved in plain text by older versions
   ipcMain.handle('get-settings', () => getSettings())
   ipcMain.handle('save-settings', (event, values) => saveSettings(values))
 

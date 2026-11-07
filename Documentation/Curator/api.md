@@ -28,9 +28,9 @@ Changing `split_gap_ms` re-derives conversations that have `manual = 0`. It clea
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/imports` | `{ path }` (local file; the Electron main process shows the file picker) | import summary (`import.md`) |
-| GET | `/imports` | — | list of `sources` |
-| GET | `/jobs/{id}/events` | — | SSE for background embedding and memory extraction: `{ kind, done, total }` |
+| POST | `/imports` | `{ paths: [...] }` or `{ path }`: files and/or folders (the Electron main process shows the file picker) | a job; its `result` is the import summary (`import.md`) |
+| GET | `/imports` | — | `{ sources }`, each with `imported_messages` |
+| GET | `/jobs/{id}/events` | — | SSE for imports, embedding and memory extraction: `{ kind, done, total, note }` |
 
 ## Feed
 
@@ -99,7 +99,7 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 | Method | Path | Body / query | Notes |
 |---|---|---|---|
 | GET | `/conversations` | `?filter=all\|approved\|archived` | sidebar list: `id, first_ts, last_ts, people, messages, author colors, approved, archived` |
-| POST | `/conversations/{id}/approve` | `{ confirm?: true }` | `409 needs_confirm` with `{ suggested, unattached }` until confirmed |
+| POST | `/conversations/{id}/approve` | `{ confirm?: true }` | Accepts the conversation's suggested links. `409 needs_confirm` with `{ suggested, unattached }` until confirmed, only when some blocks are unattached |
 | POST | `/conversations/{id}/unapprove` | — | |
 | POST | `/conversations/{id}/archive` | — | |
 | POST | `/conversations/{id}/unarchive` | — | |
@@ -145,7 +145,7 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/export/preview` | — | `{ examples, by_author: [...], dropped: { unattached, excluded, capped, duplicates } }` |
+| GET | `/export/preview` | — | `{ examples, conversations, by_author: [...], after_cap: [...], dropped: { excluded, unattached, short, "too long", bots, capped }, sample: [messages, ...] }` |
 | POST | `/export/jsonl` | `{ path }` | `{ path, examples, sha256 }` |
 | POST | `/train` | `{ config?: {...} }` | `{ run_id }`; `409` if a run is active or the base has no `hf_path` |
 | GET | `/train/runs` | — | runs from the registry |

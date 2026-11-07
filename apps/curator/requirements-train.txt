@@ -1,6 +1,5 @@
-# Only needed on the PC that trains LoRAs (NVIDIA GPU). Install torch with CUDA first:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu121
-# then: pip install -r curator_service/requirements-train.txt
+# Only needed on the PC that trains LoRAs (NVIDIA GPU). Install into its own venv with CUDA torch,
+# NOT the repo venv: these upgrade torch/numpy/transformers and break TTS/STT. See curator_service/README.md.
 unsloth
 trl
 peft

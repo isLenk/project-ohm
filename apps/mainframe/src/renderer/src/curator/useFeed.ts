@@ -11,7 +11,8 @@ export type FeedState = {
   channel: string | null
 }
 
-export type Jump = { messageId: string; nonce: number } | null
+/** `top`: scroll the message's conversation to the top of the view, without the flash (opening a project). */
+export type Jump = { messageId: string; nonce: number; top?: boolean } | null
 
 export function useFeed() {
   const [state, setState] = useState<FeedState>({ items: [], authors: {}, next: null, prev: null, channel: null })
@@ -19,13 +20,13 @@ export function useFeed() {
   const [jump, setJump] = useState<Jump>(null)
   const busy = useRef(false)
 
-  const reset = useCallback(async (around?: string, scrollTo = true) => {
+  const reset = useCallback(async (around?: string, scrollTo: boolean | 'top' = true) => {
     setLoading(true)
     try {
       const q = around ? `around=${encodeURIComponent(around)}` : ''
       const [f, all] = await Promise.all([get<Feed>(`/feed?limit=${PAGE}&${q}`), get<{ authors: Record<string, Author> }>('/authors')])
       setState({ items: f.items, authors: { ...all.authors, ...f.authors }, next: f.next_cursor, prev: f.prev_cursor, channel: f.channel_id })
-      if (around && scrollTo) setJump({ messageId: around, nonce: Date.now() })
+      if (around && scrollTo) setJump({ messageId: around, nonce: Date.now(), top: scrollTo === 'top' })
     } finally {
       setLoading(false)
     }
@@ -63,7 +64,15 @@ export function useFeed() {
         ...s,
         items: s.items.map((it) => {
           if (it.type === 'block' && byId.has(it.id)) {
-            return { ...byId.get(it.id)!, conversation_id: it.conversation_id }
+            const approved = it.conversation_id != null ? changed.get(it.conversation_id) : undefined
+            return {
+              ...byId.get(it.id)!,
+              conversation_id: it.conversation_id,
+              conversation_approved: approved ?? it.conversation_approved
+            }
+          }
+          if (it.type === 'block' && it.conversation_id != null && changed.has(it.conversation_id)) {
+            return { ...it, conversation_approved: changed.get(it.conversation_id)! }
           }
           if (it.type === 'conversation_start' && changed.has(it.conversation.id)) {
             return { ...it, conversation: { ...it.conversation, approved: changed.get(it.conversation.id)! } }
@@ -78,14 +87,33 @@ export function useFeed() {
     setState((s) => ({
       ...s,
       items: s.items.map((it) =>
-        it.type === 'conversation_start' && it.conversation.id === c.id ? { ...it, conversation: c } : it
+        it.type === 'conversation_start' && it.conversation.id === c.id
+          ? { ...it, conversation: c }
+          : it.type === 'block' && it.conversation_id === c.id
+            ? { ...it, conversation_approved: c.approved }
+            : it
+      )
+    }))
+  }, [])
+
+  /** Approving a conversation accepts its suggested arrows (conversations.approve on the service).
+   *  Mirror that in place, so the loaded feed and its scroll position stay put. */
+  const acceptSuggested = useCallback((conversationId: number) => {
+    const accept = <L extends { status: string } | null>(link: L): L =>
+      link && link.status === 'suggested' ? { ...link, status: 'accepted' } : link
+    setState((s) => ({
+      ...s,
+      items: s.items.map((it) =>
+        it.type === 'block' && it.conversation_id === conversationId
+          ? { ...it, link: accept(it.link), messages: it.messages.map((m) => ({ ...m, link: accept(m.link) })) }
+          : it
       )
     }))
   }, [])
 
   const blocks = state.items.filter((i): i is Block => i.type === 'block')
 
-  return { ...state, blocks, loading, jump, reset, more, apply, updateConversation, setJump }
+  return { ...state, blocks, loading, jump, reset, more, apply, updateConversation, acceptSuggested, setJump }
 }
 
 export type FeedApi = ReturnType<typeof useFeed>

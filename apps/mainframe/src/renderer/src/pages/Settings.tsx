@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { LuEye, LuEyeOff, LuFolderOpen, LuLock } from 'react-icons/lu'
 import { dialog } from '../curator/api'
 import { message, useEngine } from '../lib/ohm'
@@ -105,18 +105,20 @@ const SECTIONS = [
 
 const Settings = () => {
   const engine = useEngine()
-  const [values, setValues] = useState<Record<string, string>>({})
-  const [saved, setSaved] = useState<Record<string, string>>({})
+  // A secret's value is '' (keep what's saved), new text, or null (clear it). Saved secrets never reach this page.
+  const [values, setValues] = useState<Record<string, string | null>>({})
+  const [saved, setSaved] = useState<Record<string, string | null>>({})
+  const [secretsSet, setSecretsSet] = useState<string[]>([])
   const [locked, setLocked] = useState<string[]>([])
   const [file, setFile] = useState('')
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
   const [section, setSection] = useState('runtime')
-  const refs = useRef<Record<string, HTMLElement | null>>({})
 
   const load = (s) => {
     setValues(s.values)
     setSaved(s.values)
+    setSecretsSet(s.secretsSet || [])
     setLocked(s.locked)
     setFile(s.file)
   }
@@ -125,7 +127,7 @@ const Settings = () => {
   }, [])
 
   const dirty = Object.keys(values).some((k) => values[k] !== saved[k])
-  const set = (key: string, value: string) => setValues({ ...values, [key]: value })
+  const set = (key: string, value: string | null) => setValues({ ...values, [key]: value })
 
   const save = async (restart: boolean) => {
     try {
@@ -141,10 +143,12 @@ const Settings = () => {
     }
   }
 
-  const jump = (id: string) => {
-    setSection(id)
-    refs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
+  // Sections with edits not saved yet get a dot in the nav, since only one section shows at a time.
+  const edited = (id: string) =>
+    SECTIONS.find((s) => s.id === id)?.fields.some(
+      ([key]) => values[key] !== saved[key]
+    )
+  const current = SECTIONS.find((s) => s.id === section)
 
   return (
     <div className="flex min-h-full flex-wrap">
@@ -159,14 +163,18 @@ const Settings = () => {
           {[...SECTIONS, { id: 'app', title: 'App' }].map((s) => (
             <button
               key={s.id}
-              onClick={() => jump(s.id)}
-              className={`flex h-9.5 w-full cursor-pointer items-center px-5 text-left text-[13.5px] ${
+              onClick={() => setSection(s.id)}
+              aria-current={section === s.id ? 'page' : undefined}
+              className={`flex h-9.5 w-full cursor-pointer items-center gap-2 px-5 text-left text-[13.5px] ${
                 section === s.id
                   ? 'bg-raised text-gray-100 shadow-[inset_2px_0_0_#ececee]'
                   : 'text-soft hover:bg-[#17181a] hover:text-gray-100'
               }`}
             >
-              {s.title}
+              <span className="flex-1">{s.title}</span>
+              {edited(s.id) && (
+                <span className="size-1.5 rounded-full bg-accent" title="Unsaved changes" />
+              )}
             </button>
           ))}
         </div>
@@ -179,7 +187,7 @@ const Settings = () => {
       </nav>
 
       <main className="flex min-w-0 flex-[999_1_520px] flex-col">
-        <header className="sticky top-0 z-10 flex min-h-14 flex-wrap items-center gap-3 border-b border-line bg-page px-8 py-2.5">
+        <header className="app-titlebar sticky top-0 z-10 flex min-h-14 flex-wrap items-center gap-3 border-b border-line bg-page px-8 py-2.5">
           <span className={`text-[12.5px] ${error ? 'text-bad' : 'text-muted'}`}>
             {error || note || 'Changes apply the next time the Python side starts.'}
           </span>
@@ -194,16 +202,11 @@ const Settings = () => {
 
         <div className="px-8 pb-14">
           <div className="max-w-[840px]">
-            {SECTIONS.map((s) => (
-              <section
-                key={s.id}
-                id={s.id}
-                ref={(el) => (refs.current[s.id] = el)}
-                className="scroll-mt-16 pt-7"
-              >
-                <h2 className="mb-1 text-[15px] font-semibold">{s.title}</h2>
-                <p className="mb-1.5 text-[12.5px] text-muted">{s.sub}</p>
-                {s.fields.map(([key, label, hint, type, placeholder]) => (
+            {current && (
+              <section key={current.id} className="pt-7">
+                <h2 className="mb-1 text-[15px] font-semibold">{current.title}</h2>
+                <p className="mb-1.5 text-[12.5px] text-muted">{current.sub}</p>
+                {current.fields.map(([key, label, hint, type, placeholder]) => (
                   <Field
                     key={key}
                     name={key}
@@ -211,30 +214,33 @@ const Settings = () => {
                     hint={hint}
                     type={type}
                     placeholder={placeholder}
-                    value={values[key] ?? ''}
+                    value={values[key]}
+                    isSet={secretsSet.includes(key)}
                     locked={locked.includes(key)}
                     onChange={(v) => set(key, v)}
                   />
                 ))}
               </section>
-            ))}
-            <section id="app" ref={(el) => (refs.current.app = el)} className="scroll-mt-16 pt-7">
-              <h2 className="mb-1 text-[15px] font-semibold">App</h2>
-              <p className="mb-1.5 text-[12.5px] text-muted">This window.</p>
-              <Row label="Dashboard refresh" hint="How often logs and modules are polled">
-                <span className="justify-self-end font-mono text-[12.5px] text-[#c9cbd1]">
-                  every 3 s
-                </span>
-              </Row>
-              <Row label="Settings file" hint="Where these values are saved">
-                <span
-                  className="justify-self-end truncate font-mono text-xs text-muted"
-                  title={file}
-                >
-                  {file}
-                </span>
-              </Row>
-            </section>
+            )}
+            {section === 'app' && (
+              <section className="pt-7">
+                <h2 className="mb-1 text-[15px] font-semibold">App</h2>
+                <p className="mb-1.5 text-[12.5px] text-muted">This window.</p>
+                <Row label="Dashboard refresh" hint="How often logs and modules are polled">
+                  <span className="justify-self-end font-mono text-[12.5px] text-[#c9cbd1]">
+                    every 3 s
+                  </span>
+                </Row>
+                <Row label="Settings file" hint="Where these values are saved">
+                  <span
+                    className="justify-self-end truncate font-mono text-xs text-muted"
+                    title={file}
+                  >
+                    {file}
+                  </span>
+                </Row>
+              </section>
+            )}
           </div>
         </div>
       </main>
@@ -252,7 +258,7 @@ const Row = ({ label, hint, children, htmlFor = undefined }) => (
   </div>
 )
 
-const Field = ({ name, label, hint, type, placeholder, value, locked, onChange }) => {
+const Field = ({ name, label, hint, type, placeholder, value, isSet, locked, onChange }) => {
   const [show, setShow] = useState(false)
   const browse = async () => {
     const r = await dialog('showOpenDialog', {
@@ -318,8 +324,16 @@ const Field = ({ name, label, hint, type, placeholder, value, locked, onChange }
           id={name}
           className="field font-mono text-[12.5px] disabled:opacity-60"
           type={type === 'secret' && !show ? 'password' : 'text'}
-          placeholder={placeholder}
-          value={value}
+          placeholder={
+            type !== 'secret'
+              ? placeholder
+              : value === null
+                ? 'Cleared when you save'
+                : isSet
+                  ? 'Saved. Type to replace it'
+                  : placeholder
+          }
+          value={value ?? ''}
           disabled={locked}
           onChange={(e) => onChange(e.target.value)}
         />
@@ -330,6 +344,11 @@ const Field = ({ name, label, hint, type, placeholder, value, locked, onChange }
             onClick={() => setShow(!show)}
           >
             {show ? <LuEyeOff /> : <LuEye />}
+          </button>
+        )}
+        {type === 'secret' && isSet && !locked && value !== null && (
+          <button className="btn shrink-0" title="Remove the saved value" onClick={() => onChange(null)}>
+            Clear
           </button>
         )}
         {(type === 'folder' || type === 'file') && (

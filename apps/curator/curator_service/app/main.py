@@ -3,8 +3,7 @@
 Run from the repo root:
     python -m uvicorn curator_service.app.main:app --host 127.0.0.1 --port 8200
 
-Import routes (POST/GET /imports) are not here yet: Smarth is building the importer.
-It should load messages/authors/blocks, then call conversations.rebuild and threads.suggest_all.
+POST /imports runs importer.py as a background job (Documentation/Curator/import.md).
 """
 
 import json
@@ -20,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import conversations, embeddings, export, feed, gpu, jobs, llm, memories, model_links, search, threads
+from . import conversations, embeddings, export, feed, gpu, importer, jobs, llm, memories, model_links, search, threads
 from .config import MODELS_DIR, PORT, TRAIN_SIMULATE
 from .errors import ApiError
 from .project import Project, require_project, state
@@ -181,6 +180,37 @@ def project_settings(b: Settings):
     return dirty(p.info())
 
 
+# ── imports ─────────────────────────────────────────────────────────────────
+class ImportBody(BaseModel):
+    path: Optional[str] = None
+    paths: Optional[list[str]] = None
+
+
+@app.post("/imports")
+def imports_post(b: ImportBody):
+    """Start an import job. Files and folders; DiscordChatExporter JSON, messages.jsonl, speakers.json."""
+    p = require_project()
+    paths = b.paths or ([b.path] if b.path else [])
+    if not paths:
+        raise ApiError(422, "nothing_to_import", "Pick at least one file.")
+    importer.expand(paths)  # missing files fail now, not inside the job
+
+    def work(job):
+        result = importer.run(p, paths, job)
+        embeddings.invalidate()
+        _maybe_embed(p)
+        return result
+
+    return jobs.start("import", work)
+
+
+@app.get("/imports")
+def imports_get():
+    p = require_project()
+    with p.lock:
+        return {"sources": importer.listing(p.conn)}
+
+
 # ── feed ────────────────────────────────────────────────────────────────────
 @app.get("/channels")
 def channels_get():
@@ -277,7 +307,15 @@ def link_guess(b: GuessBody):
     p = require_project()
     if not llm.up():
         raise ApiError(503, "llm_down", "Start llama-server (Ohm's LLM on :5000) to have the model guess replies.")
-    return jobs.start("link_guess", lambda job: model_links.guess(p, job, b.conversation_id))
+    # Separate kinds, so a conversation's button doesn't attach to a running project-wide job.
+    kind = "link_guess" if b.conversation_id is not None else "link_guess_all"
+    return jobs.start(kind, lambda job: model_links.guess(p, job, b.conversation_id))
+
+
+@app.get("/links/guess/pending")
+def link_guess_pending():
+    """How many blocks a project-wide guess run would ask the model about."""
+    return {"blocks": model_links.pending_count(require_project())}
 
 
 @app.get("/stats/suggester")

@@ -29,6 +29,8 @@ export type Block = {
   link: Link | null
   messages: Message[]
   conversation_id: number | null
+  /** Its conversation is approved. Kept current by useFeed when approval changes. */
+  conversation_approved?: boolean
 }
 
 export type ConversationStats = {

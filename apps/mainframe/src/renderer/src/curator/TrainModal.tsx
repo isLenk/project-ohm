@@ -226,7 +226,7 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
             ) : (
               !pre.simulate && <p className="text-[13px] text-[#E0B25C]">No NVIDIA GPU found on this machine.</p>
             )}
-            <div className="font-mono text-[11.5px] text-muted">rank 16 · alpha 32 · lr 2e-4 · 3 epochs · max len 1024 · QLoRA</div>
+            <div className="font-mono text-[11.5px] text-muted">rank 16 · alpha 32 · lr 2e-4 · 3 epochs · max len 2048 · QLoRA</div>
           </div>
         )}
 
@@ -301,7 +301,7 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
         <div className="flex justify-end gap-2 border-t border-[#2f3037] px-6 py-3.5">
           {run && !ended && (
             <>
-              <button onClick={cancel} className="h-9 rounded-md border border-line px-3.5 text-[13px] text-gray-300 hover:bg-raised">
+              <button onClick={cancel} className="h-9 rounded-md border border-line px-3.5 text-[13px] text-gray-300 hover:bg-menu-hover">
                 Cancel run
               </button>
               <button onClick={onClose} className="h-9 rounded-md bg-gray-100 px-3.5 text-[13px] font-semibold text-ink hover:bg-white">

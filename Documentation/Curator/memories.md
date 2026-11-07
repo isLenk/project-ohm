@@ -14,8 +14,8 @@ While reading imports, the Curator proposes things worth remembering about each 
 
 Runs as a background job after import, and again for a conversation when it is approved.
 
-1. For each block that is not excluded, by a non-bot author, with at least 3 words in total:
-2. Call the local LLM (`llama-server :5000`) with a prompt based on `extract_memory` in `controller/wrappers/openai.py`. That prompt already filters filler and requests to the bot. Extend it to return JSON:
+1. For each block that is not excluded, by a non-bot author, with at least 3 words in total, newest block first:
+2. Call the local LLM (`llama-server :5000`) with the block plus the 8 channel messages before it (and any message it replies to) as context, so a reply like "I'm down" can be read as what it agrees to. The prompt asks only for lasting things that make sense on their own, and filters filler, agreeing to something, being free for one event, and requests to the bot. It returns JSON:
 
    ```json
    { "note": "KaptainDoosh plays Barotrauma with the group.",
@@ -26,11 +26,13 @@ Runs as a background job after import, and again for a conversation when it is a
 
    `short_lived` is true for things that are only true today ("was out all day"). `mentions_person` is a name that is not a known author ("arnav").
 
-3. Drop `NONE` results. A block is marked in `memory_scans` once the model has answered for it. If the request fails (a timeout, say), the block stays unscanned so the next run retries it. If `llama-server` stops answering, the job stops early and reports `stopped`.
+3. Drop `NONE` results, and notes that end on a pronoun or bare verb ("…is down to participate.") because they don't say what they're about. A block is marked in `memory_scans` once the model has answered for it. If the request fails (a timeout, say), the block stays unscanned so the next run retries it. If `llama-server` stops answering, the job stops early and reports `stopped`.
 4. **Dedupe:** embed the note (same MiniLM model as `memory_service`). If an existing memory for the same author has cosine ≥ 0.9, add this block's messages to that memory's `memory_sources` instead of creating a new row. The UI shows that as "2 sources".
 5. Insert with `status='new'`.
 
 If the LLM is down, the job pauses and retries later. It never blocks the UI.
+
+The job runs in `curator_service`, so it keeps going when the user switches tabs or pages. When the Memories view opens it looks for a running `memories` job in `GET /jobs` and follows it again. It only stops when the user presses **Stop** (`POST /jobs/{id}/cancel`). Blocks it already read stay scanned, so the next run carries on from there. New memories show up while it runs, and the list is ordered newest first (by the latest message each memory came from).
 
 ## Style traits
 

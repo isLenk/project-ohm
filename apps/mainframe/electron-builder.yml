@@ -1,4 +1,4 @@
-appId: com.electron.app
+appId: com.ohm.app
 productName: controller-mainframe
 directories:
   buildResources: build

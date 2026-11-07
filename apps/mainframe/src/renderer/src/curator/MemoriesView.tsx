@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { LuCheck, LuLink, LuPencil, LuTrash2, LuUndo2 } from 'react-icons/lu'
-import { followJob, get, patch, post } from './api'
-import { color, cx, fmtTime, pct } from './util'
+import { get, patch, post, stream } from './api'
+import { Avatar, BotTag } from './Avatar'
+import { cx, fmtTime, pct } from './util'
 
 type Person = {
   author_id: string
   name: string
   display_name: string | null
   color_index: number
+  avatar_url: string | null
   is_bot: boolean
   messages: number
   conversations: number
@@ -52,6 +54,8 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
   const [adding, setAdding] = useState('')
   const [linking, setLinking] = useState<number | null>(null)
   const [job, setJob] = useState<string | null>(null)
+  const [jobId, setJobId] = useState<string | null>(null)
+  const [stopping, setStopping] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
   const loadPeople = useCallback(async () => {
@@ -96,19 +100,86 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
     }
   }
 
+  // The job runs in curator_service, not here: leaving the tab only stops watching it, and coming back picks it up again.
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
+  const watching = useRef<(() => void) | null>(null)
+
+  const follow = useCallback(
+    (id: string) => {
+      watching.current?.()
+      setJobId(id)
+      setJob('Reading messages…')
+      let lastRefresh = Date.now()
+      watching.current = stream(`/jobs/${id}/events`, (name, data) => {
+        if (name === 'closed' || name === 'error') {
+          watching.current = null
+          setJobId(null)
+          setJob(null)
+          setStopping(false)
+          return
+        }
+        if (name !== 'progress' || !data) return
+        if (data.status === 'running') {
+          setJob(data.total ? `Reading messages ${data.done}/${data.total}` : 'Reading messages…')
+          // Show memories as they turn up instead of only at the end.
+          if (Date.now() - lastRefresh > 4000) {
+            lastRefresh = Date.now()
+            refreshRef.current()
+          }
+          return
+        }
+        watching.current?.()
+        watching.current = null
+        setJobId(null)
+        setJob(null)
+        setStopping(false)
+        const result = data.result
+        if (data.status === 'failed') {
+          onError(new Error(data.error || 'Reading messages failed.'))
+        } else {
+          const found = `Found ${result?.created ?? 0} new memories (${result?.merged ?? 0} matched ones you already had).`
+          if (data.status === 'cancelled') setNote(`Stopped. ${found} Run it again to carry on from where it left off.`)
+          else if (result?.stopped) setNote(`${result.stopped} ${found} Run it again once it's back to finish.`)
+          else if (result?.failed) setNote(`${found} ${result.failed} blocks timed out; run it again to retry them.`)
+          else setNote(found)
+        }
+        refreshRef.current()
+      })
+    },
+    [onError]
+  )
+
+  useEffect(() => {
+    get<{ jobs: { id: string; kind: string; status: string }[] }>('/jobs')
+      .then((r) => {
+        const running = r.jobs.find((j) => j.kind === 'memories' && j.status === 'running')
+        if (running) follow(running.id)
+      })
+      .catch(() => {})
+    return () => {
+      watching.current?.()
+      watching.current = null
+    }
+  }, [follow])
+
   const extract = async () => {
     try {
+      setNote(null)
       const j = await post('/memories/extract', {})
-      setJob('Reading messages…')
-      const result = await followJob(j.id, (p) => setJob(p.total ? `Reading messages ${p.done}/${p.total}` : 'Reading messages…'))
-      setJob(null)
-      const found = `Found ${result?.created ?? 0} new memories (${result?.merged ?? 0} matched ones you already had).`
-      if (result?.stopped) setNote(`${result.stopped} ${found} Run it again once it's back to finish.`)
-      else if (result?.failed) setNote(`${found} ${result.failed} blocks timed out; run it again to retry them.`)
-      else setNote(found)
-      refresh()
+      follow(j.id)
     } catch (e) {
-      setJob(null)
+      onError(e)
+    }
+  }
+
+  const stop = async () => {
+    if (!jobId) return
+    try {
+      setStopping(true)
+      await post(`/jobs/${jobId}/cancel`)
+    } catch (e) {
+      setStopping(false)
       onError(e)
     }
   }
@@ -141,9 +212,18 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
             className="h-9 rounded-md border border-line bg-transparent px-2.5 text-sm outline-none focus:border-gray-400"
           />
           <div className="flex gap-2">
-            <button onClick={extract} disabled={!!job} className="flex-1 rounded-md border border-line px-2 py-1.5 text-xs hover:bg-raised disabled:opacity-60">
-              {job || 'Read messages for memories'}
-            </button>
+            {jobId ? (
+              <>
+                <span className="flex flex-1 items-center rounded-md border border-line px-2 py-1.5 text-xs text-muted">{stopping ? 'Stopping…' : job}</span>
+                <button onClick={stop} disabled={stopping} className="rounded-md border border-line px-2 py-1.5 text-xs hover:bg-raised disabled:opacity-60">
+                  Stop
+                </button>
+              </>
+            ) : (
+              <button onClick={extract} className="flex-1 rounded-md border border-line px-2 py-1.5 text-xs hover:bg-raised">
+                Read messages for memories
+              </button>
+            )}
             <button onClick={sync} className="rounded-md border border-line px-2 py-1.5 text-xs hover:bg-raised">
               Sync kept
             </button>
@@ -160,8 +240,10 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
                 p.author_id === selected ? 'bg-raised text-gray-100 shadow-[inset_2px_0_0_#f3f4f6]' : 'text-gray-300 hover:bg-[#26272d]'
               )}
             >
-              <span className="size-2 shrink-0 rounded-full" style={{ background: color(p.color_index) }} />
-              <span className="flex-1 truncate">{p.display_name || p.name}</span>
+              <Avatar who={p} size={22} />
+              <span className="truncate">{p.display_name || p.name}</span>
+              {p.is_bot && <BotTag />}
+              <span className="flex-1" />
               {p.memories.new > 0 ? (
                 <span className="font-mono text-[11.5px] text-[#E0B25C]">{p.memories.new} new</span>
               ) : (
@@ -178,9 +260,12 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
         ) : (
           <div className="max-w-[860px]">
             <header className="flex flex-wrap items-center gap-4 pt-7 pb-5">
-              <span className="size-3 rounded-full" style={{ background: color(person.color_index) }} />
+              <Avatar who={person} size={44} />
               <div className="min-w-[220px] flex-1">
-                <h2 className="text-[22px] font-semibold">{person.display_name || person.name}</h2>
+                <h2 className="flex items-center gap-2.5 text-[22px] font-semibold">
+                  {person.display_name || person.name}
+                  {person.is_bot && <BotTag />}
+                </h2>
                 <p className="mt-1 text-[13px] text-muted">
                   {person.messages} messages · {person.conversations} conversations · {pct(person.share)} of everything
                 </p>
@@ -327,7 +412,7 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
                                 }}
                                 className="flex items-center gap-1.5 rounded border border-line px-2 py-1 text-xs hover:bg-raised"
                               >
-                                <span className="size-2 rounded-full" style={{ background: color(p.color_index) }} />
+                                <Avatar who={p} size={16} />
                                 {p.display_name || p.name}
                               </button>
                             ))}

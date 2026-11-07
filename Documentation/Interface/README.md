@@ -45,4 +45,4 @@ All from the memory service's message log (`/stats`, `/people`, `/conversations`
 
 ## Settings
 
-Every field is an environment variable the Python side or `curator_service` already reads. Saved values go to `settings.json` and are passed to `main.py` and `curator_service` when they start. A variable set in the real environment wins and is locked on the page. `DATABASE_URL`, `EMBED_MODEL` and `MODEL_CACHE` belong to the memory service's `.env` on the NAS, so they aren't here.
+Every field is an environment variable the Python side or `curator_service` already reads. Saved values go to `settings.json` and are passed to `main.py` and `curator_service` when they start. A variable set in the real environment wins and is locked on the page. The Discord token and the memory API key are encrypted in `settings.json` with Electron's `safeStorage` (DPAPI on Windows, tied to your login). They are never sent back to the page, which only shows whether each is set and offers Clear. `DATABASE_URL`, `EMBED_MODEL` and `MODEL_CACHE` belong to the memory service's `.env` on the NAS, so they aren't here.

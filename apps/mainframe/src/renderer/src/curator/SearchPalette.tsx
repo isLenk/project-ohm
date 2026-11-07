@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { LuSearch } from 'react-icons/lu'
 import { get } from './api'
 import type { Author } from './api'
-import { color, cx, fmtDay, fmtTime, pct } from './util'
+import { Avatar } from './Avatar'
+import { cx, fmtDay, fmtTime, pct } from './util'
 
 type Hit = { id: string; author_id: string; ts: number; content_text: string; highlights?: number[][]; score?: number }
-type Person = { author_id: string; name: string; display_name: string | null; color_index: number; messages: number; share: number; memories: number }
+type Person = { author_id: string; name: string; display_name: string | null; color_index: number; avatar_url: string | null; messages: number; share: number; memories: number }
 type Result = { messages: Hit[]; similar: Hit[]; people: Person[]; actions: { id: string; label: string }[] }
 
 type Row =
@@ -123,7 +124,7 @@ export default function SearchPalette({ authors, onClose, onMessage, onPerson, o
     )
   }
   const group = (title: string) => <div className="px-4 pt-3.5 pb-1.5 text-[11.5px] text-muted">{title}</div>
-  const dot = (authorId: string) => <span className="size-2 shrink-0 rounded-full" style={{ background: color(authors[authorId]?.color_index) }} />
+  const dot = (authorId: string) => <Avatar who={authors[authorId]} size={16} />
   const msgRow = (h: Hit) =>
     row(
       { kind: 'message', hit: h },
@@ -163,7 +164,7 @@ export default function SearchPalette({ authors, onClose, onMessage, onPerson, o
                 role="radio"
                 aria-checked={mode === m}
                 onClick={() => setMode(m)}
-                className={cx('h-[26px] rounded px-2.5 text-xs capitalize', mode === m ? 'bg-raised text-gray-100' : 'text-muted')}
+                className={cx('h-[26px] rounded px-2.5 text-xs capitalize', mode === m ? 'bg-menu-hover text-gray-100' : 'text-muted')}
               >
                 {m}
               </button>
@@ -194,7 +195,7 @@ export default function SearchPalette({ authors, onClose, onMessage, onPerson, o
             row(
               { kind: 'person', person: p },
               <>
-                <span className="size-2 shrink-0 rounded-full" style={{ background: color(p.color_index) }} />
+                <Avatar who={p} size={20} />
                 <span className="flex-1">{p.display_name || p.name}</span>
                 <span className="text-xs text-muted">
                   {p.messages} messages · {pct(p.share)} · {p.memories} memories
