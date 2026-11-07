@@ -1,6 +1,6 @@
 /* Character storage for the controller UI.
 
-   When MAIN_VITE_MEMORY_API_URL is set, the NAS memory service is the only copy:
+   When the memory service address is set (Settings › Memory), the NAS is the only copy:
    the UI reads and writes characters there, and the bot loads them from there too.
    Without it, the old local nedb file (characters.db) is used.
 
@@ -10,24 +10,8 @@
    On the NAS, `id` is the character slug ('ohm'), `description` is the personality,
    and created/status/picture live in configs.ui.
 */
-import axios from 'axios'
 import { charactersDB } from './db.js'
-
-const NAS_URL = import.meta.env.MAIN_VITE_MEMORY_API_URL
-const nas = NAS_URL
-  ? axios.create({
-      baseURL: NAS_URL,
-      headers: { 'X-API-Key': import.meta.env.MAIN_VITE_MEMORY_API_KEY || '' },
-      timeout: 5000
-    })
-  : null
-
-export const usingNas = Boolean(nas)
-
-function nasError(error) {
-  const detail = error.response?.data?.detail || error.message
-  return new Error(`Memory service (${NAS_URL}): ${detail}`)
-}
+import { nas, nasError } from './nas.js'
 
 function toUi(row) {
   const ui = row.configs?.ui || {}
@@ -77,9 +61,10 @@ const local = {
 
 // ── Public API (used by the IPC handlers) ────────────────────────────────────
 export async function listCharacters() {
-  if (!nas) return local.list()
+  const api = nas()
+  if (!api) return local.list()
   try {
-    const { data } = await nas.get('/characters')
+    const { data } = await api.get('/characters')
     return data.map(toUi)
   } catch (e) {
     throw nasError(e)
@@ -89,15 +74,16 @@ export async function listCharacters() {
 /* Creates a character. The returned object has the real id (slug), which the UI
    must use from then on. */
 export async function addCharacter(c) {
-  if (!nas) return local.add(c)
+  const api = nas()
+  if (!api) return local.add(c)
   try {
-    const { data: existing } = await nas.get('/characters')
+    const { data: existing } = await api.get('/characters')
     const taken = new Set(existing.map((r) => r.slug))
     const base = slugify(c.name)
     let slug = base
     for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
 
-    const { data } = await nas.put(`/characters/${slug}`, {
+    const { data } = await api.put(`/characters/${slug}`, {
       name: c.name,
       personality: c.description,
       configs: uiConfigs(c)
@@ -109,10 +95,11 @@ export async function addCharacter(c) {
 }
 
 export async function updateCharacter(c) {
-  if (!nas) return local.update(c)
+  const api = nas()
+  if (!api) return local.update(c)
   try {
     // PATCH merges configs, so model/max_tokens/voice set elsewhere are kept.
-    const { data } = await nas.patch(`/characters/${encodeURIComponent(c.id)}`, {
+    const { data } = await api.patch(`/characters/${encodeURIComponent(c.id)}`, {
       name: c.name,
       personality: c.description,
       configs: uiConfigs(c)
@@ -124,9 +111,10 @@ export async function updateCharacter(c) {
 }
 
 export async function deleteCharacter(id) {
-  if (!nas) return local.remove(id)
+  const api = nas()
+  if (!api) return local.remove(id)
   try {
-    await nas.delete(`/characters/${encodeURIComponent(id)}`)
+    await api.delete(`/characters/${encodeURIComponent(id)}`)
     return 1
   } catch (e) {
     throw nasError(e)

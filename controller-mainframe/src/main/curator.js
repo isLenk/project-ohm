@@ -1,31 +1,16 @@
 // Starts curator_service (the Conversation Curator backend) next to the app and stops it on quit.
-// Python is found in this order: CURATOR_PYTHON, the repo's venv (Scripts\python.exe or bin/python), python.
-import { app } from 'electron'
 import { spawn } from 'child_process'
-import { existsSync } from 'fs'
-import { join, resolve } from 'path'
 import { randomBytes } from 'crypto'
 import axios from 'axios'
+import { python, repoRoot } from './python.js'
+import { childEnv, setting } from './settings.js'
 
-const PORT = Number(process.env.CURATOR_PORT || 8200)
+const PORT = Number(setting('CURATOR_PORT') || 8200)
 const URL = `http://127.0.0.1:${PORT}`
 
 let child = null
 let token = ''
 let ready = Promise.resolve()
-
-function repoRoot() {
-  return process.env.CURATOR_REPO || resolve(app.getAppPath(), '..')
-}
-
-function python(root) {
-  if (process.env.CURATOR_PYTHON) return process.env.CURATOR_PYTHON
-  const candidates =
-    process.platform === 'win32'
-      ? [join(root, 'Scripts', 'python.exe')]
-      : [join(root, 'bin', 'python'), join(root, '.venv', 'bin', 'python')]
-  return candidates.find((p) => existsSync(p)) || (process.platform === 'win32' ? 'python' : 'python3')
-}
 
 async function alreadyRunning() {
   try {
@@ -51,8 +36,16 @@ async function launch() {
   const py = python(root)
   child = spawn(
     py,
-    ['-m', 'uvicorn', 'curator_service.app.main:app', '--host', '127.0.0.1', '--port', String(PORT)],
-    { cwd: root, env: { ...process.env, CURATOR_TOKEN: token, PYTHONUNBUFFERED: '1' }, windowsHide: true }
+    [
+      '-m',
+      'uvicorn',
+      'curator_service.app.main:app',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(PORT)
+    ],
+    { cwd: root, env: childEnv({ CURATOR_TOKEN: token, PYTHONUNBUFFERED: '1' }), windowsHide: true }
   )
   child.stdout.on('data', (d) => process.stdout.write(`[curator] ${d}`))
   child.stderr.on('data', (d) => process.stdout.write(`[curator] ${d}`))
