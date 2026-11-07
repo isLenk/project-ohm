@@ -42,7 +42,7 @@ Interactive docs: `http://<nas-ip>:8100/docs`
 
 ## Connecting the PC
 Root `.env`: `MEMORY_API_URL=http://<nas-ip>:8100` and `MEMORY_API_KEY=<API_KEY>`.
-`controller-mainframe/.env`: the same values as `MAIN_VITE_MEMORY_API_URL` / `MAIN_VITE_MEMORY_API_KEY`.
+The app: the same two values in Settings › Memory (the key is stored encrypted). Don't put them in a `controller-mainframe/.env`; the app no longer reads it, so a key can't end up inside a build.
 
 ## Importing old data (once)
 `Scripts\python.exe memory_service\migrate.py --dry-run` then without `--dry-run`.

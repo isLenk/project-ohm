@@ -100,6 +100,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('health', (event, days) => health(days))
   ipcMain.handle('nas', (event, method, path, body) => nasCall(method, path, body))
+  saveSettings({}) // encrypts secrets saved in plain text by older versions
   ipcMain.handle('get-settings', () => getSettings())
   ipcMain.handle('save-settings', (event, values) => saveSettings(values))
 
