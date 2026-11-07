@@ -17,6 +17,8 @@ from typing import Optional
 import requests
 from dotenv import load_dotenv
 
+from controller import modules
+
 load_dotenv()
 
 TIMEOUT = (2, 5)  # (connect, read) seconds
@@ -35,8 +37,13 @@ class MemoryClient:
         self.session = requests.Session()
         self.session.headers["X-API-Key"] = api_key or os.getenv("MEMORY_API_KEY", "")
         self._down_until = 0.0
+        # With the memory module off, the NAS is still used for characters and the message log
+        # (the dashboard reads it); nothing is recalled into prompts or stored as a memory.
+        self.recall = modules.enabled("memory")
         if not self.url:
             print("[memory] MEMORY_API_URL not set; memory is disabled.")
+        elif not self.recall:
+            print("[memory] Memory module is off; nothing is recalled or remembered.")
 
     @property
     def enabled(self) -> bool:
@@ -80,7 +87,7 @@ class MemoryClient:
 
     def relevant_memories(self, character: str, text: str, limit: int = 5) -> list[dict]:
         """Memories that actually relate to `text` (empty for filler like "okay")."""
-        if len(text.split()) < MIN_WORDS:
+        if not self.recall or len(text.split()) < MIN_WORDS:
             return []
         return [m for m in self.search(character, text, limit) if m.get("similarity", 0) >= MIN_SIMILARITY]
 
@@ -131,7 +138,7 @@ class MemoryClient:
 
     def remember_if_relevant_async(self, model, character: str, speaker: str, text: str, user_ids=None):
         """Have the LLM pull out anything worth keeping about `speaker` from `text`, and store it."""
-        if not self.enabled or len(text.split()) < MIN_WORDS:
+        if not self.enabled or not self.recall or len(text.split()) < MIN_WORDS:
             return
 
         def work():

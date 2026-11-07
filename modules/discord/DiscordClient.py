@@ -9,6 +9,7 @@ from collections import deque
 import discord
 from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
+from controller import modules
 from controller.memory import memory, HISTORY_LIMIT, HISTORY_MINUTES
 testing_channel = 1335351030308802630
 VOICE_MAX_TOKENS = 120  # ~20s of speech at most per voice reply
@@ -46,6 +47,11 @@ class DiscordClient(discord.Client):
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
+        # A voice call needs both ears and a mouth
+        off = [name for name in ("stt", "tts") if not modules.enabled(name)]
+        if off:
+            print(f"[voice] Not joining voice: {', '.join(off)} turned off in the controller.")
+            return
         await self.join_testing_channel(vc=True)
     
     @property
