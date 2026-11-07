@@ -2,15 +2,30 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { modules } from './api.js'
-import { charactersDB, logsDB, addLog } from './db.js'
+import { modules, listModules, setModuleEnabled, restartModule } from './api.js'
+import { logsDB, addLog } from './db.js'
+import { listCharacters, addCharacter, updateCharacter, deleteCharacter } from './characters.js'
 import { dialog } from 'electron/main'
+import { startCurator, stopCurator, curatorConfig } from './curator.js'
+import {
+  engineStatus,
+  engineOutput,
+  onEngineChange,
+  restartEngine,
+  startEngine,
+  stopEngine
+} from './engine.js'
+import { health } from './health.js'
+import { nasCall } from './nas.js'
+import { getSettings, saveSettings } from './settings.js'
 
 function createWindow() {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1280,
+    height: 800,
+    minWidth: 1024,
+    minHeight: 700,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
@@ -57,55 +72,35 @@ app.whenReady().then(() => {
   ipcMain.on('ping', () => console.log('pong'))
 
   ipcMain.handle('get-modules', async (event) => modules)
+  ipcMain.handle('list-modules', () => listModules())
+  ipcMain.handle('set-module-enabled', (event, name, on) => setModuleEnabled(name, on))
+  ipcMain.handle('restart-module', (event, name) => restartModule(name))
 
-  ipcMain.handle('get-characters', async (event) => {
-    return new Promise((resolve, reject) => {
-      charactersDB.find({}, (err, docs) => {
-        console.log('get-characters: found ' + docs.length + ' characters')
-        if (err) {
-          reject(err)
-        } else {
-          resolve(docs)
-        }
-      })
-    })
+  // The Python side (main.py). The Engine panel also gets every change pushed to it.
+  ipcMain.handle('engine-status', () => engineStatus())
+  ipcMain.handle('engine-start', () => startEngine())
+  ipcMain.handle('engine-stop', () => stopEngine())
+  ipcMain.handle('engine-restart', () => restartEngine())
+  ipcMain.handle('engine-output', () => engineOutput())
+  onEngineChange((status) => {
+    for (const window of BrowserWindow.getAllWindows())
+      window.webContents.send('engine-changed', status)
+  })
+  app.on('will-quit', () => {
+    // Leave a main.py that was started by hand alone
+    if (!engineStatus().external) stopEngine()
   })
 
-  ipcMain.handle('add-character', async (event, character) => {
-    return new Promise((resolve, reject) => {
-      charactersDB.insert(character, (err, newDoc) => {
-        if (err) {
-          reject(err)
-        } else {
-          resolve(newDoc)
-        }
-      })
-    })
-  })
+  ipcMain.handle('health', (event, days) => health(days))
+  ipcMain.handle('nas', (event, method, path, body) => nasCall(method, path, body))
+  ipcMain.handle('get-settings', () => getSettings())
+  ipcMain.handle('save-settings', (event, values) => saveSettings(values))
 
-  ipcMain.handle('update-character', async (event, character) => {
-    return new Promise((resolve, reject) => {
-      charactersDB.update({ _id: character._id }, character, {}, (err, numReplaced) => {
-        if (err) {
-          reject(err)
-        } else {
-          resolve(numReplaced)
-        }
-      })
-    })
-  })
-
-  ipcMain.handle('delete-character', async (event, characterId) => {
-    return new Promise((resolve, reject) => {
-      charactersDB.remove({ _id: characterId }, {}, (err, numRemoved) => {
-        if (err) {
-          reject(err)
-        } else {
-          resolve(numRemoved)
-        }
-      })
-    })
-  })
+  // Characters live on the NAS when its address is set (see characters.js).
+  ipcMain.handle('get-characters', () => listCharacters())
+  ipcMain.handle('add-character', (event, character) => addCharacter(character))
+  ipcMain.handle('update-character', (event, character) => updateCharacter(character))
+  ipcMain.handle('delete-character', (event, characterId) => deleteCharacter(characterId))
 
   ipcMain.handle('dialog', async (event, method, params) => {
     return dialog[method](params)
@@ -115,6 +110,11 @@ app.whenReady().then(() => {
     console.log(message)
     logsDB.insert({ message, timestamp: new Date() })
   })
+
+  // Conversation Curator backend (curator_service/)
+  startCurator()
+  ipcMain.handle('curator-config', () => curatorConfig())
+  app.on('will-quit', stopCurator)
 
   ipcMain.handle('add-log', (event, log_type, message) => {
     addLog(log_type, message)

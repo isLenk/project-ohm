@@ -34,7 +34,7 @@ The project uses three models.
 - Ryzen 5 5600
 - 32GB DDR4 3600MHz CL18
 - Win11
-- Cuda 12.1 (Last available CUDA versions compatible with DeepSpeed that I could find)
+- Cuda 12.4
 - Python 3.12
 
 ### RAG PC

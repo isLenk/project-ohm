@@ -43,8 +43,7 @@ class OpenAIModel:
                 {"role": "system", "content": "Classify the user's intent (and only respond with the intent) as one of the following (or None if there is no intent): " + intents},
                 {"role": "user", "content": prompt}
             ],
-            **self._get_configs(),
-            temperature=0.1 # Make deterministic
+            **{**self._get_configs(), "temperature": 0.1}  # Make deterministic
         )
 
         # Get the intent from the response
@@ -66,45 +65,66 @@ class OpenAIModel:
             configs["top_p"] = self.top_p
         return configs
 
-    def create(self, prompt, system=None, user=None, assistant="aight lol", related_memories=None, **kwargs):
+    def create(self, prompt, system=None, assistant="aight lol", related_memories=None, history=None, **kwargs):
         if system is None:
-            system = self.system
+            system = self.system.strip()
+        if related_memories:
+            notes = "\n".join(f"- {m['content']}" for m in related_memories)
+            system += "\n\nThings you remember (only bring them up if they fit the conversation):\n" + notes
 
-        memory_str = ",".join(m['payload']['value'] for m in related_memories['data']) if related_memories else ""
+        messages = [{"role": "system", "content": system}]
+        if history:
+            messages += [{"role": m["role"], "content": m["content"]} for m in history]
+        elif assistant:
+            messages.append({"role": "assistant", "content": assistant})
+        messages.append({"role": "user", "content": prompt})
 
+        # Configs can set temperature/max_tokens; per-call kwargs win over both.
+        params = {"temperature": 1, **self._get_configs(), **kwargs}
         return self.client.chat.completions.create(
             model=self.model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "assistant", "content": assistant},
-                {"role": "user", "content": "Relevant information: " + memory_str},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=1,
-            **self._get_configs(),
-            **kwargs
+            messages=_merge_same_role(messages),
+            **params,
         )
 
-    def generate_stream_text(self, prompt, user="user"):
-        response = self.create(prompt, user=user, stream=True)
+    def generate_stream_text(self, prompt, user="user", related_memories=None, history=None, **kwargs):
+        return self.create(prompt, related_memories=related_memories, history=history, stream=True, **kwargs)
 
-        return response
-    
-    def generate_text(self, prompt, related_memories, user="user"):
-        response = self.create(prompt, user=user, related_memories=related_memories)
+    def generate_text(self, prompt, related_memories=None, user="user", history=None):
+        response = self.create(prompt, related_memories=related_memories, history=history)
+        text = response.choices[0].message.content or ""
+        return (text, "[INTENT]" in text)
 
-        contains_intent = "[INTENT]" in response.choices[0].message.content
-        return (response.choices[0].message.content, contains_intent)
-    
-    def check_create_memory(self, prompt):
-        """
-        Potentially create a memory based on the prompt.
-        Returns True if a memory was created, False otherwise.
-        """
-        system = "Determine if the following sentence is a fact/preference or not. Return only either 'yes' or 'no' or else I will be fired."
-        
-        answer = ""
-        while answer != "yes" and answer != "no":
-            response = self.create(prompt=prompt, assistant="", system=system, max_completion_tokens=3)
-            answer = response.choices[0].message.content.lower().strip()
-        return answer == "yes"
+    def extract_memory(self, speaker, text):
+        """Return a short note worth remembering about `speaker` from what they said, or None."""
+        system = (
+            "You decide what's worth remembering long-term about a person from one thing they said in a chat.\n"
+            "Worth remembering: their name, likes and dislikes, plans, job or school, pets, relationships, "
+            "life events, opinions they clearly hold.\n"
+            "Not worth remembering: greetings, filler, questions, reactions, insults, jokes, small talk, "
+            "or anything about the conversation or the bot itself.\n"
+            "Requests to the bot are not facts about the person either: \"explain X\", \"how do I Y\", "
+            "\"I want you to...\", \"tell me about...\" are all NONE, even if they mention a topic.\n"
+            f"If there is something worth remembering, reply with ONE short third-person note that starts "
+            f"with their name, for example: \"{speaker} likes apples.\"\n"
+            "Otherwise reply with exactly: NONE"
+        )
+        response = self.create(
+            f"{speaker}: {text}", system=system, assistant="",
+            temperature=0.1, max_tokens=40,
+        )
+        note = (response.choices[0].message.content or "").strip().strip('"').strip()
+        if not note or note.upper().startswith("NONE") or len(note) > 200:
+            return None
+        return note
+
+
+def _merge_same_role(messages):
+    """Some chat templates require roles to alternate, so join back-to-back messages from the same role."""
+    merged = []
+    for m in messages:
+        if merged and merged[-1]["role"] == m["role"] and m["role"] != "system":
+            merged[-1] = {"role": m["role"], "content": merged[-1]["content"] + "\n" + m["content"]}
+        else:
+            merged.append(dict(m))
+    return merged

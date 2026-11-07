@@ -1,17 +1,23 @@
+import os
 import requests
+from dotenv import load_dotenv
 from urllib.parse import urlencode
 import aiohttp
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import io
 import websockets
 import modules.discord.utils.DiscordVoiceUtil as DC_Util
+import utils.latency as latency
 
 
 VOICE = "Morgan_Freeman CC3.wav"
 ENDPOINT = "http://localhost:7851/api/tts-generate-streaming"
 
-DOMAIN="127.0.0.1"
-PORT=8000
+load_dotenv()
+# tts_api/ (set TTS_URL in Settings when it runs somewhere else)
+TTS_URL = os.getenv("TTS_URL", "http://127.0.0.1:8000").rstrip("/")
+WS_URL = TTS_URL.replace("http", "ws", 1) + "/api/v1/tts/ws"
 
 class TTSModule:
 
@@ -19,7 +25,7 @@ class TTSModule:
         self.voice = VOICE
 
     async def get_request_stream(self, text):
-        url = f"http://{DOMAIN}:{PORT}/api/v1/tts/feed_input"
+        url = f"{TTS_URL}/api/v1/tts/feed_input"
         data = {"input": text}
         try:
             async with aiohttp.ClientSession() as session:
@@ -33,17 +39,32 @@ class TTSModule:
     async def feed_to_websocket(self, websocket, response):
         """Feed the response to the websocket."""
         num_chunks = 0
-        for chunk in response:
-            if chunk.choices[0].delta.content is None:
-                break
-            if ((num_chunks := num_chunks + 1) % 15) == 0:
-                yield
-                print("F", end="")
-            print(chunk.choices[0].delta.content, end="")
-            # Feed the chunk to the websocket
-            await websocket.send(chunk.choices[0].delta.content)
+        # ? The LLM stream is a sync iterator; pull from it on a worker thread so waiting
+        # for tokens doesn't freeze the event loop (and the audio receive loop with it)
+        # ? One thread per reply so close() below always runs after any next() still in flight
+        # (closing a generator another thread is inside of raises "generator already executing")
+        llm_thread = ThreadPoolExecutor(max_workers=1)
+        iterator = iter(response)
+        _done = object()
+        try:
+            while (chunk := await asyncio.wrap_future(llm_thread.submit(next, iterator, _done))) is not _done:
+                # ? Some chunks have no text (role/reasoning/usage), skip them instead of stopping
+                if not chunk.choices or not chunk.choices[0].delta.content:
+                    continue
+                latency.mark("llm_first_token")
+                if ((num_chunks := num_chunks + 1) % 15) == 0:
+                    yield
+                    print("F", end="")
+                print(chunk.choices[0].delta.content, end="")
+                # Feed the chunk to the websocket
+                await websocket.send(chunk.choices[0].delta.content)
 
-        await websocket.send("END")
+            await websocket.send("END")
+        finally:
+            # Interrupted or done: close the stream so the LLM stops generating
+            if hasattr(response, "close"):
+                llm_thread.submit(response.close)
+            llm_thread.shutdown(wait=False)
 
     websocket = None
 
@@ -53,8 +74,23 @@ class TTSModule:
                                      until_done=False,
                                      sample_rate=24000,
                                      min_buffer_scale=5,
-                                     chunks_per_block=100):
-        """Receive audio chunks from the websocket."""
+                                     chunks_per_block=100,
+                                     raw=False):
+        """Receive audio chunks from the websocket.
+        raw=True hands every chunk straight to fn_push(bytes) with no buffering."""
+        if raw:
+            try:
+                while True:
+                    message = await websocket.recv()
+                    if message == "END":
+                        break
+                    await fn_push(message)
+            except websockets.exceptions.ConnectionClosed:
+                print("Connection closed")
+            except Exception as e:
+                print(e)
+            return
+
         out_buffer = io.BytesIO()
         min_buffer_size = sample_rate * min_buffer_scale
         try:
@@ -75,18 +111,33 @@ class TTSModule:
         except Exception as e:
             print(e)
 
-    async def ws_thread_manager(self, websocket, response, fn_push):
+    async def ws_thread_manager(self, websocket, response, fn_push, raw=False):
         """Feeds the response to the websocket and receives audio chunks. Closes the websocket when done."""
+        feed_task = None
         try:
             self.websocket = websocket
-            async for _ in self.feed_to_websocket(websocket, response):
-                await self.receive_from_websocket(websocket, fn_push)
-            await self.receive_from_websocket(websocket, fn_push, until_done=True)
+
+            async def feed():
+                try:
+                    async for _ in self.feed_to_websocket(websocket, response): pass
+                except Exception as e:
+                    # ? Otherwise the receive loop waits forever for an END that never comes
+                    print(f"Feeding TTS failed: {e!r}")
+                    await websocket.close()
+
+            # ? Feed text and receive audio at the same time. Taking turns deadlocks with Chatterbox
+            # since it sends one big chunk per sentence instead of lots of small ones
+            feed_task = asyncio.create_task(feed())
+            await self.receive_from_websocket(websocket, fn_push, until_done=True, raw=raw)
+            await feed_task
         except websockets.exceptions.ConnectionClosedError:
             print("Connection closed")
         except Exception as e:
             print(e)
         finally:
+            # Interrupted (this task was cancelled): stop pulling text from the LLM too
+            if feed_task and not feed_task.done():
+                feed_task.cancel()
             self.websocket = None
             await websocket.close()
 

@@ -7,6 +7,7 @@ import FilterPage from './pages/FilterPage'
 import Settings from './pages/Settings'
 import Modules from './components/Modules'
 import Memories from './components/Memories'
+import CuratorPage from './curator/CuratorPage'
 
 function App() {
   return (
@@ -15,6 +16,7 @@ function App() {
         <Route path="/" element={<Template />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/characters" element={<Characters />} />
+          <Route path="/curator" element={<CuratorPage />} />
           <Route path="/filters" element={<FilterPage />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/modules" element={<Modules />} />
