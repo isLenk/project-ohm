@@ -34,6 +34,9 @@ After pulling changes to `app/`, rebuild: `docker compose up -d --build api`. To
 | GET/POST | /lore?character=, PATCH/DELETE /lore/{id} | What one character knows about itself |
 | GET/POST | /knowledge, PATCH/DELETE /knowledge/{id} | What every character knows. Created on start if the database predates it |
 | PATCH | /users/{discord_id}/facts/{id} | Edit a fact |
+| GET | /stats | The controller dashboard: counts, reply time, messages per hour, top people |
+| GET | /people, /people/{discord_id}/messages | Who talked to a character, and their latest lines with the replies |
+| GET | /conversations | Messages per channel, split where the channel went quiet |
 
 Interactive docs: `http://<nas-ip>:8100/docs`
 

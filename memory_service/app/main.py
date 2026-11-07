@@ -486,6 +486,175 @@ def recent_messages(character: str, channel_id: Optional[str] = None, limit: int
     return list(reversed(rows))  # oldest first, ready for a prompt
 
 
+# ── Activity (the controller's dashboard) ───────────────────────────────────
+NAME = "COALESCE(u.preferred_name, u.display_name, u.discord_id)"
+
+
+@app.get("/stats", dependencies=auth)
+def stats(character: str, days: int = 7, tz: str = "UTC"):
+    """Counts for the last `days` days, the period before it for comparison, and messages per hour of day.
+
+    Reply time is from when the message Ohm answered was logged to when his reply was, so it
+    includes speech-to-text and thinking time but not the time to speak it.
+    """
+    p = {"c": character, "d": days, "tz": tz}
+    totals = run(
+        """
+        SELECT count(*) FILTER (WHERE role = 'user') AS heard,
+               count(*) FILTER (WHERE role = 'assistant') AS replied,
+               count(DISTINCT user_id) FILTER (WHERE role = 'user') AS people,
+               count(*) FILTER (WHERE source = 'voice') AS voice,
+               count(*) AS total
+        FROM messages
+        WHERE character = %(c)s AND created_at >= now() - make_interval(days => %(d)s)
+        """,
+        p,
+        "one",
+    )
+    before = run(
+        """
+        SELECT count(*) AS heard FROM messages
+        WHERE character = %(c)s AND role = 'user'
+          AND created_at >= now() - make_interval(days => 2 * %(d)s)
+          AND created_at < now() - make_interval(days => %(d)s)
+        """,
+        p,
+        "one",
+    )
+    new_people = run(
+        """
+        SELECT count(*) AS n FROM users u
+        WHERE u.first_seen >= now() - make_interval(days => %(d)s)
+          AND EXISTS (SELECT 1 FROM messages m WHERE m.user_id = u.discord_id AND m.character = %(c)s)
+        """,
+        p,
+        "one",
+    )
+    reply = run(
+        """
+        SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY ms) AS median_ms,
+               percentile_cont(0.95) WITHIN GROUP (ORDER BY ms) AS p95_ms
+        FROM (
+            SELECT extract(epoch FROM created_at - prev_at) * 1000 AS ms
+            FROM (
+                SELECT role, created_at,
+                       lag(role) OVER w AS prev_role, lag(created_at) OVER w AS prev_at
+                FROM messages
+                WHERE character = %(c)s AND created_at >= now() - make_interval(days => %(d)s)
+                WINDOW w AS (PARTITION BY channel_id ORDER BY created_at)
+            ) t
+            WHERE role = 'assistant' AND prev_role = 'user' AND created_at - prev_at < interval '2 minutes'
+        ) r
+        """,
+        p,
+        "one",
+    )
+    hours = run(
+        """
+        SELECT extract(hour FROM created_at AT TIME ZONE %(tz)s)::int AS hour,
+               count(*) FILTER (WHERE role = 'user') AS heard,
+               count(*) FILTER (WHERE role = 'assistant') AS replied
+        FROM messages
+        WHERE character = %(c)s AND created_at >= now() - make_interval(days => %(d)s)
+        GROUP BY 1
+        """,
+        p,
+    )
+    top = run(
+        f"""
+        SELECT m.user_id, {NAME} AS name, count(*) AS messages
+        FROM messages m JOIN users u ON u.discord_id = m.user_id
+        WHERE m.character = %(c)s AND m.role = 'user' AND m.created_at >= now() - make_interval(days => %(d)s)
+        GROUP BY m.user_id, u.discord_id ORDER BY messages DESC LIMIT 5
+        """,
+        p,
+    )
+    by_hour = {h["hour"]: h for h in hours}
+    return {
+        **totals,
+        "heard_before": before["heard"],
+        "new_people": new_people["n"],
+        "reply_ms": {"median": reply["median_ms"], "p95": reply["p95_ms"]},
+        "hours": [{"hour": h, "heard": by_hour.get(h, {}).get("heard", 0),
+                   "replied": by_hour.get(h, {}).get("replied", 0)} for h in range(24)],
+        "top": top,
+    }
+
+
+@app.get("/people", dependencies=auth)
+def people(character: str, days: Optional[int] = None, limit: int = 100):
+    """Everyone who has talked to the character, most recent first, with how much Ohm knows about them."""
+    return run(
+        f"""
+        SELECT u.discord_id AS user_id, {NAME} AS name,
+               count(m.id) AS messages, max(m.created_at) AS last_seen,
+               count(m.id) FILTER (WHERE m.source = 'voice') AS voice,
+               (SELECT count(*) FROM user_facts f WHERE f.user_id = u.discord_id AND f.character = %(c)s) AS facts,
+               (SELECT count(*) FROM memories x WHERE x.character = %(c)s AND u.discord_id = ANY(x.user_ids)) AS memories
+        FROM users u
+        JOIN messages m ON m.user_id = u.discord_id AND m.character = %(c)s AND m.role = 'user'
+             AND (%(d)s::int IS NULL OR m.created_at >= now() - make_interval(days => %(d)s::int))
+        GROUP BY u.discord_id
+        ORDER BY last_seen DESC LIMIT %(n)s
+        """,
+        {"c": character, "d": days, "n": min(limit, 500)},
+    )
+
+
+@app.get("/people/{discord_id}/messages", dependencies=auth)
+def person_messages(discord_id: str, character: str, limit: int = 20):
+    """The person's latest messages, each followed by the reply Ohm gave to it (if any), oldest first."""
+    rows = run(
+        """
+        WITH mine AS (
+            SELECT id, role, content, source, created_at, user_id, channel_id FROM messages
+            WHERE character = %(c)s AND user_id = %(u)s ORDER BY created_at DESC LIMIT %(n)s
+        )
+        SELECT id, role, content, source, created_at, user_id FROM mine
+        UNION
+        SELECT r.id, r.role, r.content, r.source, r.created_at, r.user_id
+        FROM mine CROSS JOIN LATERAL (
+            SELECT * FROM messages a
+            WHERE a.character = %(c)s AND a.role = 'assistant'
+              AND a.channel_id IS NOT DISTINCT FROM mine.channel_id
+              AND a.created_at > mine.created_at AND a.created_at < mine.created_at + interval '2 minutes'
+            ORDER BY a.created_at LIMIT 1
+        ) r
+        """,
+        {"c": character, "u": discord_id, "n": min(limit, 200)},
+    )
+    return sorted(rows, key=lambda r: r["created_at"])
+
+
+@app.get("/conversations", dependencies=auth)
+def conversations(character: str, days: int = 7, gap_minutes: int = 30, limit: int = 50):
+    """Messages grouped per channel, split wherever the channel went quiet for `gap_minutes`."""
+    rows = run(
+        """
+        WITH m AS (
+            SELECT channel_id, user_id, source, created_at,
+                   CASE WHEN created_at - lag(created_at) OVER (PARTITION BY channel_id ORDER BY created_at)
+                             > make_interval(mins => %(g)s) THEN 1 ELSE 0 END AS starts
+            FROM messages
+            WHERE character = %(c)s AND created_at >= now() - make_interval(days => %(d)s)
+        ), g AS (
+            SELECT *, sum(starts) OVER (PARTITION BY channel_id ORDER BY created_at) AS n FROM m
+        )
+        SELECT channel_id, min(created_at) AS started_at, max(created_at) AS ended_at, count(*) AS messages,
+               bool_or(source = 'voice') AS voice, array_remove(array_agg(DISTINCT user_id), NULL) AS user_ids
+        FROM g GROUP BY channel_id, n ORDER BY ended_at DESC LIMIT %(l)s
+        """,
+        {"c": character, "d": days, "g": gap_minutes, "l": min(limit, 500)},
+    )
+    ids = sorted({u for r in rows for u in r["user_ids"]})
+    names = {r["discord_id"]: r["name"] for r in run(
+        f"SELECT u.discord_id, {NAME} AS name FROM users u WHERE u.discord_id = ANY(%s)", (ids,)
+    )} if ids else {}
+    for r in rows:
+        r["people"] = [names.get(u, u) for u in r.pop("user_ids")]
+    return rows
+
+
 # ── Logs & metrics ──────────────────────────────────────────────────────────
 class LogIn(BaseModel):
     message: str
