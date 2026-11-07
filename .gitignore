@@ -11,3 +11,9 @@ ckernel
 /tts_api/tts_api
 /memory_service/data
 stt_debug.wav
+
+# Generated
+__pycache__/
+*.pyc
+*.log
+/output.wav
