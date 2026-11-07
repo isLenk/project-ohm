@@ -6,7 +6,7 @@ import { join, resolve } from 'path'
 import { setting } from './settings.js'
 
 export function repoRoot() {
-  return process.env.CURATOR_REPO || resolve(app.getAppPath(), '..')
+  return process.env.CURATOR_REPO || resolve(app.getAppPath(), '..', '..')
 }
 
 export function python(root = repoRoot()) {

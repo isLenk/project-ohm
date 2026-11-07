@@ -6,7 +6,7 @@
 
 Imports:
   * config/constants.py characters (personality, model, configs)
-  * controller-mainframe/characters.db (nedb) characters not already in constants.py
+  * apps/mainframe/characters.db (nedb) characters not already in constants.py
   * every Qdrant collection named memories_<character> (payload.value), with original timestamps
 
 Uses MEMORY_API_URL / MEMORY_API_KEY from the root .env. Running it twice will duplicate memories.
@@ -67,7 +67,7 @@ def migrate_characters(api: Api) -> set[str]:
 
     # Controller UI fields (status, picture, created) go in configs.ui.
     ui_by_slug = {}
-    nedb_docs = load_nedb(ROOT / "controller-mainframe" / "characters.db")
+    nedb_docs = load_nedb(ROOT / "apps" / "mainframe" / "characters.db")
     for doc in nedb_docs:
         ui_by_slug[slugify(doc.get("name", ""))] = {
             k: doc[k] for k in ("status", "picture", "created") if k in doc
