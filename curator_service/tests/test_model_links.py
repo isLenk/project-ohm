@@ -46,7 +46,9 @@ def test_guess_suggests_from_model(project, monkeypatch):
     monkeypatch.setattr(llm, "chat_json", fake_model)
     result = model_links.guess(project, FakeJob())
     assert result["blocks"] == 4 and result["suggested"] == 2 and result["no_reply"] == 2
-    assert {u["id"] for u in result["units"]} == {block_of(project, "1009"), block_of(project, "1012")}
+    assert result["units"] == []  # project-wide runs don't send units back; the UI reloads the feed
+    assert {r["unit_id"] for r in project.all("SELECT unit_id FROM links WHERE origin = 'model'")} == {
+        block_of(project, "1009"), block_of(project, "1012")}
 
     bet = threads.link_row(project.conn, "block", block_of(project, "1009"))
     assert bet["parent_id"] == "1007" and bet["status"] == "suggested" and bet["origin"] == "model"
@@ -100,3 +102,27 @@ def test_rejecting_model_guess_counts_for_model(project, monkeypatch):
     stats = threads.suggester_stats(project.conn)
     assert stats["model"] == {"accepted": 1, "rejected": 1, "pending": 0, "precision": 0.5}
     assert stats["rejected"] == 0
+
+
+def test_approving_accepts_model_guesses_without_asking(project, monkeypatch):
+    monkeypatch.setattr(llm, "up", lambda: True)
+    monkeypatch.setattr(llm, "chat_json", fake_model)
+    model_links.guess(project, FakeJob())
+    bid = block_of(project, "1012")
+    cid = project.scalar("SELECT id FROM conversations WHERE first_ts <= (SELECT first_ts FROM blocks WHERE id = ?) "
+                         "ORDER BY first_ts DESC LIMIT 1", (int(bid),))
+    with project.tx() as conn:
+        conn.execute("DELETE FROM links WHERE status = 'root'")  # leave only predictions open
+        for u in conversations.units_in(conn, conversations.get(conn, cid)):
+            if not u["link"]:
+                threads._write(conn, u["kind"], u["id"], None, "root", "manual")
+        s = conversations.approve(conn, cid, confirm=False)  # no 409: predictions don't need a yes
+    assert s["approved"] and s["suggested"] == 0
+    assert threads.link_row(project.conn, "block", bid)["status"] == "accepted"
+
+
+def test_guess_goes_newest_first(project):
+    pending = model_links._pending(project, None)
+    ts = [project.scalar("SELECT first_ts FROM blocks WHERE id = ?", (b,)) for b in pending]
+    assert len(pending) > 1 and ts == sorted(ts, reverse=True)
+

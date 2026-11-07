@@ -307,7 +307,15 @@ def link_guess(b: GuessBody):
     p = require_project()
     if not llm.up():
         raise ApiError(503, "llm_down", "Start llama-server (Ohm's LLM on :5000) to have the model guess replies.")
-    return jobs.start("link_guess", lambda job: model_links.guess(p, job, b.conversation_id))
+    # Separate kinds, so a conversation's button doesn't attach to a running project-wide job.
+    kind = "link_guess" if b.conversation_id is not None else "link_guess_all"
+    return jobs.start(kind, lambda job: model_links.guess(p, job, b.conversation_id))
+
+
+@app.get("/links/guess/pending")
+def link_guess_pending():
+    """How many blocks a project-wide guess run would ask the model about."""
+    return {"blocks": model_links.pending_count(require_project())}
 
 
 @app.get("/stats/suggester")
