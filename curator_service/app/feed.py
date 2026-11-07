@@ -120,6 +120,7 @@ def page(conn, channel_id: Optional[str] = None, cursor: Optional[str] = None, d
             items.append({"type": "conversation_start", "conversation": starts[first_id]})
         conv = conversation_at(conn, channel_id, r["first_ts"])
         item["conversation_id"] = conv["id"] if conv else None
+        item["conversation_approved"] = bool(conv and conv["approved_at"] is not None)
         items.append(item)
         author_ids.add(item["author_id"])
         for link in [item["link"]] + [m["link"] for m in item["messages"]]:

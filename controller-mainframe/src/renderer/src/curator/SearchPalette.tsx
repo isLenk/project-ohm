@@ -164,7 +164,7 @@ export default function SearchPalette({ authors, onClose, onMessage, onPerson, o
                 role="radio"
                 aria-checked={mode === m}
                 onClick={() => setMode(m)}
-                className={cx('h-[26px] rounded px-2.5 text-xs capitalize', mode === m ? 'bg-raised text-gray-100' : 'text-muted')}
+                className={cx('h-[26px] rounded px-2.5 text-xs capitalize', mode === m ? 'bg-menu-hover text-gray-100' : 'text-muted')}
               >
                 {m}
               </button>

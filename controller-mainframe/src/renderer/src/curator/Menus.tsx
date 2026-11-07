@@ -133,7 +133,7 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
               role="option"
               aria-selected={b.id === base?.id}
               onClick={() => activate(b.id, null)}
-              className={cx('flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-raised', b.id === base?.id && 'bg-[#26272d]')}
+              className={cx('flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-menu-hover', b.id === base?.id && 'bg-[#26272d]')}
             >
               <span className="min-w-0 flex-1">
                 <span className="block font-medium">{b.name}</span>
@@ -175,13 +175,13 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
           <div className="my-1 h-px bg-[#2f3037]" />
           <div className="px-3.5 pt-2 pb-1.5 text-[11.5px] text-muted">LoRA adapters you’ve trained</div>
           {base && (
-            <button onClick={() => activate(base.id, null)} className="flex w-full items-center px-3.5 py-2 text-left hover:bg-raised">
+            <button onClick={() => activate(base.id, null)} className="flex w-full items-center px-3.5 py-2 text-left hover:bg-menu-hover">
               <span className="flex-1">No adapter</span>
               {!adapter && <LuCheck className="size-4" />}
             </button>
           )}
           {adapters.map((a) => (
-            <button key={a.id} onClick={() => activate(a.base_model_id, a.id)} className="flex w-full items-center px-3.5 py-2 text-left hover:bg-raised">
+            <button key={a.id} onClick={() => activate(a.base_model_id, a.id)} className="flex w-full items-center px-3.5 py-2 text-left hover:bg-menu-hover">
               <span className="flex-1">{a.name}</span>
               {a.id === adapter?.id && <LuCheck className="size-4" />}
             </button>
@@ -190,7 +190,7 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
           {restart && (
             <div className="mx-3.5 my-2 flex items-center gap-2 text-xs text-[#E0B25C]">
               <span className="flex-1">llama-server needs a restart to load this.</span>
-              <button onClick={doRestart} className="rounded border border-line px-2 py-1 text-gray-100 hover:bg-raised">
+              <button onClick={doRestart} className="rounded border border-line px-2 py-1 text-gray-100 hover:bg-menu-hover">
                 Restart it
               </button>
             </div>
@@ -198,14 +198,14 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
           {status && <div className="px-3.5 py-1.5 text-xs text-muted">{status}</div>}
           <div className="my-1 h-px bg-[#2f3037]" />
           <div className="px-3.5 pt-2 pb-1 text-[11.5px] text-muted">Add new</div>
-          <button onClick={() => importFile('base')} className="flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-raised">
+          <button onClick={() => importFile('base')} className="flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-menu-hover">
             <LuPlus className="size-4" /> Import a .gguf model…
           </button>
-          <button onClick={() => importFile('adapter')} disabled={!base} className="flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-raised disabled:opacity-50">
+          <button onClick={() => importFile('adapter')} disabled={!base} className="flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-menu-hover disabled:opacity-50">
             <LuPlus className="size-4" /> Import a LoRA adapter…
           </button>
           {hf === null ? (
-            <button onClick={() => setHf('')} className="flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-raised">
+            <button onClick={() => setHf('')} className="flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-menu-hover">
               <LuPlus className="size-4" /> From Hugging Face…
             </button>
           ) : (
@@ -217,11 +217,11 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
               }}
             >
               <input autoFocus value={hf} onChange={(e) => setHf(e.target.value)} placeholder="owner/repo" className="h-8 flex-1 rounded border border-line bg-transparent px-2 font-mono text-xs outline-none" />
-              <button className="rounded border border-line px-2 text-xs hover:bg-raised">Fetch</button>
+              <button className="rounded border border-line px-2 text-xs hover:bg-menu-hover">Fetch</button>
             </form>
           )}
           {hfFiles.map((f) => (
-            <button key={f} onClick={() => fromHf(f)} className="block w-full truncate px-6 py-1.5 text-left font-mono text-[11px] text-gray-300 hover:bg-raised">
+            <button key={f} onClick={() => fromHf(f)} className="block w-full truncate px-6 py-1.5 text-left font-mono text-[11px] text-gray-300 hover:bg-menu-hover">
               {f}
             </button>
           ))}
@@ -254,7 +254,7 @@ export function SaveMenu({ path, savedAt, dirty, onSave, onSaveAs, onOpen, onNew
         close()
         fn()
       }}
-      className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left text-[13.5px] hover:bg-raised"
+      className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left text-[13.5px] hover:bg-menu-hover"
     >
       <span className="flex-1">
         {label}

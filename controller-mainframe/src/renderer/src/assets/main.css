@@ -11,6 +11,7 @@
   --color-page: #111214;
   --color-panel: #141517; /* menus and dialogs */
   --color-raised: #1b1c1f; /* hover and selected rows */
+  --color-menu-hover: #2a2b31; /* hover rows inside menus and dialogs (#1d1e22), where raised is darker than the panel */
   --color-field: #17181a;
   --color-line: #232428; /* dividers */
   --color-edge: #2c2e33; /* control borders */
