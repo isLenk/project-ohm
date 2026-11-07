@@ -2,7 +2,7 @@
 
 Reads config.json and dataset.jsonl from the run folder, trains a LoRA with Unsloth + TRL,
 saves it, converts it to GGUF with llama.cpp, and writes progress to events.jsonl.
-Install the training extras first: pip install -r curator_service/requirements-train.txt
+Install the training extras into the training venv first (apps/curator/README.md)
 
 Written against Unsloth's Gemma 4 support and llama.cpp's convert_lora_to_gguf.py. It has
 not been run on a GPU yet, so expect to adjust it on the first real run.

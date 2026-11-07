@@ -121,7 +121,7 @@ app.whenReady().then(() => {
     logsDB.insert({ message, timestamp: new Date() })
   })
 
-  // Conversation Curator backend (curator_service/)
+  // Conversation Curator backend (apps/curator)
   startCurator()
   ipcMain.handle('curator-config', () => curatorConfig())
   app.on('will-quit', stopCurator)

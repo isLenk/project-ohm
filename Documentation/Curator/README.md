@@ -76,7 +76,7 @@ The Electron main process (`apps/mainframe/src/main/curator.js`) starts and stop
 Everything in these docs is built and tested.
 
 ```
-curator_service/
+apps/curator/curator_service/
   app/main.py          FastAPI routes (api.md)
   app/importer.py      Import file: authors, messages, blocks, native links, then conversations + suggestions (import.md)
   app/formats.py       input formats: DiscordChatExporter JSON, messages.jsonl, speakers.json

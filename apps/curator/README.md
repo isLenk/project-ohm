@@ -21,7 +21,7 @@ py -3.12 -m venv %APPDATA%\ohm-curator\train-venv
 set TV=%APPDATA%\ohm-curator\train-venv\Scripts\python.exe
 %TV% -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 %TV% -m pip freeze | findstr /b "torch" > %TEMP%\torch-pin.txt
-%TV% -m pip install -r curator_service/requirements-train.txt gguf -c %TEMP%\torch-pin.txt --extra-index-url https://download.pytorch.org/whl/cu128
+%TV% -m pip install -r apps/curator/requirements-train.txt gguf -c %TEMP%\torch-pin.txt --extra-index-url https://download.pytorch.org/whl/cu128
 ```
 
 The constraint keeps pip from swapping CUDA torch for the CPU build.
