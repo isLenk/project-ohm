@@ -7,8 +7,8 @@
 /playground
 models
 ckernel
-/tts_api/tts_env
-/tts_api/tts_api
+/apps/tts/tts_env
+/apps/tts/tts_api
 /apps/memory/data
 stt_debug.wav
 

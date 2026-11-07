@@ -16,7 +16,7 @@ class TTSEngine:
     chunks_received: int
     pending_feed: Queue
 
-    # ? voice=None uses Chatterbox Turbo's built-in (female) voice. Pass a .wav path (5s+) to clone one instead, e.g. "../voices/lance.wav"
+    # ? voice=None uses Chatterbox Turbo's built-in (female) voice. Pass a .wav path (5s+) to clone one instead, e.g. "voices/lance.wav"
     def load_engine(self, model_name="chatterbox", voice=None, overwrite=False, *args, **kwargs):
         if hasattr(self, "engine") and overwrite == False and self.engine.engine_name == model_name: 
             cprint("red", "Model already loaded.")

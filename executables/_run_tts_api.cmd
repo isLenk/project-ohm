@@ -1,4 +1,4 @@
-cd ..\tts_api
+cd ..\apps\tts
 call tts_api\Scripts\activate
 echo Loading Runner
 python main.py
