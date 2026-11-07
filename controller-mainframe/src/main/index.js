@@ -1,6 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { modules, listModules, setModuleEnabled, restartModule } from './api.js'
 import { logsDB, addLog } from './db.js'
@@ -65,8 +65,10 @@ function createWindow() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
-  // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
+  // Windows groups taskbar buttons by this id. It matches appId in electron-builder.yml and the
+  // id on the Ohm launcher shortcut, so the window joins the pinned launcher. Set directly rather
+  // than through electronApp.setAppUserModelId, which swaps in electron.exe's path in dev.
+  if (process.platform === 'win32') app.setAppUserModelId('com.ohm.app')
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
