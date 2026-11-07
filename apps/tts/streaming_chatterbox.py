@@ -36,8 +36,10 @@ LOOKAHEAD = 3                # flow drops the last 3 tokens when finalize=False
 class StreamingChatterboxEngine(ChatterboxEngine):
 
     def __init__(self, *args, first_chunk_tokens=12, chunk_tokens=32, min_chunk_tokens=6,
-                 low_water_ms=400, crossfade_ms=20, watermark=True, **kwargs):
+                 low_water_ms=400, crossfade_ms=20, watermark=True, speed=0.95, **kwargs):
         super().__init__(*args, **kwargs)
+        # Speaking rate: < 1 is slower. Done by stretching the mels in time (CosyVoice's method), so pitch stays put
+        self.speed = speed
         # When to vocode: the first pass after first_chunk_tokens (small, so audio starts fast). After that,
         # every chunk_tokens, or sooner (min_chunk_tokens) if the listener is about to run out of audio
         # (less than low_water_ms still queued). Fewer passes when there's slack, small ones when there isn't.
@@ -100,14 +102,17 @@ class StreamingChatterboxEngine(ChatterboxEngine):
             torch.manual_seed(seed)
             # ? finalize=False is broken in this chatterbox build (trims features but not the
             # mask), so always finalize and drop the last LOOKAHEAD tokens' audio ourselves
-            mels = S3Token2Mel.forward(
-                s3gen, tokens, ref_wav=None, ref_sr=None, ref_dict=self._model.conds.gen,
-                n_cfm_timesteps=2, finalize=True, noised_mels=noise[:, :, :2 * len(tokens)],
-            )
+            if self.speed == 1.0:
+                mels = S3Token2Mel.forward(
+                    s3gen, tokens, ref_wav=None, ref_sr=None, ref_dict=self._model.conds.gen,
+                    n_cfm_timesteps=2, finalize=True, noised_mels=noise[:, :, :2 * len(tokens)],
+                )
+            else:
+                mels = self._slow_mels(tokens, noise)
             wav, source = s3gen.hift_inference(mels.to(dtype=s3gen.dtype), cache_source)
         wav = wav.squeeze(0)
         if not finalize:
-            keep = (len(tokens) - LOOKAHEAD) * SAMPLES_PER_TOKEN
+            keep = int((len(tokens) - LOOKAHEAD) * SAMPLES_PER_TOKEN / self.speed)
             wav, source = wav[:keep], source[:, :, :keep]
         fade = s3gen.trim_fade.to(wav.device)
         n = min(len(fade), len(wav))
@@ -116,6 +121,38 @@ class StreamingChatterboxEngine(ChatterboxEngine):
         if self.watermark:
             wav = self._apply_watermark(wav)
         return wav, source
+
+    def _slow_mels(self, tokens, noise):
+        """CausalMaskedDiffWithXvec.inference (finalize=True, batch of 1), but the encoder output for the
+        generated part is stretched in time *before* the CFM decoder, so the decoder draws natural mels
+        at the slower pace (stretching the finished mels instead smears them and the vocoder hisses)."""
+        s3gen = self._model.s3gen
+        flow = s3gen.flow
+        ref = {k: (torch.from_numpy(v) if isinstance(v, np.ndarray) else v) for k, v in self._model.conds.gen.items()}
+        ref = {k: (v.to(device=s3gen.device) if torch.is_tensor(v) else v) for k, v in ref.items()}
+
+        embedding = F.normalize(torch.atleast_2d(ref["embedding"]).to(s3gen.dtype), dim=1)
+        embedding = flow.spk_embed_affine_layer(embedding)
+        prompt_feat = ref["prompt_feat"].to(s3gen.dtype)
+        token = torch.cat([ref["prompt_token"], torch.atleast_2d(tokens)], dim=1)
+        token_len = torch.tensor([token.shape[1]], device=token.device)
+
+        h, _ = flow.encoder(flow.input_embedding(token.long()), token_len)
+        h = flow.encoder_proj(h)
+        mel_len1 = prompt_feat.shape[1]
+        # Fixed scale factor (not a target size) so every pass maps the already-sent prefix to the
+        # same frames, otherwise the seams with earlier passes would drift
+        gen = F.interpolate(h[:, mel_len1:].transpose(1, 2).float(), scale_factor=1 / self.speed,
+                            mode="linear", recompute_scale_factor=False).to(h.dtype)
+        mu = torch.cat([h[:, :mel_len1].transpose(1, 2), gen], dim=2).contiguous()
+        mel_len2 = gen.shape[2]
+
+        conds = torch.zeros([1, flow.output_size, mel_len1 + mel_len2], device=mu.device, dtype=mu.dtype)
+        conds[:, :, :mel_len1] = prompt_feat.transpose(1, 2)
+        mask = torch.ones([1, 1, mel_len1 + mel_len2], device=mu.device, dtype=mu.dtype)
+        feat, _ = flow.decoder(mu=mu, mask=mask, spks=embedding, cond=conds, n_timesteps=2,
+                               noised_mels=noise[:, :, :mel_len2], meanflow=s3gen.meanflow)
+        return feat[:, :, mel_len1:]
 
     def _apply_watermark(self, wav):
         """Watermark the whole pass, not each emitted piece: Perth works on a spectrogram and
@@ -165,7 +202,7 @@ class StreamingChatterboxEngine(ChatterboxEngine):
             text_tokens = model.tokenizer(punc_norm(text), return_tensors="pt").input_ids.to(device)
 
             seed = int(torch.randint(0, 2**31 - 1, (1,)).item())
-            noise = torch.randn(1, 80, 2 * 1010, device=device, dtype=model.s3gen.dtype)
+            noise = torch.randn(1, 80, int(2 * 1010 / self.speed) + 2, device=device, dtype=model.s3gen.dtype)
             tokens = []
             sent = 0                # samples already queued
             held = np.zeros(0, np.float32)  # tail kept back to crossfade into the next pass
