@@ -127,7 +127,7 @@ def llama_command(cmdline: list[str], model_path: Optional[str], adapters: list[
 
 
 def default_llama(model_path: str, adapters: list[str]) -> dict:
-    """What executables/_run_llama.cmd runs, for when llama-server has never been seen running.
+    """What tools/_run_llama.cmd runs, for when llama-server has never been seen running.
 
     The vision projector (--mmproj) isn't added: there's no way to tell which one goes with a model.
     Start llama-server once by hand with it and that command line is remembered instead.

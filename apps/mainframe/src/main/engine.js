@@ -1,7 +1,7 @@
 /* Runs the Python side (main.py: Discord and the modules) as a child of the app.
 
    Start/Stop/Restart come from the Engine panel. A main.py started by hand
-   (executables/_run_script.cmd) is noticed through its heartbeat and shown as running, and
+   (tools/_run_script.cmd) is noticed through its heartbeat and shown as running, and
    Stop ends it too, though that script starts it again on its own.
    Every start, stop and crash goes into events.db, which is where uptime comes from.
 */

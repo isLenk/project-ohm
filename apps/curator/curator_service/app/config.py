@@ -25,7 +25,7 @@ REGISTRY_PATH = DATA_DIR / "registry.sqlite"
 ADAPTERS_DIR = DATA_DIR / "adapters"
 RUNS_DIR = DATA_DIR / "runs"
 
-# executables/_run_llama.cmd does `cd ..\..\llama.cpp`, so llama.cpp sits next to the repo.
+# tools/_run_llama.cmd does `cd ..\..\llama.cpp`, so llama.cpp sits next to the repo.
 LLAMA_CPP_DIR = Path(os.getenv("LLAMA_CPP_DIR", REPO_ROOT.parent / "llama.cpp"))
 MODELS_DIR = Path(os.getenv("CURATOR_MODELS_DIR", LLAMA_CPP_DIR / "models"))
 
