@@ -4,13 +4,12 @@ Backend for the Conversation Curator tab in the Ohm interface. The specs live in
 
 ## Run
 
-The Electron app starts this service on its own when it launches. It uses the repo venv (`Scripts\python.exe` on Windows), or `CURATOR_PYTHON` if that is set. It also passes a per-launch token, so other local pages can't call the service.
+The Electron app starts this service on its own when it launches. It runs it from `apps/curator` with the repo's `.venv` (`.venv\Scripts\python.exe` on Windows), or `CURATOR_PYTHON` if that is set. It also passes a per-launch token, so other local pages can't call the service.
 
-To run it by hand while working on it, start it from the repo root:
+Dependencies are in `pyproject.toml` here; `uv sync --all-packages` from the repo root installs them into `.venv`. To run the service by hand while working on it, start it from `apps/curator`:
 
 ```
-pip install -r curator_service/requirements.txt
-python -m uvicorn curator_service.app.main:app --host 127.0.0.1 --port 8200
+uv run python -m uvicorn curator_service.app.main:app --host 127.0.0.1 --port 8200
 ```
 
 When the service runs without `CURATOR_TOKEN`, it accepts calls with no token. If the app finds a service already running on :8200, it uses that one.
@@ -35,9 +34,11 @@ pip install -r curator_service/requirements-train.txt
 
 ## Demo data and tests
 
+From `apps/curator` (or `npm test` from the repo root):
+
 ```
-python -m curator_service.tests.seed ~/Desktop/demo.ohm   # then open it from the Curator tab
-pytest curator_service/tests
+uv run python -m curator_service.tests.seed ~/Desktop/demo.ohm   # then open it from the Curator tab
+uv run pytest curator_service/tests
 ```
 
 The seed script writes rows straight into the database. It is not the importer.

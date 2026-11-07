@@ -45,6 +45,6 @@ Root `.env`: `MEMORY_API_URL=http://<nas-ip>:8100` and `MEMORY_API_KEY=<API_KEY>
 `controller-mainframe/.env`: the same values as `MAIN_VITE_MEMORY_API_URL` / `MAIN_VITE_MEMORY_API_KEY`.
 
 ## Importing old data (once)
-`Scripts\python.exe memory_service\migrate.py --dry-run` then without `--dry-run`.
-Copies characters from `config/constants.py` and `controller-mainframe/characters.db`, and memories from Qdrant
+`.venv\Scripts\python.exe apps\memory\migrate.py --dry-run` then without `--dry-run`.
+Copies characters from `apps/engine/config/constants.py` and `apps/mainframe/characters.db`, and memories from Qdrant
 (`--qdrant http://<host>:6333`, default localhost). Running it twice duplicates memories.
