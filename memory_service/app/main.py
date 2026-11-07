@@ -65,6 +65,15 @@ def run(sql: str, params: Any = None, fetch: str = "all"):
         raise HTTPException(404, f"Referenced row not found: {e.diag.message_detail}")
 
 
+# Tables added after the first deploy. db/init only runs on an empty database, so they're made here too.
+run(
+    "CREATE TABLE IF NOT EXISTS knowledge (id bigserial PRIMARY KEY, title text, content text NOT NULL, "
+    "embedding vector(384) NOT NULL, created_at timestamptz NOT NULL DEFAULT now())",
+    fetch="none",
+)
+run("CREATE INDEX IF NOT EXISTS knowledge_embedding_idx ON knowledge USING hnsw (embedding vector_cosine_ops)", fetch="none")
+
+
 # ── Health ──────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
@@ -270,13 +279,22 @@ def search_memories(s: MemorySearch):
     rows = run(
         """
         WITH candidates AS (
-            SELECT id, content, importance, user_ids, kind, created_at,
-                   1 - (embedding <=> %(q)s) AS similarity
-            FROM memories
-            WHERE character = %(c)s
-              AND (%(u)s::text IS NULL OR %(u)s::text = ANY(user_ids))
-            ORDER BY embedding <=> %(q)s
-            LIMIT %(k)s
+            (SELECT id, content, importance, user_ids, kind, created_at,
+                    1 - (embedding <=> %(q)s) AS similarity
+             FROM memories
+             WHERE character = %(c)s
+               AND (%(u)s::text IS NULL OR %(u)s::text = ANY(user_ids))
+             ORDER BY embedding <=> %(q)s
+             LIMIT %(k)s)
+            UNION ALL
+            -- Lore and shared knowledge never fade, so they rank as important and brand new.
+            (SELECT id, content, 0.8, '{}'::text[], 'lore', now(), 1 - (embedding <=> %(q)s)
+             FROM lore WHERE character = %(c)s AND %(u)s::text IS NULL
+             ORDER BY embedding <=> %(q)s LIMIT 5)
+            UNION ALL
+            (SELECT id, content, 0.8, '{}'::text[], 'knowledge', now(), 1 - (embedding <=> %(q)s)
+             FROM knowledge WHERE %(u)s::text IS NULL
+             ORDER BY embedding <=> %(q)s LIMIT 5)
         )
         SELECT *,
                %(ws)s * similarity
@@ -289,12 +307,9 @@ def search_memories(s: MemorySearch):
         """,
         params,
     )
-    if rows:
-        run(
-            "UPDATE memories SET last_recalled_at = now() WHERE id = ANY(%s)",
-            ([r["id"] for r in rows],),
-            fetch="none",
-        )
+    recalled = [r["id"] for r in rows if r["kind"] not in ("lore", "knowledge")]
+    if recalled:
+        run("UPDATE memories SET last_recalled_at = now() WHERE id = ANY(%s)", (recalled,), fetch="none")
     return rows
 
 
@@ -302,6 +317,125 @@ def search_memories(s: MemorySearch):
 def delete_memory(memory_id: int):
     run("DELETE FROM memories WHERE id = %s", (memory_id,), fetch="none")
     return {"deleted": memory_id}
+
+
+@app.get("/memories", dependencies=auth)
+def list_memories(character: str, user_id: Optional[str] = None, kind: Optional[str] = None, limit: int = 200):
+    """Newest first. With user_id, only memories that involve that person."""
+    return run(
+        """
+        SELECT id, content, importance, user_ids, kind, created_at, last_recalled_at FROM memories
+        WHERE character = %s
+          AND (%s::text IS NULL OR %s::text = ANY(user_ids))
+          AND (%s::text IS NULL OR kind = %s::text)
+        ORDER BY created_at DESC LIMIT %s
+        """,
+        (character, user_id, user_id, kind, kind, min(limit, 1000)),
+    )
+
+
+class Edit(BaseModel):
+    content: Optional[str] = None
+    importance: Optional[float] = Field(None, ge=0, le=1)
+
+
+@app.patch("/memories/{memory_id}", dependencies=auth)
+def edit_memory(memory_id: int, e: Edit):
+    row = run(
+        """
+        UPDATE memories SET content = COALESCE(%s, content), importance = COALESCE(%s, importance),
+                            embedding = COALESCE(%s, embedding)
+        WHERE id = %s RETURNING id, content, importance, user_ids, kind, created_at
+        """,
+        (e.content, e.importance, embed(e.content) if e.content else None, memory_id),
+        "one",
+    )
+    if not row:
+        raise HTTPException(404, "Memory not found")
+    return row
+
+
+# ── Lore (one character) & knowledge (every character) ──────────────────────
+class Note(BaseModel):
+    content: str
+    title: Optional[str] = None
+
+
+@app.get("/lore", dependencies=auth)
+def list_lore(character: str):
+    return run("SELECT id, title, content, created_at FROM lore WHERE character = %s ORDER BY created_at DESC", (character,))
+
+
+@app.post("/lore", dependencies=auth)
+def add_lore(character: str, n: Note):
+    return run(
+        "INSERT INTO lore (character, title, content, embedding) VALUES (%s, %s, %s, %s) "
+        "RETURNING id, title, content, created_at",
+        (character, n.title, n.content, embed(n.content)),
+        "one",
+    )
+
+
+@app.patch("/lore/{lore_id}", dependencies=auth)
+def edit_lore(lore_id: int, n: Note):
+    return _edit_note("lore", lore_id, n)
+
+
+@app.delete("/lore/{lore_id}", dependencies=auth)
+def delete_lore(lore_id: int):
+    run("DELETE FROM lore WHERE id = %s", (lore_id,), fetch="none")
+    return {"deleted": lore_id}
+
+
+@app.get("/knowledge", dependencies=auth)
+def list_knowledge():
+    return run("SELECT id, title, content, created_at FROM knowledge ORDER BY created_at DESC")
+
+
+@app.post("/knowledge", dependencies=auth)
+def add_knowledge(n: Note):
+    return run(
+        "INSERT INTO knowledge (title, content, embedding) VALUES (%s, %s, %s) RETURNING id, title, content, created_at",
+        (n.title, n.content, embed(n.content)),
+        "one",
+    )
+
+
+@app.patch("/knowledge/{knowledge_id}", dependencies=auth)
+def edit_knowledge(knowledge_id: int, n: Note):
+    return _edit_note("knowledge", knowledge_id, n)
+
+
+@app.delete("/knowledge/{knowledge_id}", dependencies=auth)
+def delete_knowledge(knowledge_id: int):
+    run("DELETE FROM knowledge WHERE id = %s", (knowledge_id,), fetch="none")
+    return {"deleted": knowledge_id}
+
+
+def _edit_note(table: str, note_id: int, n: Note):
+    # `table` is one of two literals above, never user input.
+    row = run(
+        f"UPDATE {table} SET content = %s, title = COALESCE(%s, title), embedding = %s "
+        "WHERE id = %s RETURNING id, title, content, created_at",
+        (n.content, n.title, embed(n.content), note_id),
+        "one",
+    )
+    if not row:
+        raise HTTPException(404, "Not found")
+    return row
+
+
+@app.patch("/users/{discord_id}/facts/{fact_id}", dependencies=auth)
+def edit_fact(discord_id: str, fact_id: int, n: Note):
+    row = run(
+        "UPDATE user_facts SET fact = %s, embedding = %s WHERE id = %s AND user_id = %s "
+        "RETURNING id, fact, created_at",
+        (n.content, embed(n.content), fact_id, discord_id),
+        "one",
+    )
+    if not row:
+        raise HTTPException(404, "Fact not found")
+    return row
 
 
 # ── Messages ────────────────────────────────────────────────────────────────

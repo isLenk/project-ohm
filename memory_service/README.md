@@ -9,7 +9,8 @@ Embeddings (all-MiniLM-L6-v2, 384-dim) are created here on the CPU, so the PC do
 3. `docker compose up -d --build`
 4. From the PC: `curl http://<nas-ip>:8100/health`
 
-`db/init/01_schema.sql` only runs when `data/postgres` is empty. To reset everything:
+`db/init/01_schema.sql` only runs when `data/postgres` is empty. Tables added later (`knowledge`) are also created by the API on start.
+After pulling changes to `app/`, rebuild: `docker compose up -d --build api`. To reset everything:
 `docker compose down && rm -rf data/postgres && docker compose up -d`.
 
 ## API (all routes except /health need header `X-API-Key`)
@@ -23,11 +24,16 @@ Embeddings (all-MiniLM-L6-v2, 384-dim) are created here on the CPU, so the PC do
 | GET/POST | /users/{discord_id}/facts | Per-character facts about a user |
 | DELETE | /users/{discord_id}/facts/{id} | Forget a fact (used by the Curator's Forget) |
 | POST | /memories | Store a memory (embedded automatically) |
-| POST | /memories/search | Top memories ranked by similarity, importance, recency |
+| POST | /memories/search | Top memories ranked by similarity, importance, recency, plus the character's lore and shared knowledge (`kind` `lore`/`knowledge`) |
 | DELETE | /memories/{id} | Forget a memory |
 | POST | /messages | Log a chat/voice turn |
 | GET | /messages/recent | Recent history for a character/channel |
 | POST | /logs, /metrics | Logs and generation timings |
+| GET | /memories | List memories for a character, optionally only one person's or one kind |
+| PATCH | /memories/{id} | Edit a memory's text or importance (re-embedded) |
+| GET/POST | /lore?character=, PATCH/DELETE /lore/{id} | What one character knows about itself |
+| GET/POST | /knowledge, PATCH/DELETE /knowledge/{id} | What every character knows. Created on start if the database predates it |
+| PATCH | /users/{discord_id}/facts/{id} | Edit a fact |
 
 Interactive docs: `http://<nas-ip>:8100/docs`
 

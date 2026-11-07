@@ -78,6 +78,15 @@ CREATE TABLE lore (                            -- things the character always kn
 );
 CREATE INDEX ON lore USING hnsw (embedding vector_cosine_ops);
 
+CREATE TABLE knowledge (                       -- things every character knows (the server, games, ...)
+    id           bigserial PRIMARY KEY,
+    title        text,
+    content      text NOT NULL,
+    embedding    vector(384) NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON knowledge USING hnsw (embedding vector_cosine_ops);
+
 -- ── Conversations ─────────────────────────────────────────────────────────
 CREATE TABLE sessions (
     id           bigserial PRIMARY KEY,
