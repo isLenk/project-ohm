@@ -101,3 +101,18 @@ body {
     @apply -mb-px h-10 cursor-pointer border-b-2 border-transparent text-[13px] font-medium text-muted hover:text-gray-100 aria-selected:border-gray-100 aria-selected:text-gray-100;
   }
 }
+
+/* Loaders (components/Loader.tsx) wait a beat before showing, so quick jobs don't flash.
+   The element is there from the start, so it still takes clicks while invisible. */
+@keyframes loader-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.loader-in {
+  animation: loader-in 160ms ease-out 180ms both;
+}

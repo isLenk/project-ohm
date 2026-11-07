@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { LuCheck, LuLoader, LuX } from 'react-icons/lu'
 import { get, post, stream } from './api'
 import { cx, fmtDuration, pct } from './util'
+import { Loading } from '../components/Loader'
 
 const STAGES = [
   ['export', 'Export approved threads to examples'],
@@ -296,7 +297,7 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
           </div>
         )}
 
-        {!run && !pre && <div className="px-6 py-10 text-sm text-muted">Checking…</div>}
+        {!run && !pre && <Loading label="Checking the GPU and training data…" className="px-6" />}
 
         <div className="flex justify-end gap-2 border-t border-[#2f3037] px-6 py-3.5">
           {run && !ended && (

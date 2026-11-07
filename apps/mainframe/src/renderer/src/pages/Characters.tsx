@@ -14,6 +14,7 @@ import PageHeader from '../components/PageHeader'
 import CharacterCard, { ICONS, hasImage } from '../components/CharacterCard'
 import { dialog, followJob, get, post, put } from '../curator/api'
 import { message, useCharacters, usePoll } from '../lib/ohm'
+import { Loading, useBusy } from '../components/Loader'
 
 // Crops an uploaded image to a 256px square so it fits in the character record.
 const toIcon = async (file: File) => {
@@ -42,10 +43,13 @@ const Characters = () => {
     if (!draft && list?.length) setDraft(list.find((c) => c.status === 'Active') ?? list[0])
   }, [list])
 
-  const run = (fn) =>
-    fn()
+  const busy = useBusy()
+  const run = (label, fn) =>
+    busy
+      .run(label, fn)
       .then(() => setError(''))
       .catch((e) => setError(message(e)))
+  const pick = (params) => dialog('showOpenDialog', { properties: ['openFile'], ...params })
 
   const bases = models?.base_models ?? []
   const baseOf = (c) => bases.find((b) => b.id === c?.model?.base_model_id)
@@ -63,7 +67,7 @@ const Characters = () => {
   }
 
   const add = () =>
-    run(async () => {
+    run('Drawing a new card…', async () => {
       const fresh = {
         id: uuidv4(),
         name: 'New Character',
@@ -82,7 +86,7 @@ const Characters = () => {
   /* One card in play at a time: activate this one, deactivate whichever was, and put its
      model on llama-server (switching the adapter live, or restarting it for a new base). */
   const play = (c) =>
-    run(async () => {
+    run(`Putting ${c.name} in play…`, async (relabel) => {
       await Promise.all(
         characters
           .filter((x) => (x.id === c.id) !== (x.status === 'Active'))
@@ -103,7 +107,7 @@ const Characters = () => {
         )
         return
       }
-      setNote(`Restarting llama-server on ${modelLabel(c)}…`)
+      relabel(`Restarting llama-server on ${modelLabel(c)}…`)
       const job = await post('/llm/restart')
       const result = await followJob(job.id, () => {})
       setNote(
@@ -113,30 +117,31 @@ const Characters = () => {
       )
     })
 
-  const remove = () =>
-    run(async () => {
-      const { response } = await window.api.openDialog('showMessageBox', {
-        type: 'warning',
-        title: 'Delete Character',
-        message: `Delete ${draft.name}?`,
-        detail:
-          'This also deletes all of their memories, facts and chat history. This cannot be undone.',
-        buttons: ['Delete', 'Cancel'],
-        defaultId: 1,
-        cancelId: 1
-      })
-      if (response !== 0) return
+  const remove = async () => {
+    const { response } = await window.api.openDialog('showMessageBox', {
+      type: 'warning',
+      title: 'Delete Character',
+      message: `Delete ${draft.name}?`,
+      detail:
+        'This also deletes all of their memories, facts and chat history. This cannot be undone.',
+      buttons: ['Delete', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1
+    })
+    if (response !== 0) return
+    run(`Deleting ${draft.name}…`, async () => {
       await window.api.deleteCharacter(draft.id)
       setList((l) => l.filter((c) => c.id !== draft.id))
       setDraft(null)
     })
+  }
 
   const edit = (changes) => setDraft({ ...draft, ...changes })
   const editModel = (changes) => edit({ model: { ...draft.model, ...changes } })
 
   // Status is owned by "Play this card", so take the current one rather than the draft's.
   const saveDraft = () =>
-    run(async () => {
+    run('Saving…', async () => {
       const saved = await save({
         ...draft,
         status: characters.find((c) => c.id === draft.id)?.status
@@ -145,47 +150,39 @@ const Characters = () => {
       setNote('Saved.')
     })
 
-  const pickBase = (value) =>
-    run(async () => {
-      if (value !== IMPORT) return editModel({ base_model_id: value || null, adapter_id: null })
-      const r = await dialog('showOpenDialog', {
-        properties: ['openFile'],
-        filters: [{ name: 'GGUF model', extensions: ['gguf'] }]
-      })
-      if (r.canceled) return
+  const pickBase = async (value) => {
+    if (value !== IMPORT) return editModel({ base_model_id: value || null, adapter_id: null })
+    const r = await pick({ filters: [{ name: 'GGUF model', extensions: ['gguf'] }] })
+    if (r.canceled) return
+    run(`Adding ${fileName(r.filePaths[0])}…`, async () => {
       const after = await post('/models/base', { gguf_path: r.filePaths[0] })
       const added =
         after.base_models.find((b) => b.gguf_path.toLowerCase() === r.filePaths[0].toLowerCase()) ??
         after.base_models.at(-1)
       editModel({ base_model_id: added.id, adapter_id: null })
     })
+  }
 
-  const pickAdapter = (value) =>
-    run(async () => {
-      if (value !== IMPORT) return editModel({ adapter_id: value || null })
-      const r = await dialog('showOpenDialog', {
-        properties: ['openFile'],
-        filters: [{ name: 'LoRA adapter (GGUF)', extensions: ['gguf'] }]
-      })
-      if (r.canceled) return
+  const pickAdapter = async (value) => {
+    if (value !== IMPORT) return editModel({ adapter_id: value || null })
+    const r = await pick({ filters: [{ name: 'LoRA adapter (GGUF)', extensions: ['gguf'] }] })
+    if (r.canceled) return
+    run(`Adding ${fileName(r.filePaths[0])}…`, async () => {
       const after = await post('/models/adapters', {
         path: r.filePaths[0],
         base_model_id: draft.model.base_model_id
       })
       editModel({ adapter_id: after.adapters[0].id })
     })
+  }
 
-  const attachProject = () =>
-    run(async () => {
-      const r = await dialog('showOpenDialog', {
-        properties: ['openFile'],
-        filters: [{ name: 'Ohm project', extensions: ['ohm'] }]
-      })
-      if (!r.canceled) editModel({ ohm_path: r.filePaths[0] })
-    })
+  const attachProject = async () => {
+    const r = await pick({ filters: [{ name: 'Ohm project', extensions: ['ohm'] }] })
+    if (!r.canceled) editModel({ ohm_path: r.filePaths[0] })
+  }
 
   const openProject = () =>
-    run(async () => {
+    run(`Opening ${fileName(draft.model.ohm_path)}…`, async () => {
       await post('/project/open', { path: draft.model.ohm_path })
       navigate('/curator')
     })
@@ -217,6 +214,7 @@ const Characters = () => {
           aria-label="Deck"
           className="grid min-w-0 flex-[999_1_520px] grid-cols-[repeat(auto-fill,minmax(180px,1fr))] content-start gap-x-6 gap-y-7 px-8 pt-7 pb-10"
         >
+          {!list && <Loading label="Loading characters…" className="col-span-full" />}
           {characters.map((c) => (
             <CharacterCard
               key={c.id}
@@ -407,6 +405,7 @@ const Characters = () => {
           </aside>
         )}
       </div>
+      {busy.overlay}
     </>
   )
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { LuEye, LuEyeOff, LuFolderOpen, LuLock } from 'react-icons/lu'
 import { dialog } from '../curator/api'
 import { message, useEngine } from '../lib/ohm'
+import { Loading, useBusy } from '../components/Loader'
 
 /* Each field is an environment variable the Python side or the curator service reads.
    Saved values go to settings.json and are passed to main.py and curator_service when they start.
@@ -114,8 +115,11 @@ const Settings = () => {
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
   const [section, setSection] = useState('runtime')
+  const [ready, setReady] = useState(false)
+  const busy = useBusy()
 
   const load = (s) => {
+    setReady(true)
     setValues(s.values)
     setSaved(s.values)
     setSecretsSet(s.secretsSet || [])
@@ -123,25 +127,30 @@ const Settings = () => {
     setFile(s.file)
   }
   useEffect(() => {
-    window.api.getSettings().then(load)
+    window.api
+      .getSettings()
+      .then(load)
+      .catch((e) => (setError(message(e)), setReady(true)))
   }, [])
 
   const dirty = Object.keys(values).some((k) => values[k] !== saved[k])
   const set = (key: string, value: string | null) => setValues({ ...values, [key]: value })
 
-  const save = async (restart: boolean) => {
-    try {
-      load(await window.api.saveSettings(values))
-      if (restart && engine?.state === 'running') {
-        await window.api.restartEngine()
-        setNote('Saved. The engine restarted with the new settings.')
-      } else
-        setNote(engine?.state === 'running' ? 'Saved. Restart the engine to use them.' : 'Saved.')
-      setError('')
-    } catch (e) {
-      setError(message(e))
-    }
-  }
+  const save = (restart: boolean) =>
+    busy.run('Saving settings…', async (relabel) => {
+      try {
+        load(await window.api.saveSettings(values))
+        if (restart && engine?.state === 'running') {
+          relabel('Restarting the engine…')
+          await window.api.restartEngine()
+          setNote('Saved. The engine restarted with the new settings.')
+        } else
+          setNote(engine?.state === 'running' ? 'Saved. Restart the engine to use them.' : 'Saved.')
+        setError('')
+      } catch (e) {
+        setError(message(e))
+      }
+    })
 
   // Sections with edits not saved yet get a dot in the nav, since only one section shows at a time.
   const edited = (id: string) =>
@@ -202,7 +211,8 @@ const Settings = () => {
 
         <div className="px-8 pb-14">
           <div className="max-w-[840px]">
-            {current && (
+            {!ready && <Loading label="Loading settings…" />}
+            {ready && current && (
               <section key={current.id} className="pt-7">
                 <h2 className="mb-1 text-[15px] font-semibold">{current.title}</h2>
                 <p className="mb-1.5 text-[12.5px] text-muted">{current.sub}</p>
@@ -244,6 +254,7 @@ const Settings = () => {
           </div>
         </div>
       </main>
+      {busy.overlay}
     </div>
   )
 }

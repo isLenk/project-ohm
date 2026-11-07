@@ -10,6 +10,7 @@ import {
   LuVolume2
 } from 'react-icons/lu'
 import PageHeader from './PageHeader'
+import { Loading, Spinner } from './Loader'
 import { message, moduleName, useEngine, usePoll, type Module } from '../lib/ohm'
 
 // Keyed by the module folder name the Python side registers with.
@@ -24,9 +25,10 @@ const ICON = {
 const Modules = () => {
   const engine = useEngine()
   const [tick, setTick] = useState(0)
-  const { data } = usePoll<Module[]>(() => window.api.listModules(), 3000, [tick])
+  const { data, error: loadError } = usePoll<Module[]>(() => window.api.listModules(), 3000, [tick])
   const [changed, setChanged] = useState(false) // toggled while the engine was running
   const [error, setError] = useState('')
+  const [restarting, setRestarting] = useState(false)
   const modules = data ?? []
   const running = engine?.state === 'running'
 
@@ -67,9 +69,16 @@ const Modules = () => {
           </span>
           <button
             className="btn"
-            onClick={() => act(async () => (await window.api.restartEngine(), setChanged(false)))}
+            disabled={restarting}
+            onClick={() => {
+              setRestarting(true)
+              act(async () => (await window.api.restartEngine(), setChanged(false))).finally(() =>
+                setRestarting(false)
+              )
+            }}
           >
-            <LuRotateCcw /> Restart engine
+            {restarting ? <Spinner /> : <LuRotateCcw />}
+            {restarting ? 'Restarting…' : 'Restart engine'}
           </button>
         </div>
       )}
@@ -77,6 +86,8 @@ const Modules = () => {
 
       <div className="px-8 pt-2 pb-12">
         <div className="max-w-[900px]">
+          {!data && !loadError && <Loading label="Loading modules…" />}
+          {!data && loadError && <p className="py-10 text-sm text-bad">{loadError}</p>}
           {modules.map((m) => {
             const Icon = ICON[m.name] ?? LuPuzzle
             const [text, dot] = status(m)

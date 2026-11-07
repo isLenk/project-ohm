@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { LuDownload, LuPlay, LuRotateCcw, LuSquare, LuUpload } from 'react-icons/lu'
 import { followJob, get, post } from '../curator/api'
 import { message, moduleName, since, useEngine, usePoll } from '../lib/ohm'
+import { Spinner } from './Loader'
 
 /* The two halves of the engine, which are separate processes today:
    the model (llama-server, through curator_service) and the Python side (main.py, run by the app). */
@@ -71,7 +72,12 @@ const EnginePanel = ({ llm: first, onClose }) => {
       >
         <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
           <h2 className="flex-1 text-sm font-semibold">Engine</h2>
-          {busy && <span className="text-xs text-warn">{busy}</span>}
+          {busy && (
+            <span role="status" className="flex items-center gap-1.5 text-xs text-warn">
+              <Spinner className="size-3.5" />
+              {busy}
+            </span>
+          )}
         </div>
 
         <section className="flex flex-col gap-2.5 border-b border-line px-4 py-3.5">

@@ -3,6 +3,7 @@ import { LuCheck, LuLink, LuPencil, LuTrash2, LuUndo2 } from 'react-icons/lu'
 import { get, patch, post, stream } from './api'
 import { Avatar, BotTag } from './Avatar'
 import { cx, fmtTime, pct } from './util'
+import { Loading, Spinner } from '../components/Loader'
 
 type Person = {
   author_id: string
@@ -57,6 +58,10 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
   const [jobId, setJobId] = useState<string | null>(null)
   const [stopping, setStopping] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  const [peopleLoaded, setPeopleLoaded] = useState(false)
+  // Which person and tab `mems` was fetched for; until it matches, the list is still loading.
+  const [memsFor, setMemsFor] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   const loadPeople = useCallback(async () => {
     try {
@@ -65,6 +70,8 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
       if (!selected && r.people.length) onSelect(r.people.find((p) => !p.is_bot)?.author_id || r.people[0].author_id)
     } catch (e) {
       onError(e)
+    } finally {
+      setPeopleLoaded(true)
     }
   }, [selected, onSelect, onError])
 
@@ -75,6 +82,8 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
       setMems(r.memories)
     } catch (e) {
       onError(e)
+    } finally {
+      setMemsFor(`${selected}:${tab}`)
     }
   }, [selected, tab, onError])
 
@@ -185,21 +194,25 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
   }
 
   const sync = async () => {
+    setSyncing(true)
     try {
       const r = await post('/memories/sync')
       setNote(r.failed ? `Synced ${r.synced}. ${r.failed} failed; is the NAS reachable?` : `Synced ${r.synced} memories to the memory service.`)
       onDirty()
     } catch (e) {
       onError(e)
+    } finally {
+      setSyncing(false)
     }
   }
+  const memsLoading = memsFor !== `${selected}:${tab}`
 
   const person = people.find((p) => p.author_id === selected)
   const shown = people.filter((p) => (p.display_name || p.name).toLowerCase().includes(filter.toLowerCase()))
 
   return (
     <div className="flex min-h-0 flex-1 flex-wrap">
-      <nav aria-label="People" className="flex w-[300px] max-w-full flex-col border-r border-[#2f3037]">
+      <nav aria-label="People" className="flex h-full w-[300px] max-w-full flex-col border-r border-[#2f3037]">
         <div className="flex flex-col gap-3 p-5">
           <p className="text-[12.5px] leading-relaxed text-muted">
             What Ohm picked up about each person. Kept memories go to the memory service, not into the LoRA.
@@ -224,13 +237,19 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
                 Read messages for memories
               </button>
             )}
-            <button onClick={sync} className="rounded-md border border-line px-2 py-1.5 text-xs hover:bg-raised">
-              Sync kept
+            <button
+              onClick={sync}
+              disabled={syncing}
+              className="flex items-center gap-1.5 rounded-md border border-line px-2 py-1.5 text-xs hover:bg-raised disabled:opacity-60"
+            >
+              {syncing && <Spinner className="size-3.5" />}
+              {syncing ? 'Syncing…' : 'Sync kept'}
             </button>
           </div>
           {note && <p className="text-xs text-muted">{note}</p>}
         </div>
         <div className="min-h-0 flex-1 overflow-auto">
+          {!peopleLoaded && <Loading label="Loading people…" />}
           {shown.map((p) => (
             <button
               key={p.author_id}
@@ -254,9 +273,11 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
         </div>
       </nav>
 
-      <main className="min-w-0 flex-[999_1_480px] overflow-auto px-10 pb-12">
+      <main className="h-full min-w-0 flex-[999_1_480px] overflow-auto px-10 pb-12">
         {!person ? (
-          <div className="py-24 text-center text-sm text-muted">No people yet.</div>
+          peopleLoaded ? (
+            <div className="py-24 text-center text-sm text-muted">No people yet.</div>
+          ) : null
         ) : (
           <div className="max-w-[860px]">
             <header className="flex flex-wrap items-center gap-4 pt-7 pb-5">
@@ -326,7 +347,8 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
               </form>
             )}
 
-            {GROUPS.map(([cat, title]) => {
+            {memsLoading && <Loading label="Loading memories…" />}
+            {!memsLoading && GROUPS.map(([cat, title]) => {
               const list = mems.filter((m) => m.category === cat)
               if (!list.length) return null
               return (
@@ -423,7 +445,7 @@ export default function MemoriesView({ selected, onSelect, onDirty, onError, ope
                 </section>
               )
             })}
-            {!mems.length && (
+            {!memsLoading && !mems.length && (
               <p className="py-10 text-sm text-muted">
                 {tab === 'new' ? 'Nothing new. Use “Read messages for memories” to look for more.' : `No ${tab} memories.`}
               </p>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { LuCheck, LuChevronDown, LuPlus, LuSave } from 'react-icons/lu'
 import { CuratorError, dialog, followJob, get, patch, post, put } from './api'
 import { cx } from './util'
+import { Spinner } from '../components/Loader'
 
 function useOutside(open: boolean, close: () => void) {
   const ref = useRef<HTMLDivElement>(null)
@@ -39,6 +40,20 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
   const [weights, setWeights] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [restart, setRestart] = useState(false)
+  // Adding, switching, restarting or downloading. The status line says which.
+  const [working, setWorking] = useState(false)
+  const work = async (fn: () => Promise<void>) => {
+    setWorking(true)
+    try {
+      await fn()
+    } catch (e) {
+      setStatus(null)
+      if (e instanceof CuratorError && e.code === 'choose_file') setHfFiles(e.extra.files)
+      else onError(e)
+    } finally {
+      setWorking(false)
+    }
+  }
   const close = useCallback(() => setOpen(false), [])
   const ref = useOutside(open, close)
 
@@ -58,55 +73,49 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
   const adapter = m?.adapters.find((a) => a.id === m.active.adapter_id)
   const adapters = m?.adapters.filter((a) => a.base_model_id === base?.id) || []
 
-  const activate = async (base_model_id: string, adapter_id: string | null) => {
-    try {
+  const activate = (base_model_id: string, adapter_id: string | null) =>
+    work(async () => {
+      setStatus('Switching models…')
       const r = await put('/models/active', { base_model_id, adapter_id })
       setM(r)
       setRestart(r.needs_restart)
       setStatus(r.applied ? 'Applied to the running llama-server.' : r.needs_restart ? null : 'llama-server is not running; this applies next time it starts.')
-    } catch (e) {
-      onError(e)
-    }
-  }
+    })
 
-  const doRestart = async () => {
-    try {
-      const j = await post('/llm/restart')
+  const doRestart = () =>
+    work(async () => {
       setStatus('Restarting llama-server…')
-      await followJob(j.id, (p) => setStatus(p.note))
+      const j = await post('/llm/restart')
+      await followJob(j.id, (p) => setStatus(p.note || 'Restarting llama-server…'))
       setRestart(false)
       setStatus('llama-server restarted with the adapter loaded.')
       load()
-    } catch (e) {
-      onError(e)
-    }
-  }
+    })
 
   const importFile = async (kind: 'base' | 'adapter') => {
     const r = await dialog('showOpenDialog', { properties: ['openFile'], filters: [{ name: 'GGUF', extensions: ['gguf'] }] })
     if (r.canceled || !r.filePaths?.[0]) return
-    try {
-      if (kind === 'base') setM(await post('/models/base', { gguf_path: r.filePaths[0] }))
-      else if (base) setM(await post('/models/adapters', { path: r.filePaths[0], base_model_id: base.id }))
-    } catch (e) {
-      onError(e)
-    }
+    const path = r.filePaths[0]
+    work(async () => {
+      setStatus(`Adding ${path.split(/[\\/]/).pop()}…`)
+      if (kind === 'base') setM(await post('/models/base', { gguf_path: path }))
+      else if (base) setM(await post('/models/adapters', { path, base_model_id: base.id }))
+      setStatus('Added.')
+    })
   }
 
-  const fromHf = async (filename?: string) => {
+  const fromHf = (filename?: string) => {
     if (!hf?.trim()) return
-    try {
+    return work(async () => {
+      setStatus('Looking up the repo…')
       const j = await post('/models/base/hf', { repo_id: hf.trim(), filename })
       setHfFiles([])
       setStatus('Downloading…')
-      await followJob(j.id, (p) => setStatus(p.note))
+      await followJob(j.id, (p) => setStatus(p.note || 'Downloading…'))
       setHf(null)
       setStatus('Downloaded.')
       load()
-    } catch (e) {
-      if (e instanceof CuratorError && e.code === 'choose_file') setHfFiles(e.extra.files)
-      else onError(e)
-    }
+    })
   }
 
   return (
@@ -121,7 +130,7 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
         <span className="truncate font-mono text-[11px] text-muted">
           {base?.quant} · {adapter ? adapter.name : 'no adapter'}
         </span>
-        <LuChevronDown className="size-4 text-muted" />
+        {working ? <Spinner className="size-4 text-muted" /> : <LuChevronDown className="size-4 text-muted" />}
       </button>
       {open && m && (
         <div role="listbox" className="absolute top-11 left-0 z-40 w-[460px] rounded-md border border-[#3a3b42] bg-[#1d1e22] py-1 text-sm shadow-none">
@@ -195,7 +204,12 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
               </button>
             </div>
           )}
-          {status && <div className="px-3.5 py-1.5 text-xs text-muted">{status}</div>}
+          {status && (
+            <div role="status" className="flex items-center gap-2 px-3.5 py-1.5 text-xs text-muted">
+              {working && <Spinner className="size-3.5" />}
+              {status}
+            </div>
+          )}
           <div className="my-1 h-px bg-[#2f3037]" />
           <div className="px-3.5 pt-2 pb-1 text-[11.5px] text-muted">Add new</div>
           <button onClick={() => importFile('base')} className="flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-menu-hover">

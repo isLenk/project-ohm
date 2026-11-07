@@ -13,6 +13,7 @@ import SearchPalette from './SearchPalette'
 import TrainModal from './TrainModal'
 import { ModelMenu, SaveMenu } from './Menus'
 import { approveHover, color, cx, fmtDay, fmtDuration, fmtRange, pct } from './util'
+import { LoadingOverlay, Spinner, useBusy } from '../components/Loader'
 
 type View = 'threads' | 'raw' | 'memories'
 type Filter = 'all' | 'approved' | 'archived'
@@ -37,6 +38,7 @@ const ROW_HEIGHT = 72
 const OHM_FILTER = [{ name: 'Ohm project', extensions: ['ohm'] }]
 // DiscordChatExporter .json, a messages.jsonl dump, and the speakers.json that comes with it.
 const IMPORT_FILTER = [{ name: 'Discord export', extensions: ['json', 'jsonl'] }]
+const fileName = (path: string) => path.split(/[\\/]/).pop()
 
 export default function CuratorPage() {
   const feed = useFeed()
@@ -83,6 +85,8 @@ export default function CuratorPage() {
   }
 
   const markDirty = useCallback(() => setProject((p) => (p ? { ...p, dirty: true } : p)), [])
+  // Opening, saving and anything else slow runs behind the window-wide loader.
+  const busy = useBusy()
   const history = useHistory(onError, say)
 
   // Set when a project opens or an import lands: the feed then starts at the top of the list
@@ -99,14 +103,14 @@ export default function CuratorPage() {
       if (openAtTop.current) {
         openAtTop.current = false
         const top = r.conversations[0]
-        feed.reset(top?.first_message_id, top ? 'top' : true)
+        await feed.reset(top?.first_message_id, top ? 'top' : true)
       }
     } catch (e) {
       if (!(e instanceof CuratorError && e.code === 'no_project')) onError(e)
       if (filterNow.current === filter) setConvsFor(filter) // don't spin forever; the error banner explains
       if (openAtTop.current) {
         openAtTop.current = false
-        feed.reset()
+        await feed.reset().catch(() => {}) // the error banner already explains
       }
     }
   }, [filter, onError]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -159,23 +163,27 @@ export default function CuratorPage() {
   }, [filter, project?.open, loadConvs])
 
   // ── project file ────────────────────────────────────────────────────────
-  const opened = (p: any) => {
+  /** Show a project that just opened. Resolves once its list and feed are in. */
+  const opened = async (p: any) => {
     setProject({ open: true, ...p })
     history.clear()
     openAtTop.current = true
     setConvsFor(null)
-    loadConvs()
+    await loadConvs()
   }
 
-  const openPath = async (path: string, recoverChoice?: boolean) => {
-    try {
-      opened(await post('/project/open', { path, recover: recoverChoice ?? null }))
-      setRecover(null)
-    } catch (e) {
-      if (e instanceof CuratorError && e.code === 'recovery_available') setRecover(path)
-      else onError(e)
-    }
-  }
+  const openPath = (path: string, recoverChoice?: boolean) =>
+    busy.run(recoverChoice ? 'Restoring unsaved changes…' : `Opening ${fileName(path)}…`, async (relabel) => {
+      try {
+        const p = await post('/project/open', { path, recover: recoverChoice ?? null })
+        setRecover(null)
+        relabel('Loading conversations…')
+        await opened(p)
+      } catch (e) {
+        if (e instanceof CuratorError && e.code === 'recovery_available') setRecover(path)
+        else onError(e)
+      }
+    })
 
   const openProject = async () => {
     const r = await dialog('showOpenDialog', { properties: ['openFile'], filters: OHM_FILTER })
@@ -185,44 +193,54 @@ export default function CuratorPage() {
   const newProject = async () => {
     const r = await dialog('showSaveDialog', { title: 'New Curator project', defaultPath: 'conversations.ohm', filters: OHM_FILTER })
     if (r.canceled || !r.filePath) return
-    try {
-      opened(await post('/project/new', { path: r.filePath }))
-    } catch (e) {
-      onError(e)
-    }
+    await busy.run('Creating project…', async () => {
+      try {
+        await opened(await post('/project/new', { path: r.filePath }))
+      } catch (e) {
+        onError(e)
+      }
+    })
   }
 
-  const save = useCallback(async () => {
-    try {
-      const r = await post('/project/save')
-      setProject((p) => (p ? { ...p, dirty: false, saved_at: r.saved_at } : p))
-      say('Saved')
-    } catch (e) {
-      onError(e)
-    }
-  }, [onError])
+  const save = useCallback(
+    () =>
+      busy.run('Saving…', async () => {
+        try {
+          const r = await post('/project/save')
+          setProject((p) => (p ? { ...p, dirty: false, saved_at: r.saved_at } : p))
+          say('Saved')
+        } catch (e) {
+          onError(e)
+        }
+      }),
+    [onError, busy.run] // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   const saveAs = useCallback(async () => {
     const r = await dialog('showSaveDialog', { title: 'Save project to file', defaultPath: project?.path, filters: OHM_FILTER })
     if (r.canceled || !r.filePath) return
-    try {
-      const s = await post('/project/save-as', { path: r.filePath })
-      setProject((p) => (p ? { ...p, dirty: false, saved_at: s.saved_at, path: s.path } : p))
-      say('Saved')
-    } catch (e) {
-      onError(e)
-    }
-  }, [project?.path, onError])
+    await busy.run(`Saving to ${fileName(r.filePath)}…`, async () => {
+      try {
+        const s = await post('/project/save-as', { path: r.filePath })
+        setProject((p) => (p ? { ...p, dirty: false, saved_at: s.saved_at, path: s.path } : p))
+        say('Saved')
+      } catch (e) {
+        onError(e)
+      }
+    })
+  }, [project?.path, onError, busy.run]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const exportJsonl = async () => {
     const r = await dialog('showSaveDialog', { title: 'Export approved conversations', defaultPath: 'training.jsonl', filters: [{ name: 'JSONL', extensions: ['jsonl'] }] })
     if (r.canceled || !r.filePath) return
-    try {
-      const out = await post('/export/jsonl', { path: r.filePath })
-      say(`Exported ${out.examples} examples`)
-    } catch (e) {
-      onError(e)
-    }
+    await busy.run('Exporting approved conversations…', async () => {
+      try {
+        const out = await post('/export/jsonl', { path: r.filePath })
+        say(`Exported ${out.examples} examples`)
+      } catch (e) {
+        onError(e)
+      }
+    })
   }
 
   // ── edits & undo ────────────────────────────────────────────────────────
@@ -401,27 +419,29 @@ export default function CuratorPage() {
   })
 
   // ── join a conversation onto the one before it ──────────────────────────
-  const mergeUp = async (c: ConversationStats) => {
-    try {
-      const { aboveWas, ownWas } = mergeApprovals(c)
-      const s = await doMerge(c.id, c.first_message_id)
-      history.record(mergeUndo(c.first_message_id, aboveWas, ownWas))
-      say(`Merged into one conversation · ${s.messages} messages, ${s.people} people. Ctrl+Z undoes it.`)
-    } catch (e) {
-      onError(e)
-    }
-  }
+  const mergeUp = (c: ConversationStats) =>
+    busy.run('Merging conversations…', async () => {
+      try {
+        const { aboveWas, ownWas } = mergeApprovals(c)
+        const s = await doMerge(c.id, c.first_message_id)
+        history.record(mergeUndo(c.first_message_id, aboveWas, ownWas))
+        say(`Merged into one conversation · ${s.messages} messages, ${s.people} people. Ctrl+Z undoes it.`)
+      } catch (e) {
+        onError(e)
+      }
+    })
 
   // ── start a new conversation at a message ───────────────────────────────
-  const splitAt = async (messageId: string) => {
-    try {
-      const { after, was } = await doSplit(messageId)
-      if (after) history.record(splitUndo(after, was))
-      say('Split into a new conversation. Ctrl+Z undoes it.')
-    } catch (e) {
-      onError(e)
-    }
-  }
+  const splitAt = (messageId: string) =>
+    busy.run('Splitting conversation…', async () => {
+      try {
+        const { after, was } = await doSplit(messageId)
+        if (after) history.record(splitUndo(after, was))
+        say('Split into a new conversation. Ctrl+Z undoes it.')
+      } catch (e) {
+        onError(e)
+      }
+    })
 
   // ── model guesses for every unattached block in the project ─────────────
   const followGuessAll = useCallback(
@@ -625,7 +645,12 @@ export default function CuratorPage() {
   }, [project?.open])
 
   // ── no project yet ──────────────────────────────────────────────────────
-  if (!project) return <div className="grid h-full place-items-center text-sm text-muted">Starting the curator…</div>
+  if (!project)
+    return (
+      <div role="status" className="flex h-full items-center justify-center gap-2.5 text-sm text-muted">
+        <Spinner /> Starting the curator…
+      </div>
+    )
   if (!project.open) {
     return (
       <div className="grid h-full place-items-center p-8">
@@ -646,7 +671,12 @@ export default function CuratorPage() {
             <div className="mt-8">
               <div className="text-xs text-muted">Recent</div>
               {project.recent.map((r) => (
-                <button key={r} onClick={() => openPath(r)} className="block w-full truncate py-1.5 text-left font-mono text-[12.5px] text-gray-300 hover:text-white">
+                <button
+                  key={r}
+                  onClick={() => openPath(r)}
+                  disabled={!!busy.label}
+                  className="block w-full truncate py-1.5 text-left font-mono text-[12.5px] text-gray-300 hover:text-white disabled:opacity-60"
+                >
                   {r}
                 </button>
               ))}
@@ -664,6 +694,7 @@ export default function CuratorPage() {
             onSecondary={() => openPath(recover, false)}
           />
         )}
+        {busy.overlay}
       </div>
     )
   }
@@ -808,7 +839,7 @@ export default function CuratorPage() {
               importing ? 'px-3' : 'w-9 justify-center'
             )}
           >
-            <LuFilePlus className="size-4 shrink-0" />
+            {importing ? <Spinner /> : <LuFilePlus className="size-4 shrink-0" />}
             {importing && <span className="max-w-[320px] truncate text-muted">{importing}</span>}
           </button>
           <button
@@ -900,7 +931,7 @@ export default function CuratorPage() {
                 title="Ask the local model which message each unattached block replies to"
                 className="flex h-9 items-center gap-2 rounded-md border border-line px-3.5 text-[13px] hover:bg-raised disabled:opacity-60"
               >
-                <LuSparkles className="size-4" /> {guessing || 'Guess with model'}
+                {guessing ? <Spinner /> : <LuSparkles className="size-4" />} {guessing || 'Guess with model'}
               </button>
             )}
             {c.suggested > 0 && <span className="text-[12.5px] text-muted">{c.suggested} suggested</span>}
@@ -939,34 +970,39 @@ export default function CuratorPage() {
           </section>
         )}
 
-        {view === 'threads' && (
-          <ThreadsView
-            feed={feed}
-            onEdit={onEdit}
-            onError={onError}
-            onCurrent={setCurrent}
-            onMerge={mergeUp}
-            onSplit={splitAt}
-            currentId={c?.id}
-            approvingId={approvingId}
-            onApproving={setApprovingId}
-            onApprove={approve}
-            hideBots={hideBots}
-          />
-        )}
-        {view === 'raw' && (
-          <RawView
-            feed={feed}
-            onSplit={splitAt}
-            onMerge={mergeUp}
-            onError={onError}
-            openInThreads={(id) => jumpTo(id, 'threads')}
-            currentId={c?.id}
-            approvingId={approvingId}
-            onApproving={setApprovingId}
-            onApprove={approve}
-            hideBots={hideBots}
-          />
+        {view !== 'memories' && (
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            {view === 'threads' && (
+              <ThreadsView
+                feed={feed}
+                onEdit={onEdit}
+                onError={onError}
+                onCurrent={setCurrent}
+                onMerge={mergeUp}
+                onSplit={splitAt}
+                currentId={c?.id}
+                approvingId={approvingId}
+                onApproving={setApprovingId}
+                onApprove={approve}
+                hideBots={hideBots}
+              />
+            )}
+            {view === 'raw' && (
+              <RawView
+                feed={feed}
+                onSplit={splitAt}
+                onMerge={mergeUp}
+                onError={onError}
+                openInThreads={(id) => jumpTo(id, 'threads')}
+                currentId={c?.id}
+                approvingId={approvingId}
+                onApproving={setApprovingId}
+                onApprove={approve}
+                hideBots={hideBots}
+              />
+            )}
+            {feed.loading && <LoadingOverlay area label="Loading messages…" />}
+          </div>
         )}
         {view === 'memories' && (
           <MemoriesView selected={person} onSelect={setPerson} onDirty={markDirty} onError={onError} openMessage={(id) => jumpTo(id, 'threads')} />
@@ -1026,6 +1062,7 @@ export default function CuratorPage() {
           )}
         </div>
       )}
+      {busy.overlay}
     </div>
   )
 }
