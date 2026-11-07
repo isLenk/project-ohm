@@ -10,6 +10,7 @@ It should load messages/authors/blocks, then call conversations.rebuild and thre
 import json
 import os
 import secrets
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -611,15 +612,84 @@ def models_active(b: ActiveBody):
     return {**_models(), "applied": applied, "needs_restart": bool(llama) and not applied}
 
 
-@app.post("/llm/restart")
-def llm_restart():
-    """Restart llama-server on the active model with every adapter for it loaded."""
-    reg = get_registry()
+def _active_model(reg) -> tuple[dict, dict, list[str]]:
+    """The active base model, the active selection, and every adapter trained for that base."""
     act = reg.get("active", {}) or {}
     if not act.get("base_model_id"):
         raise ApiError(409, "no_model", "Pick a model first.")
     base = reg.base(act["base_model_id"])
-    llama = gpu.running_llama()
+    adapters = [a["gguf_path"] for a in reg.all("SELECT gguf_path FROM adapters WHERE base_model_id = ?", (base["id"],))]
+    return base, act, adapters
+
+
+def _remember(llama: Optional[dict]) -> Optional[dict]:
+    """Keep the last command llama-server ran with, so Load can start it the same way after Unload."""
+    if llama:
+        get_registry().put("llama_last", {"name": llama["name"], "cwd": llama["cwd"], "cmdline": llama["cmdline"]})
+    return llama
+
+
+@app.get("/llm/status")
+def llm_status():
+    reg = get_registry()
+    llama = _remember(gpu.running_llama())
+    status = gpu.status()
+    used = None
+    if llama and status:
+        used = next((p["used_gb"] for p in status["processes"] if p["pid"] == llama["pid"]), None)
+    return {
+        "running": bool(llama),
+        "ready": llm.up(),
+        "pid": llama["pid"] if llama else None,
+        "uptime_s": gpu.uptime(llama["pid"]) if llama else None,
+        "model_path": _model_arg(llama),
+        "adapters": (gpu.loaded_adapters() or []) if llama else [],
+        "active": reg.get("active", {"base_model_id": None, "adapter_id": None}),
+        "vram": {"used_gb": used, "total_gb": status["total_gb"]} if status else None,
+    }
+
+
+@app.post("/llm/start")
+def llm_start():
+    """Start llama-server on the active model, the way it last ran (or like _run_llama.cmd)."""
+    if gpu.running_llama():
+        raise ApiError(409, "llm_running", "llama-server is already running.")
+    reg = get_registry()
+    base, act, adapters = _active_model(reg)
+    snap = reg.get("llama_last") or gpu.default_llama(base["gguf_path"], adapters)
+    if not Path(snap["cmdline"][0]).exists() and not shutil.which(snap["cmdline"][0]):
+        raise ApiError(409, "no_llama", f"Can't find llama-server at {snap['cmdline'][0]}. Set LLAMA_CPP_DIR in Settings.")
+    cmdline = gpu.llama_command(snap["cmdline"], base["gguf_path"], adapters)
+
+    def start(job):
+        job.progress(0, 2, "starting llama-server")
+        if not gpu.start(snap, cmdline):
+            return {"ok": False}
+        ok = gpu.wait_for_llama()
+        job.progress(1, 2, "applying adapter")
+        if ok and act.get("adapter_id"):
+            gpu.apply_adapter(reg.adapter(act["adapter_id"])["gguf_path"])
+        job.progress(2, 2, "done" if ok else "llama-server did not come up")
+        return {"ok": ok}
+
+    return jobs.start("llm_start", start)
+
+
+@app.post("/llm/stop")
+def llm_stop():
+    """Stop llama-server and free its VRAM. Its command line is kept for the next Load."""
+    llama = _remember(gpu.running_llama())
+    if llama:
+        gpu.stop([llama["pid"]])
+    return {"running": False}
+
+
+@app.post("/llm/restart")
+def llm_restart():
+    """Restart llama-server on the active model with every adapter for it loaded."""
+    reg = get_registry()
+    base, act, _ = _active_model(reg)
+    llama = _remember(gpu.running_llama())
     if not llama:
         raise ApiError(409, "llm_not_running", "llama-server isn't running, so there's no command to restart it with.")
 

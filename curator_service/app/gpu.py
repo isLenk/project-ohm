@@ -13,7 +13,7 @@ from typing import Optional
 
 import requests
 
-from .config import LLM_SERVER_URL
+from .config import LLAMA_CPP_DIR, LLM_SERVER_URL
 
 try:
     import psutil
@@ -124,6 +124,28 @@ def llama_command(cmdline: list[str], model_path: Optional[str], adapters: list[
     if adapters:
         out += ["--lora", ",".join(adapters), "--lora-init-without-apply"]
     return out
+
+
+def default_llama(model_path: str, adapters: list[str]) -> dict:
+    """What executables/_run_llama.cmd runs, for when llama-server has never been seen running.
+
+    The vision projector (--mmproj) isn't added: there's no way to tell which one goes with a model.
+    Start llama-server once by hand with it and that command line is remembered instead.
+    """
+    exe = LLAMA_CPP_DIR / "bin" / ("llama-server.exe" if sys.platform == "win32" else "llama-server")
+    cmd = [str(exe), "-m", model_path, "--jinja", "--reasoning", "off", "-ngl", "99", "-c", "32768",
+           "--port", LLM_SERVER_URL.rsplit(":", 1)[-1]]
+    return {"name": "llama-server", "cwd": str(LLAMA_CPP_DIR), "cmdline": llama_command(cmd, model_path, adapters)}
+
+
+def uptime(pid: int) -> Optional[float]:
+    """Seconds the process has been running."""
+    if psutil is None:
+        return None
+    try:
+        return max(0.0, time.time() - psutil.Process(pid).create_time())
+    except Exception:
+        return None
 
 
 def start(snap: dict, cmdline: list[str]) -> Optional[int]:

@@ -132,6 +132,15 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 | POST | `/models/adapters` | `{ path, base_model_id, name? }` → import an existing LoRA |
 | PUT | `/models/active` | `{ base_model_id, adapter_id? }` → what the dropdown selects; also what training uses |
 
+### llama-server (the Engine panel's Model half)
+
+| Method | Path | Body |
+|---|---|---|
+| GET | `/llm/status` | — `{ running, ready, pid, uptime_s, model_path, adapters, active, vram: { used_gb, total_gb } }` |
+| POST | `/llm/start` | — job. Starts llama-server on the active model, with the command line it last ran with (or like `_run_llama.cmd`). `409 llm_running`, `no_model`, `no_llama` |
+| POST | `/llm/stop` | — `{ running: false }`. Frees the VRAM; the command line is kept for the next start |
+| POST | `/llm/restart` | — job. Same model and flags, with every adapter for the active base loaded. `409 llm_not_running` |
+
 ## Export and training
 
 | Method | Path | Body | Returns |
