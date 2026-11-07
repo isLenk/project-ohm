@@ -1,12 +1,17 @@
 """SQL schemas for the .ohm project file and the app-wide registry.
 
 See Documentation/Curator/data-model.md. Bump PROJECT_VERSION and add a step to
-PROJECT_MIGRATIONS whenever the project schema changes.
+PROJECT_MIGRATIONS whenever the project schema changes. A step is an SQL script, or a
+function for changes SQL can't express (it runs inside one transaction).
 """
+
+from typing import Callable, Union
+
+from . import textless
 
 APPLICATION_ID = 0x4F484D31  # 'OHM1'
 
-PROJECT_VERSION = 3
+PROJECT_VERSION = 5
 
 PROJECT_SCHEMA = """
 CREATE TABLE meta (
@@ -170,7 +175,7 @@ CREATE TABLE message_similar (
 """
 
 # Step n upgrades a file from user_version n to n + 1.
-PROJECT_MIGRATIONS: list[str] = [
+PROJECT_MIGRATIONS: list[Union[str, Callable]] = [
     # 1 -> 2: links can come from the model; rejections remember who suggested them; model scan log.
     """
     BEGIN;
@@ -205,6 +210,10 @@ PROJECT_MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS blocks_author ON blocks (channel_id, author_id, first_ts);
     COMMIT;
     """,
+    # 3 -> 4: a dev build excluded text-less messages here; 4 -> 5 removes them instead.
+    "",
+    # 4 -> 5: messages with no text aren't kept at all any more; remove them and point replies past them.
+    textless.remove,
 ]
 
 DEFAULT_SETTINGS = {

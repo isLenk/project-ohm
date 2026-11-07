@@ -49,22 +49,13 @@ pytest curator_service/tests
 
 The seed script writes rows straight into the database. It is not the importer.
 
-## For the importer (Smarth)
+## Importer
 
-The import routes are intentionally not here yet. After loading a file into `sources`, `authors`, `blocks` and `messages` (see `Documentation/Curator/import.md`), call these inside the same `project.tx()`:
-
-```python
-from curator_service.app import conversations, threads
-
-conversations.rebuild(conn, channel_id, project.settings())   # conversations from silences
-threads.suggest_all(conn, project.settings(), channel_id)      # suggested replies and thread starts
-```
-
-Write native Discord replies as links with `status='accepted', origin='discord'` before calling `suggest_all`. `tests/seed.py` shows the whole shape. After the transaction, start embeddings with `jobs.start("embeddings", lambda job: embeddings.build(project, job))`. Memory extraction picks up new blocks on its next run.
+`app/importer.py` is what the Import button calls (`POST /imports`). It runs as a job and accepts DiscordChatExporter JSON, `messages.jsonl` and `speakers.json` (`app/formats.py`), as files or a folder. After loading `sources`, `authors`, `blocks`, `messages` and native links in one `project.tx()`, it calls `conversations.rebuild` and `threads.suggest_all` for each channel, then starts embeddings. See `Documentation/Curator/import.md`.
 
 ### Big files (100k+ messages)
 
-`tests/bench.py` loads 100k synthetic messages the way an importer should and times every step. On a laptop the import itself takes about 3 s for the inserts, 0.1 s for `rebuild` and 12 s for `suggest_all`.
+`tests/bench.py` loads 100k synthetic messages the way the importer does and times every step. The real 137k-message export imports in about 25 s. On a laptop the import itself takes about 3 s for the inserts, 0.1 s for `rebuild` and 12 s for `suggest_all`.
 
 - Compute blocks in Python while walking the sorted messages. Insert with `executemany` (blocks, then messages, then native links). Don't run a query per message.
 - Keep it to one `project.tx()`. The FTS triggers keep search up to date during the insert, so you don't need a separate rebuild step.

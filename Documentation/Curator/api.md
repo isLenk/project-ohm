@@ -28,9 +28,9 @@ Changing `split_gap_ms` re-derives conversations that have `manual = 0`. It clea
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/imports` | `{ path }` (local file; the Electron main process shows the file picker) | import summary (`import.md`) |
-| GET | `/imports` | — | list of `sources` |
-| GET | `/jobs/{id}/events` | — | SSE for background embedding and memory extraction: `{ kind, done, total }` |
+| POST | `/imports` | `{ paths: [...] }` or `{ path }`: files and/or folders (the Electron main process shows the file picker) | a job; its `result` is the import summary (`import.md`) |
+| GET | `/imports` | — | `{ sources }`, each with `imported_messages` |
+| GET | `/jobs/{id}/events` | — | SSE for imports, embedding and memory extraction: `{ kind, done, total, note }` |
 
 ## Feed
 

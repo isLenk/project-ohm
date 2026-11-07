@@ -73,11 +73,13 @@ The Electron main process (`controller-mainframe/src/main/curator.js`) starts an
 
 ## What's built
 
-Everything in these docs is built and tested, except the importer. Smarth owns the importer. `curator_service/README.md` lists the two functions an importer calls when it finishes.
+Everything in these docs is built and tested.
 
 ```
 curator_service/
-  app/main.py          FastAPI routes (api.md); no /imports yet
+  app/main.py          FastAPI routes (api.md)
+  app/importer.py      Import file: authors, messages, blocks, native links, then conversations + suggestions (import.md)
+  app/formats.py       input formats: DiscordChatExporter JSON, messages.jsonl, speakers.json
   app/schema.py        project + registry schemas (data-model.md); the source of truth
   app/project.py       open/save .ohm through a working copy
   app/threads.py       links, validation, undo, suggester (threading.md)
@@ -92,6 +94,7 @@ curator_service/
   app/train/worker.py  training subprocess (Unsloth + TRL; simulate mode for UI work)
   app/registry.py      models + adapters, app-wide
   tests/               pytest, plus seed.py demo data
+  tools/jsonl_to_dce.py  write a messages.jsonl dump out as DiscordChatExporter files (optional; import reads JSONL directly)
 ```
 
 ## Already decided
