@@ -104,7 +104,7 @@ export function startEngine() {
   return engineStatus()
 }
 
-function kill(target) {
+export function kill(target) {
   if (process.platform === 'win32') {
     // /t takes the whole tree: the venv's python.exe is a launcher that runs the real one as a child
     execFile('taskkill', ['/pid', String(target), '/t', '/f'], () => {})

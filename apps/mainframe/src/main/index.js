@@ -7,6 +7,7 @@ import { logsDB, addLog } from './db.js'
 import { listCharacters, addCharacter, updateCharacter, deleteCharacter } from './characters.js'
 import { dialog } from 'electron/main'
 import { startCurator, stopCurator, curatorConfig } from './curator.js'
+import { startTTS, stopTTS } from './tts.js'
 import {
   engineStatus,
   engineOutput,
@@ -99,6 +100,13 @@ app.whenReady().then(() => {
     // Leave a main.py that was started by hand alone
     if (!engineStatus().external) stopEngine()
   })
+
+  // The TTS server starts with the engine and stays up until the app quits, so restarting the
+  // engine doesn't mean waiting for the voice model to load again
+  onEngineChange(({ state }) => {
+    if (state !== 'stopped' && listModules().find((m) => m.name === 'tts')?.enabled) startTTS()
+  })
+  app.on('will-quit', stopTTS)
 
   ipcMain.handle('health', (event, days) => health(days))
   ipcMain.handle('nas', (event, method, path, body) => nasCall(method, path, body))

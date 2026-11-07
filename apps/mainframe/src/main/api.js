@@ -6,6 +6,7 @@ import { engineStatus, heard, onEngineChange } from './engine.js'
 import { nas } from './nas.js'
 import { appDir } from './python.js'
 import { saveSettings, setting } from './settings.js'
+import { restartTTS } from './tts.js'
 
 const api = express()
 api.use(express.json())
@@ -68,9 +69,11 @@ export function setModuleEnabled(name, on) {
   return listModules()
 }
 
-export function restartModule(name) {
+export async function restartModule(name) {
   if (!modules[name]) throw new Error(`No module called ${name}`)
   if (engineStatus().state !== 'running') throw new Error('Start the engine first.')
+  // The TTS server is its own process; main.py only resets its connection to it
+  if (name === 'tts') await restartTTS()
   restarts.add(name)
   addEvent('module', name, 'restart')
   return listModules()
