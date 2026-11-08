@@ -1,4 +1,7 @@
-"""The judge checking trained replies (train/checks.py), with a stand-in for the judge model."""
+"""The judge checking trained replies (train/checks.py), with a stand-in for the brain's judge."""
+
+import brain
+import pytest
 
 from curator_service.app import conversations, export
 from curator_service.app.train import checks, evaluate
@@ -14,7 +17,31 @@ class FakeJob:
         self.notes.append((done, total, note))
 
 
-def test_judge_verdicts_leave_non_answers_out_of_training(project, monkeypatch):
+def _reply(text: str) -> str:
+    """The candidate in a judge prompt (the chat before it can hold the same words)."""
+    return text.rsplit("A:\n", 1)[1]
+
+
+@pytest.fixture
+def judge(monkeypatch):
+    """A Codex-like judge: no GPU swap. Fails the test if anything touches llama-server."""
+    calls = []
+    monkeypatch.setattr(brain, "needs_gpu_swap", lambda role: False)
+    monkeypatch.setattr(evaluate, "judge_name", lambda: "codex")
+    monkeypatch.setattr(evaluate, "_start_judge", lambda: (_ for _ in ()).throw(AssertionError("started the judge")))
+    for name in ("running_llama", "stop", "start"):
+        monkeypatch.setattr(checks.gpu, name, lambda *a, _n=name: (_ for _ in ()).throw(AssertionError(_n)))
+
+    def use(answer):
+        def fake(items, system, instructions, schema_item, size=30, workers=3, **fields):
+            calls.append({"n": len(items), "size": size, "workers": workers, **fields})
+            return [answer(t) for t in items]
+        monkeypatch.setattr(brain, "run_packed", fake)
+        return calls
+    return use
+
+
+def test_judge_verdicts_leave_non_answers_out_of_training(project, judge):
     with project.tx() as conn:
         conversations.approve(conn, 1, confirm=True)
     before = export.build(project)
@@ -25,31 +52,62 @@ def test_judge_verdicts_leave_non_answers_out_of_training(project, monkeypatch):
     late = next(it for it in todo if it["reply"].startswith("Mb I was out"))
     assert late["context"][-1]["content"].endswith("we running barotrauma this night? @Ohm")
 
-    monkeypatch.setattr(checks.gpu, "running_llama", lambda: None)
-    monkeypatch.setattr(evaluate, "_start_judge", lambda: None)
+    calls = judge(lambda t: {"n": 1, "answers": not _reply(t).startswith("Mb I was out")})
     job = FakeJob()
-    counts = checks.run(project, None, todo, job, judge_reply=lambda it: {"A": not it["reply"].startswith("Mb I was out")})
+    counts = checks.run(project, None, todo, job)
     assert counts == {"answers": len(todo) - 1, "does_not": 1, "unreadable": 0}
     assert job.notes[-1][:2] == (len(todo), len(todo))
+    assert calls[0]["role"] == "judge" and calls[0]["size"] == 30 and calls[0]["workers"] == 3
 
     after = export.build(project)
     assert after["dropped"]["doesn't answer (judge)"] == 1
     assert not any(m["content"].startswith("Mb I was out") for e in after["examples"] for m in e["messages"])
     assert after["checked"] == {"checked": before["checked"]["unchecked"] - 1, "unchecked": 0}
     assert checks.pending(project) == []  # nothing is checked twice
+    with project.lock:
+        assert {r[0] for r in project.conn.execute("SELECT judge FROM reply_checks")} == {"codex"}
 
 
-def test_unreadable_verdicts_are_left_to_check_again(project, monkeypatch):
+def test_unreadable_verdicts_are_left_to_check_again(project, judge):
     with project.tx() as conn:
         conversations.approve(conn, 1, confirm=True)
     todo = checks.pending(project)
-    monkeypatch.setattr(checks.gpu, "running_llama", lambda: None)
-    monkeypatch.setattr(evaluate, "_start_judge", lambda: None)
-    counts = checks.run(project, None, todo, FakeJob(), judge_reply=lambda it: None)
+    judge(lambda t: None)
+    counts = checks.run(project, None, todo, FakeJob())
     assert counts["unreadable"] == len(todo)
     assert len(checks.pending(project)) == len(todo)
+
+
+def test_qwen_judge_swaps_the_gpu(project, monkeypatch):
+    with project.tx() as conn:
+        conversations.approve(conn, 1, confirm=True)
+    todo = checks.pending(project)
+    seen = []
+    monkeypatch.setattr(brain, "needs_gpu_swap", lambda role: True)
+    monkeypatch.setattr(brain, "run_packed", lambda items, *a, **k: [{"answers": True} for _ in items])
+    monkeypatch.setattr(checks.gpu, "running_llama", lambda: {"pid": 1, "cmdline": ["llama-server"]})
+    monkeypatch.setattr(checks.gpu, "stop", lambda pids: seen.append(("stop", pids)))
+    monkeypatch.setattr(evaluate, "_start_judge", lambda: seen.append("judge") or 99)
+    monkeypatch.setattr(evaluate, "_restore", lambda before, reg: seen.append(("restore", before["pid"])))
+    assert checks.run(project, None, todo, FakeJob())["answers"] == len(todo)
+    assert seen == [("stop", [1]), "judge", ("stop", [99]), ("restore", 1)]
 
 
 def test_nothing_to_check_doesnt_start_the_judge(project, monkeypatch):
     monkeypatch.setattr(evaluate, "_start_judge", lambda: (_ for _ in ()).throw(AssertionError("started")))
     assert checks.run(project, None, [], FakeJob()) == {"answers": 0, "does_not": 0, "unreadable": 0}
+
+
+def test_no_judge_is_a_409(monkeypatch):
+    from curator_service.app.errors import ApiError
+    monkeypatch.setattr(brain, "needs_gpu_swap", lambda role: False)
+    monkeypatch.setattr(evaluate.llm, "brain_backend", lambda role: None)
+    with pytest.raises(ApiError) as e:
+        evaluate.check_judge()
+    assert e.value.code == "no_judge" and "Codex" in e.value.message
+    monkeypatch.setattr(evaluate.llm, "brain_backend", lambda role: "codex")
+    monkeypatch.setattr(brain, "status", lambda: {"codex": {"signed_in": False}})
+    with pytest.raises(ApiError):
+        evaluate.check_judge()
+    monkeypatch.setattr(brain, "status", lambda: {"codex": {"signed_in": True}})
+    evaluate.check_judge()

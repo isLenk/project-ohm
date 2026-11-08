@@ -29,7 +29,7 @@ REPLY_CHECKS_TABLE = """
 CREATE TABLE IF NOT EXISTS reply_checks (
   reply_ids   TEXT PRIMARY KEY,               -- the Ohm turn's message ids, comma-joined (export.reply_key)
   answers     INTEGER NOT NULL,               -- 1 if it answers the line before it
-  judge       TEXT NOT NULL,                  -- the judge model's file name, without .gguf
+  judge       TEXT NOT NULL,                  -- what judged: the Qwen model's file name (no .gguf) or a brain backend (codex)
   checked_at  INTEGER NOT NULL
 );
 """

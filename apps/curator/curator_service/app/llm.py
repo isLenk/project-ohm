@@ -84,3 +84,12 @@ def pieces(words: list[str]) -> Optional[list[list[str]]]:
     if [("".join(ps)).strip() for ps in out] != words:
         return None
     return out
+
+
+def brain_backend(role: str) -> Optional[str]:
+    """The brain backend `role` would run on right now (the first one in its list that can be used), or None.
+
+    brain.run doesn't say which backend answered, so this is what gets recorded. A call that fell back to the
+    next backend partway through a job isn't seen here."""
+    from brain import config, router
+    return next((name for name in config.chain(role) if not router.skip_reason(name)), None)

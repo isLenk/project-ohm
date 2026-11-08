@@ -1,20 +1,25 @@
-"""The judge model reads each reply the adapter would train on and says whether it answers the line before it.
+"""The judge reads each reply the adapter would train on and says whether it answers the line before it.
 
 The export lays every Ohm turn out after the message its reply arrow points at (export.py), but in a busy
 group chat about a third of real replies still don't answer that message: the arrow was guessed, or the
 person was carrying on their own thread. An adapter trained on those learns to ignore what was just said.
 Verdicts are kept in the project (reply_checks), so a reply is only ever checked once, and the export
 leaves out the ones that don't answer (Documentation/Curator/training.md, "Checking replies with the judge").
+
+The judge is the brain's `judge` role, 30 replies to a call. Ohm's llama-server only stops for it when that's
+the local Qwen model (brain.needs_gpu_swap).
 """
 
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+import brain
 
 from .. import export, gpu
-from ..config import JUDGE_MODEL
 from ..errors import ApiError
 from ..project import now_ms
 from . import evaluate
+
+INSTRUCTIONS = (f"{evaluate.SEPARATE} Each has one candidate, A. For each item, \"answers\" is true when A "
+                "answers the last message of its chat.")
+ITEM = {"type": "object", "properties": {"answers": {"type": "boolean"}}, "required": ["answers"]}
 
 
 def pending(project) -> list[dict]:
@@ -39,48 +44,47 @@ def pending(project) -> list[dict]:
 
 def prepare(project, reg) -> list[dict]:
     """What to check, after making sure the judge can run."""
-    if not Path(JUDGE_MODEL).is_file():
-        raise ApiError(409, "no_judge", f"The judge model isn't at {JUDGE_MODEL}. Set CURATOR_JUDGE_MODEL.")
+    evaluate.check_judge()
     if reg.one("SELECT id FROM train_runs WHERE status IN ('queued','running')"):
         raise ApiError(409, "run_active", "Wait for the training run to finish: they'd share the GPU.")
     return pending(project)
 
 
-def ask(it: dict) -> dict | None:
-    """{"A": answers} for one reply, or None when the judge's answer doesn't fit."""
-    prompt = evaluate.judge_prompt(evaluate.transcript(it["context"]), [("A", it["reply"])])
-    return evaluate.parse_answers(evaluate._ask_judge(evaluate.JUDGE_SYSTEM, prompt), ["A"])
+def prompt(it: dict) -> str:
+    return evaluate.judge_prompt(evaluate.transcript(it["context"]), [("A", it["reply"])])
 
 
-def run(project, reg, todo: list[dict], job, judge_reply=ask) -> dict:
-    """Check every reply in `todo`. Ohm's llama-server stops while the judge runs and comes back after."""
+def run(project, reg, todo: list[dict], job) -> dict:
+    """Check every reply in `todo`, saving each round's verdicts as they come."""
     counts = {"answers": 0, "does_not": 0, "unreadable": 0}
     if not todo:
         return counts
-    judge = Path(JUDGE_MODEL).stem
-    before = gpu.running_llama()
+    judge = evaluate.judge_name() or "unknown"
+    swap = brain.needs_gpu_swap("judge")
+    before = gpu.running_llama() if swap else None
     judge_pid = None
-
-    def one(it):
-        return it, None if job.cancelled else judge_reply(it)
-
+    step = evaluate.PACK_SIZE * evaluate.PACK_WORKERS
     try:
-        job.progress(0, len(todo), "loading the judge model")
-        if before:
-            gpu.stop([before["pid"]])
-        judge_pid = evaluate._start_judge()
-        with ThreadPoolExecutor(evaluate.JUDGE_SLOTS) as pool:
-            for n, (it, verdict) in enumerate(pool.map(one, todo), 1):
-                if job.cancelled:
-                    break
-                if verdict is None:
-                    counts["unreadable"] += 1
-                else:
-                    with project.tx() as conn:
-                        conn.execute("INSERT OR REPLACE INTO reply_checks (reply_ids, answers, judge, checked_at) "
-                                     "VALUES (?, ?, ?, ?)", (it["key"], int(verdict["A"]), judge, now_ms()))
-                    counts["answers" if verdict["A"] else "does_not"] += 1
-                job.progress(n, len(todo), f"checked {n}/{len(todo)}")
+        job.progress(0, len(todo), "loading the judge model" if swap else "asking the judge")
+        if swap:
+            if before:
+                gpu.stop([before["pid"]])
+            judge_pid = evaluate._start_judge()
+        for start in range(0, len(todo), step):
+            if job.cancelled:
+                break
+            batch = todo[start:start + step]
+            verdicts = evaluate.ask_packed([prompt(it) for it in batch], evaluate.JUDGE_RULES, INSTRUCTIONS, ITEM)
+            with project.tx() as conn:
+                for it, v in zip(batch, verdicts):
+                    if not isinstance((v or {}).get("answers"), bool):
+                        counts["unreadable"] += 1  # not stored, so the next check asks again
+                        continue
+                    conn.execute("INSERT OR REPLACE INTO reply_checks (reply_ids, answers, judge, checked_at) "
+                                 "VALUES (?, ?, ?, ?)", (it["key"], int(v["answers"]), judge, now_ms()))
+                    counts["answers" if v["answers"] else "does_not"] += 1
+            done = start + len(batch)
+            job.progress(done, len(todo), f"checked {done}/{len(todo)}")
     finally:
         if judge_pid:
             gpu.stop([judge_pid])

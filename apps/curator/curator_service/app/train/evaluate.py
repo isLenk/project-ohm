@@ -1,32 +1,34 @@
-"""Scores a trained adapter on conversations it never trained on, with a bigger local model as the judge.
+"""Scores a trained adapter on conversations it never trained on, with a bigger model as the judge.
 
-Ohm's model and the judge don't fit on a 24 GB card together, so it runs in two passes
-(Documentation/Curator/training.md, "Evaluating an adapter"):
+It runs in two passes (Documentation/Curator/training.md, "Scoring an adapter"):
 
 1. Replies: llama-server on the adapter's base model answers every held-out context three ways:
    the base model alone, the adapter at full strength, and the adapter at PARTIAL_SCALE.
    A few probes shaped like the messages that went wrong live ("can you hear me?") get the same.
-2. Judge: Ohm's llama-server stops and the judge model starts on JUDGE_PORT. For each context it
-   sees the candidates, plus the person's real reply, unlabeled and shuffled, and says which ones
-   answer the last message. Then, for the voice, it gets each candidate next to the real reply and
-   picks the one a person wrote. Asked to rank candidates instead, it put the base model's polished
-   jokes above the group's real replies, so ranking measured wit, not likeness.
+2. Judge: the brain's `judge` role (Codex by default). For each context it sees the candidates, plus
+   the person's real reply, unlabeled and shuffled, and says which ones answer the last message.
+   Then, for the voice, it gets each candidate next to the real reply and picks the one a person
+   wrote. Asked to rank candidates instead, it put the base model's polished jokes above the
+   group's real replies, so ranking measured wit, not likeness. The chats go 30 to a call.
 
-Ohm's llama-server is put back the way it was. The result is saved as eval.json in the run folder.
+Only when the judge is the local Qwen model (brain.needs_gpu_swap) does Ohm's llama-server stop
+for the judge pass, since both don't fit on a 24 GB card. It's put back the way it was either way.
+The result is saved as eval.json in the run folder.
 """
 
 import json
+import os
 import random
 import re
 import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
+import brain
 import requests
 
-from .. import gpu
+from .. import gpu, llm
 from ..config import JUDGE_MODEL, JUDGE_PORT, LLAMA_CPP_DIR, LLM_URL
 from ..errors import ApiError
 from .worker import held_out
@@ -37,7 +39,10 @@ REPLY_TOKENS = 150
 MAX_ITEMS = 60
 CONTEXT_CHARS = 3000   # of chat shown to the judge, the latest part
 JUDGE_CTX = 16384
-JUDGE_SLOTS = 4        # requests the judge serves at once; JUDGE_CTX is split between them (4096 each)
+JUDGE_SLOTS = 4        # requests the Qwen judge serves at once; JUDGE_CTX is split between them (4096 each)
+JUDGE_TEMPERATURE = 0  # verdicts, not replies
+PACK_SIZE = 30         # chats per judge call: Codex spends ~4 s and ~10k tokens a call however small it is
+PACK_WORKERS = 3       # calls at once, the most the brain lets one CLI run
 SEED = 7
 VARIANTS = ["base", "adapter", "partial"]
 PROBES = [
@@ -52,21 +57,36 @@ PROBES = [
 ]
 LABEL = re.compile(r"^([^:\n]{1,40}): ", re.MULTILINE)
 
-JUDGE_SYSTEM = """You judge replies in a Discord group chat between friends.
+JUDGE_RULES = """You judge replies in a Discord group chat between friends.
 
 You get the recent chat, then candidate replies from "Ohm", one member of the chat, labeled A, B, C and so on.
 
-For each candidate, decide whether it answers the LAST message in the chat. It counts if it responds to it, reacts to it, or answers its question, even briefly or rudely. It does not count if it ignores the last message, changes the subject, or carries on some other thread.
+For each candidate, decide whether it answers the LAST message in the chat. It counts if it responds to it, reacts to it, or answers its question, even briefly or rudely. It does not count if it ignores the last message, changes the subject, or carries on some other thread."""
+
+JUDGE_SYSTEM = JUDGE_RULES + """
 
 Answer with JSON only, no other text:
 {"answers": {"A": true, "B": false}}"""
 
-REAL_SYSTEM = """You read a Discord group chat between friends, then two possible next messages from "Ohm", one member of the chat, labeled A and B.
+REAL_RULES = """You read a Discord group chat between friends, then two possible next messages from "Ohm", one member of the chat, labeled A and B.
 
-One of them is what the real person actually wrote. The other was written by an AI imitating them. Pick the one the real person wrote: look at their slang, typos, tone, length and what a friend in this chat would actually say. Polish, neat jokes and helpful explanations are signs of the AI.
+One of them is what the real person actually wrote. The other was written by an AI imitating them. Pick the one the real person wrote: look at their slang, typos, tone, length and what a friend in this chat would actually say. Polish, neat jokes and helpful explanations are signs of the AI."""
+
+REAL_SYSTEM = REAL_RULES + """
 
 Answer with JSON only, no other text:
 {"real": "A"}"""
+
+# The packed versions (many chats in one call): brain.run_packed wraps each item's answer in {"answers": [...]}.
+# ? The candidates' verdicts are a list, not {"A": true}: Codex's structured output wants every key of an
+# object named in the schema, and the number of candidates differs between chats.
+SEPARATE = "Each numbered item is a separate chat with its own candidates; judge each one on its own."
+JUDGE_INSTRUCTIONS = (f"{SEPARATE} For each item, \"answers\" is one true or false per candidate, in label order "
+                      "(A, B, C...): true when that candidate answers the last message of its chat.")
+JUDGE_ITEM = {"type": "object", "properties": {"answers": {"type": "array", "items": {"type": "boolean"}}},
+              "required": ["answers"]}
+REAL_INSTRUCTIONS = f"{SEPARATE} For each item, \"real\" is the label (A or B) of the reply the real person wrote."
+REAL_ITEM = {"type": "object", "properties": {"real": {"type": "string", "enum": ["A", "B"]}}, "required": ["real"]}
 
 
 def path_for(run_dir: Path) -> Path:
@@ -136,18 +156,30 @@ def _json(text: str) -> Optional[dict]:
     return d if isinstance(d, dict) else None
 
 
-def parse_answers(text: str, labels: list[str]) -> Optional[dict[str, bool]]:
-    """{label: answers the last message} or None when the judge's answer doesn't fit."""
-    answers = (_json(text) or {}).get("answers")
+def answers_of(answer: Optional[dict], labels: list[str]) -> Optional[dict[str, bool]]:
+    """{label: answers the last message} from the judge's JSON, either {"answers": {"A": true}} or the packed
+    {"answers": [true, ...]} in label order. None when it doesn't fit."""
+    answers = (answer or {}).get("answers")
+    if isinstance(answers, list):
+        answers = dict(zip(labels, answers)) if len(answers) == len(labels) else None
     if not isinstance(answers, dict) or not all(isinstance(answers.get(k), bool) for k in labels):
         return None
     return {k: answers[k] for k in labels}
 
 
+def parse_answers(text: str, labels: list[str]) -> Optional[dict[str, bool]]:
+    """{label: answers the last message} or None when the judge's answer doesn't fit."""
+    return answers_of(_json(text), labels)
+
+
+def pick_of(answer: Optional[dict], labels: list[str]) -> Optional[str]:
+    pick = (answer or {}).get("real")
+    return pick if pick in labels else None
+
+
 def parse_pick(text: str, labels: list[str]) -> Optional[str]:
     """The label the judge thinks the real person wrote, or None."""
-    pick = (_json(text) or {}).get("real")
-    return pick if pick in labels else None
+    return pick_of(_json(text), labels)
 
 
 def summarize(results: list[dict]) -> dict:
@@ -240,11 +272,54 @@ def _start_judge() -> int:
 
 
 def _ask_judge(system: str, prompt: str) -> str:
-    r = requests.post(f"http://127.0.0.1:{JUDGE_PORT}/v1/chat/completions", timeout=(5, 180), json={
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-        "temperature": 0, "max_tokens": 200})
-    r.raise_for_status()
-    return (r.json()["choices"][0]["message"].get("content") or "").strip()
+    """One question for the brain's judge, as text. "" when no backend answered, so the parsers return None."""
+    task = brain.Task(role="judge", system=system, user=prompt, max_tokens=200, temperature=JUDGE_TEMPERATURE)
+    return brain.run(task) or ""
+
+
+def ask_packed(texts: list[str], system: str, instructions: str, schema_item: dict, job=None,
+               note: str = "judging", done: int = 0, total: int = 0) -> list:
+    """The judge's answer to each text (None where there isn't one), PACK_SIZE to a call. It goes
+    PACK_SIZE * PACK_WORKERS texts at a time so the job's progress moves and a cancel stops it in between."""
+    out = []
+    step = PACK_SIZE * PACK_WORKERS
+    for start in range(0, len(texts), step):
+        if job is not None and job.cancelled:
+            break
+        out += brain.run_packed(texts[start:start + step], system, instructions, schema_item, size=PACK_SIZE,
+                                workers=PACK_WORKERS, role="judge", temperature=JUDGE_TEMPERATURE)
+        if job is not None:
+            job.progress(done + len(out), total, f"{note} {len(out)}/{len(texts)}")
+    return out + [None] * (len(texts) - len(out))
+
+
+def judge_name() -> Optional[str]:
+    """What judges right now, for the saved results: the Qwen model's file name, or the brain backend's name.
+    None when nothing can."""
+    name = llm.brain_backend("judge")
+    if name == "qwen":
+        return Path(JUDGE_MODEL).stem
+    if name == "codex" and os.getenv("BRAIN_CODEX_MODEL"):
+        return f"codex ({os.environ['BRAIN_CODEX_MODEL']})"
+    return name
+
+
+def judge_problem(check_sign_in: bool = True) -> Optional[str]:
+    """Why the judge can't run, or None when it can. Signing in is only checked when asked, since it runs the CLIs."""
+    if brain.needs_gpu_swap("judge"):
+        return None if Path(JUDGE_MODEL).is_file() else f"The judge model isn't at {JUDGE_MODEL}. Set CURATOR_JUDGE_MODEL."
+    name = llm.brain_backend("judge")
+    if name in ("codex", "claude") and check_sign_in and (brain.status().get(name) or {}).get("signed_in") is False:
+        name = None
+    if name:
+        return None
+    return f"No judge: sign in to Codex in Settings › Integrations or put the Qwen judge model at {JUDGE_MODEL}."
+
+
+def check_judge() -> None:
+    problem = judge_problem()
+    if problem:
+        raise ApiError(409, "no_judge", problem)
 
 
 def _shuffled(pairs: list[tuple[str, str]], seed: int) -> tuple[list[tuple[str, str]], dict[str, str]]:
@@ -255,11 +330,20 @@ def _shuffled(pairs: list[tuple[str, str]], seed: int) -> tuple[list[tuple[str, 
     return [(lb, t or "(no reply)") for lb, (_, t) in zip(labels, pairs)], {lb: v for lb, (v, _) in zip(labels, pairs)}
 
 
+def _candidates(it: dict, seed: int):
+    return _shuffled(list(it["replies"].items()) + ([("real", it["real"])] if it["real"] else []), seed)
+
+
+def _pair(it: dict, variant: str, seed: int):
+    return _shuffled([(variant, it["replies"][variant]), ("real", it["real"])], seed)
+
+
 def judge_item(it: dict, seed: int, ask=None) -> None:
-    """Fills it["answers"] {variant: bool} and, for held-out chats, it["passes"] {variant: taken for the real one}."""
+    """Fills it["answers"] {variant: bool} and, for held-out chats, it["passes"] {variant: taken for the real one}.
+    One question per call; run() uses judge_all, which packs them."""
     ask = ask or _ask_judge
     chat = transcript(it["context"])
-    shown, name = _shuffled(list(it["replies"].items()) + ([("real", it["real"])] if it["real"] else []), seed)
+    shown, name = _candidates(it, seed)
     raw = ask(JUDGE_SYSTEM, judge_prompt(chat, shown))
     answers = parse_answers(raw, list(name))
     it["answers"] = answers and {name[k]: a for k, a in answers.items()}
@@ -269,8 +353,32 @@ def judge_item(it: dict, seed: int, ask=None) -> None:
         return
     it["passes"] = {}
     for k, v in enumerate(VARIANTS):
-        shown, name = _shuffled([(v, it["replies"][v]), ("real", it["real"])], seed * 10 + k)
+        shown, name = _pair(it, v, seed * 10 + k)
         pick = parse_pick(ask(REAL_SYSTEM, judge_prompt(chat, shown)), list(name))
+        it["passes"][v] = None if pick is None else name[pick] == v
+
+
+def judge_all(todo: list[dict], job=None, done: int = 0, total: int = 0) -> None:
+    """judge_item for every item (item i with seed SEED + i), with the questions packed PACK_SIZE to a call:
+    first every "does it answer", then every "which is real"."""
+    asks, picks = [], []
+    for i, it in enumerate(todo):
+        chat = transcript(it["context"])
+        shown, name = _candidates(it, SEED + i)
+        asks.append((it, name, judge_prompt(chat, shown)))
+        if it["real"]:
+            it["passes"] = {}
+            for k, v in enumerate(VARIANTS):
+                shown, name = _pair(it, v, (SEED + i) * 10 + k)
+                picks.append((it, v, name, judge_prompt(chat, shown)))
+    answers = ask_packed([q[-1] for q in asks], JUDGE_RULES, JUDGE_INSTRUCTIONS, JUDGE_ITEM, job, "judging", done, total)
+    for (it, name, _), a in zip(asks, answers):
+        got = answers_of(a, list(name))
+        it["answers"] = got and {name[k]: x for k, x in got.items()}
+    done += len(asks)
+    chosen = ask_packed([q[-1] for q in picks], REAL_RULES, REAL_INSTRUCTIONS, REAL_ITEM, job, "real or not", done, total)
+    for (it, v, name, _), a in zip(picks, chosen):
+        pick = pick_of(a, list(name))
         it["passes"][v] = None if pick is None else name[pick] == v
 
 
@@ -292,8 +400,7 @@ def prepare(reg, adapter_id: str) -> dict:
     if not row:
         raise ApiError(409, "not_trained_here",
                        "Only adapters trained in the Curator can be scored: it needs the run's held-out conversations.")
-    if not Path(JUDGE_MODEL).is_file():
-        raise ApiError(409, "no_judge", f"The judge model isn't at {JUDGE_MODEL}. Set CURATOR_JUDGE_MODEL.")
+    check_judge()
     if reg.one("SELECT id FROM train_runs WHERE status IN ('queued','running')"):
         raise ApiError(409, "run_active", "Wait for the training run to finish: they'd share the GPU.")
     run_dir = Path(row["run_dir"])
@@ -305,8 +412,10 @@ def run(reg, prep: dict, job) -> dict:
     adapter, row, run_dir, base, todo = prep["adapter"], prep["row"], prep["run_dir"], prep["base"], prep["todo"]
     adapter_id = adapter["id"]
     before = gpu.running_llama()
+    swap = brain.needs_gpu_swap("judge")
+    judge = judge_name()
     judge_pid = None
-    total = len(todo) * 2
+    total = len(todo) * 2 + len(VARIANTS) * sum(1 for it in todo if it["real"])
     try:
         job.progress(0, total, "starting Ohm's model")
         ids = _ohm_server(reg, base, adapter)
@@ -317,31 +426,27 @@ def run(reg, prep: dict, job) -> dict:
             it["replies"] = {v: _reply(it["context"], _lora(ids, s), SEED + i) for v, s in scales.items()}
             job.progress(i + 1, total, f"Ohm's replies {i + 1}/{len(todo)}")
 
-        job.progress(len(todo), total, "loading the judge model")
-        llama = gpu.running_llama()
-        if llama:
-            gpu.stop([llama["pid"]])
-        judge_pid = _start_judge()
-
-        def one(i):
-            if not job.cancelled:
-                judge_item(todo[i], SEED + i)
-
-        with ThreadPoolExecutor(JUDGE_SLOTS) as pool:
-            for n, _ in enumerate(pool.map(one, range(len(todo))), 1):
-                job.progress(len(todo) + n, total, f"judging {n}/{len(todo)}")
+        if swap:  # the local Qwen judge needs the card to itself
+            job.progress(len(todo), total, "loading the judge model")
+            llama = gpu.running_llama()
+            if llama:
+                gpu.stop([llama["pid"]])
+            judge_pid = _start_judge()
+        judge_all(todo, job, len(todo), total)
         if job.cancelled:
             return {"cancelled": True}
     finally:
         if judge_pid:
             gpu.stop([judge_pid])
-        if not before and (started := gpu.running_llama()):
-            gpu.stop([started["pid"]])  # it wasn't running before, so don't leave the one started here
+        now = gpu.running_llama()
+        # ? one started here, or switched to the adapter's base model for the replies: put back what was running
+        if now and (not before or now["cmdline"] != before["cmdline"]):
+            gpu.stop([now["pid"]])
         _restore(before, reg)
 
     result = {
         "adapter_id": adapter_id, "adapter_name": adapter["name"], "run_id": row["id"], "created_at": int(time.time() * 1000),
-        "judge": Path(JUDGE_MODEL).stem, "partial_scale": PARTIAL_SCALE, "temperature": TEMPERATURE,
+        "judge": judge, "partial_scale": PARTIAL_SCALE, "temperature": TEMPERATURE,
         "summary": summarize(todo),
         "items": [{"kind": it["kind"], "speaker": it["speaker"], "chat": transcript(it["context"])[-1200:],
                    "real": it["real"], "replies": it["replies"], "answers": it.get("answers"), "passes": it.get("passes"),
