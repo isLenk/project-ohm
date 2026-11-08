@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
-import { LuEye, LuEyeOff, LuFolderOpen, LuLock } from 'react-icons/lu'
+import { LuChevronDown, LuEye, LuEyeOff, LuFolderOpen, LuLock } from 'react-icons/lu'
 import { dialog } from '../curator/api'
 import { message, useEngine } from '../lib/ohm'
 import { Loading, useBusy } from '../components/Loader'
+import Integrations, { INTEGRATION_KEYS, type FieldFn } from '../components/Integrations'
 
 /* Each field is an environment variable the Python side or the curator service reads.
    Saved values go to settings.json and are passed to main.py and curator_service when they start.
-   type: text | secret | folder | file | switch (value '1' when on) */
+   type: text | number | secret | folder | file | switch (value '1' when on) | select
+   Integrations has its own layout (components/Integrations.tsx) but uses the same Field. */
 const SECTIONS = [
   {
     id: 'runtime',
@@ -154,9 +156,25 @@ const Settings = () => {
 
   // Sections with edits not saved yet get a dot in the nav, since only one section shows at a time.
   const edited = (id: string) =>
-    SECTIONS.find((s) => s.id === id)?.fields.some(
-      ([key]) => values[key] !== saved[key]
-    )
+    (id === 'integrations'
+      ? INTEGRATION_KEYS
+      : (SECTIONS.find((s) => s.id === id)?.fields.map((f) => f[0] as string) ?? [])
+    ).some((key) => values[key] !== saved[key])
+  const field: FieldFn = (key, label, hint, type, placeholder, options) => (
+    <Field
+      key={key}
+      name={key}
+      label={label}
+      hint={hint}
+      type={type}
+      placeholder={placeholder}
+      options={options}
+      value={values[key]}
+      isSet={secretsSet.includes(key)}
+      locked={locked.includes(key)}
+      onChange={(v) => set(key, v)}
+    />
+  )
   const current = SECTIONS.find((s) => s.id === section)
 
   return (
@@ -169,7 +187,7 @@ const Settings = () => {
           <h1 className="text-[15px] font-semibold">Settings</h1>
         </div>
         <div className="py-2">
-          {[...SECTIONS, { id: 'app', title: 'App' }].map((s) => (
+          {[...SECTIONS, { id: 'integrations', title: 'Integrations' }, { id: 'app', title: 'App' }].map((s) => (
             <button
               key={s.id}
               onClick={() => setSection(s.id)}
@@ -216,20 +234,19 @@ const Settings = () => {
               <section key={current.id} className="pt-7">
                 <h2 className="mb-1 text-[15px] font-semibold">{current.title}</h2>
                 <p className="mb-1.5 text-[12.5px] text-muted">{current.sub}</p>
-                {current.fields.map(([key, label, hint, type, placeholder]) => (
-                  <Field
-                    key={key}
-                    name={key}
-                    label={label}
-                    hint={hint}
-                    type={type}
-                    placeholder={placeholder}
-                    value={values[key]}
-                    isSet={secretsSet.includes(key)}
-                    locked={locked.includes(key)}
-                    onChange={(v) => set(key, v)}
-                  />
-                ))}
+                {current.fields.map(([key, label, hint, type, placeholder]) =>
+                  field(key, label, hint, type, placeholder)
+                )}
+              </section>
+            )}
+            {ready && section === 'integrations' && (
+              <section className="pt-7">
+                <h2 className="mb-1 text-[15px] font-semibold">Integrations</h2>
+                <p className="text-[12.5px] text-muted">
+                  Cloud backends for the background jobs (briefs, judging, reflection), so they don’t
+                  take the GPU from Ohm.
+                </p>
+                <Integrations field={field} values={values} />
               </section>
             )}
             {section === 'app' && (
@@ -269,7 +286,7 @@ const Row = ({ label, hint, children, htmlFor = undefined }) => (
   </div>
 )
 
-const Field = ({ name, label, hint, type, placeholder, value, isSet, locked, onChange }) => {
+const Field = ({ name, label, hint, type, placeholder, options = undefined, value, isSet, locked, onChange }) => {
   const [show, setShow] = useState(false)
   const browse = async () => {
     const r = await dialog('showOpenDialog', {
@@ -319,6 +336,29 @@ const Field = ({ name, label, hint, type, placeholder, value, isSet, locked, onC
     )
   }
 
+  if (type === 'select') {
+    return (
+      <Row label={label} hint={<>{hint && <span>{hint}</span>}{note}</>} htmlFor={name}>
+        <span className="relative block">
+          <select
+            id={name}
+            value={value || placeholder || options[0]}
+            disabled={locked}
+            onChange={(e) => onChange(e.target.value)}
+            className="field cursor-pointer appearance-none pr-8 font-mono text-[12.5px] disabled:cursor-not-allowed disabled:opacity-60 [&>option]:bg-panel"
+          >
+            {options.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+          <LuChevronDown className="pointer-events-none absolute top-2.5 right-2.5 size-4 text-muted" />
+        </span>
+      </Row>
+    )
+  }
+
   return (
     <Row
       label={label}
@@ -334,7 +374,7 @@ const Field = ({ name, label, hint, type, placeholder, value, isSet, locked, onC
         <input
           id={name}
           className="field font-mono text-[12.5px] disabled:opacity-60"
-          type={type === 'secret' && !show ? 'password' : 'text'}
+          type={type === 'secret' && !show ? 'password' : type === 'number' ? 'number' : 'text'}
           placeholder={
             type !== 'secret'
               ? placeholder

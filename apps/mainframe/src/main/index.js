@@ -25,6 +25,7 @@ import {
 import { health } from './health.js'
 import { nasCall } from './nas.js'
 import { getSettings, saveSettings, setting } from './settings.js'
+import { brainStatus, installTool, openSignIn } from './brain.js'
 
 function createWindow() {
   // Create the browser window.
@@ -126,6 +127,13 @@ app.whenReady().then(() => {
       restartCurator().catch((e) => console.error(`[curator] ${e.message}`))
     return saved
   })
+
+  // Settings › Integrations: the brain's backends. Install output is sent back line by line.
+  ipcMain.handle('brain-status', () => brainStatus())
+  ipcMain.handle('brain-install', (event, name) =>
+    installTool(name, (line) => event.sender.send('brain-install-output', name, line))
+  )
+  ipcMain.handle('brain-sign-in', (event, name) => openSignIn(name))
 
   // Characters live on the NAS when its address is set (see characters.js).
   ipcMain.handle('get-characters', () => listCharacters())

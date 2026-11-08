@@ -13,7 +13,7 @@ import { join } from 'path'
 import { app } from 'electron'
 import axios from 'axios'
 import { appDir, python } from './python.js'
-import { childEnv, setting } from './settings.js'
+import { BRAIN_KEYS, childEnv, setting } from './settings.js'
 
 const PORT = Number(setting('CURATOR_PORT') || 8200)
 const URL = `http://127.0.0.1:${PORT}`
@@ -88,7 +88,9 @@ export const CURATOR_SETTINGS = [
   'CURATOR_LLM_URL',
   'CURATOR_PYTHON',
   'CURATOR_TRAIN_VRAM_GB',
-  'CURATOR_TRAIN_SIMULATE'
+  'CURATOR_TRAIN_SIMULATE',
+  // The Curator calls the brain too (curating, judging, labelling)
+  ...BRAIN_KEYS
 ]
 
 /** Replace the running service with a new one that has the current settings. Training runs carry on

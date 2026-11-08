@@ -31,6 +31,11 @@ declare global {
       nas: (method: string, path: string, body?: any) => Promise<any>
       getSettings: () => Promise<{ values: Record<string, string>; locked: string[]; file: string }>
       saveSettings: (values: Record<string, string>) => Promise<any>
+
+      brainStatus: () => Promise<any>
+      installTool: (name: 'codex' | 'claude') => Promise<{ ok: boolean; code?: number; output: string }>
+      openSignIn: (name: 'codex' | 'claude') => Promise<{ ok: boolean }>
+      onInstallOutput: (fn: (name: string, line: string) => void) => () => void
     }
   }
 }

@@ -37,7 +37,16 @@ const api = {
   health: (days) => ipcRenderer.invoke('health', days),
   nas: (method, path, body) => ipcRenderer.invoke('nas', method, path, body),
   getSettings: () => ipcRenderer.invoke('get-settings'),
-  saveSettings: (values) => ipcRenderer.invoke('save-settings', values)
+  saveSettings: (values) => ipcRenderer.invoke('save-settings', values),
+
+  brainStatus: () => ipcRenderer.invoke('brain-status'),
+  installTool: (name) => ipcRenderer.invoke('brain-install', name),
+  openSignIn: (name) => ipcRenderer.invoke('brain-sign-in', name),
+  onInstallOutput: (fn) => {
+    const listener = (event, name, line) => fn(name, line)
+    ipcRenderer.on('brain-install-output', listener)
+    return () => ipcRenderer.removeListener('brain-install-output', listener)
+  }
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
