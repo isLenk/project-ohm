@@ -63,7 +63,10 @@ CREATE TABLE memories (
     embedding        vector(384) NOT NULL,
     importance       real NOT NULL DEFAULT 0.5,  -- 0..1
     user_ids         text[] NOT NULL DEFAULT '{}',
-    kind             text NOT NULL DEFAULT 'event', -- event | summary
+    kind             text NOT NULL DEFAULT 'event', -- event | summary, and from reflection: topic (something to bring up),
+                                                   -- joke (an inside joke: the quote and who was there), opinion (what the
+                                                   -- character thinks and why), question (something to ask someone),
+                                                   -- self (how the character has changed lately)
     created_at       timestamptz NOT NULL DEFAULT now(),
     last_recalled_at timestamptz
 );
@@ -126,6 +129,46 @@ CREATE TABLE messages (
     created_at     timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ON messages (character, channel_id, created_at DESC);
+CREATE INDEX messages_character_id_idx ON messages (character, id); -- reflection counts messages after an id
+
+-- ── Reflection ────────────────────────────────────────────────────────────
+-- The NAS queues a job once enough has been said and the chat has gone quiet; the PC's Curator runs it.
+CREATE TABLE reflections (
+    id           bigserial PRIMARY KEY,
+    character    text NOT NULL REFERENCES characters(slug) ON DELETE CASCADE,
+    status       text NOT NULL DEFAULT 'pending',  -- pending | running | done | failed
+    from_id      bigint NOT NULL DEFAULT 0,        -- first message id covered, exclusive: the previous reflection's to_id
+    to_id        bigint NOT NULL,                  -- last message id covered
+    messages     int NOT NULL DEFAULT 0,           -- how many
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    started_at   timestamptz,
+    finished_at  timestamptz,
+    result       jsonb,                            -- what it wrote: counts and a short summary
+    error        text
+);
+CREATE INDEX reflections_character_status_idx ON reflections (character, status);
+-- One open job per character, so the loop and the app's Reflect now can't both queue the same messages.
+CREATE UNIQUE INDEX reflections_one_open_idx ON reflections (character) WHERE status IN ('pending', 'running');
+
+CREATE TABLE traits (                          -- personality dials reflection nudges over time
+    character    text NOT NULL REFERENCES characters(slug) ON DELETE CASCADE,
+    trait        text NOT NULL,                  -- 'sarcastic'
+    value        real NOT NULL,                  -- 0..1
+    floor        real NOT NULL DEFAULT 0.1,      -- the personality can drift but never flip
+    ceiling      real NOT NULL DEFAULT 0.9,
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (character, trait)
+);
+
+CREATE TABLE trait_history (
+    id           bigserial PRIMARY KEY,
+    character    text NOT NULL REFERENCES characters(slug) ON DELETE CASCADE,
+    trait        text NOT NULL,
+    value        real NOT NULL,
+    reason       text,                           -- one line on why it moved
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX trait_history_idx ON trait_history (character, trait, created_at DESC);
 
 -- ── Discord ───────────────────────────────────────────────────────────────
 CREATE TABLE guild_settings (
@@ -144,7 +187,7 @@ CREATE TABLE channel_settings (
 CREATE TABLE logs (
     id           bigserial PRIMARY KEY,
     level        text NOT NULL DEFAULT 'info',
-    source       text,                            -- bot | tts | stt | controller
+    source       text,                            -- bot | tts | stt | controller | brain | mood | reflect
     message      text NOT NULL,
     data         jsonb,
     created_at   timestamptz NOT NULL DEFAULT now()
@@ -180,3 +223,7 @@ CREATE TABLE feedback (
 
 -- Starter character so memories can be stored right away.
 INSERT INTO characters (slug, name, model) VALUES ('ohm', 'Ohm', 'gemma-4-e4b-uncensored');
+-- Where Ohm's personality starts; reflection moves these within each trait's floor and ceiling.
+INSERT INTO traits (character, trait, value) VALUES
+    ('ohm', 'sarcastic', 0.6), ('ohm', 'blunt', 0.5), ('ohm', 'wholesome', 0.3),
+    ('ohm', 'chaotic', 0.4), ('ohm', 'curious', 0.4), ('ohm', 'talkative', 0.4);

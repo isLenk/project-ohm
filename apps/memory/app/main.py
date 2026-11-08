@@ -5,6 +5,8 @@ Every route except /health requires the X-API-Key header.
 """
 
 import os
+import threading
+import time
 from datetime import datetime
 from typing import Any, Optional
 
@@ -27,6 +29,17 @@ MODEL_CACHE = os.getenv("MODEL_CACHE", "/models")
 W_SIM, W_IMPORTANCE, W_RECENCY = 0.7, 0.2, 0.1
 RECENCY_HALF_LIFE_DAYS = 30
 CANDIDATES = 50  # nearest neighbours fetched before re-ranking
+
+# Reflection: the NAS decides when the PC should look back over a stretch of conversation.
+# Voice is most of the traffic, so it goes by how much was said and whether it's over, not a clock.
+REFLECT_CHECK_MINUTES = int(os.getenv("REFLECT_CHECK_MINUTES", 10))  # how often to look
+REFLECT_MIN_MESSAGES = int(os.getenv("REFLECT_MIN_MESSAGES", 40))  # fewer than this isn't worth a cloud call
+REFLECT_QUIET_MINUTES = int(os.getenv("REFLECT_QUIET_MINUTES", 30))  # wait until the conversation is over, so a session is reflected on whole
+REFLECT_STALE_MINUTES = int(os.getenv("REFLECT_STALE_MINUTES", 60))  # a running job older than this is retried (the PC probably went off)
+REFLECT_RETRY_MINUTES = 60  # after a failed job, wait before queueing the same messages again so a broken worker isn't hammered
+
+# A trait can drift with what happens in chat but never flip into its opposite.
+TRAIT_FLOOR, TRAIT_CEILING = 0.1, 0.9
 
 pool = ConnectionPool(
     DATABASE_URL,
@@ -82,6 +95,50 @@ run("ALTER TABLE users ADD COLUMN IF NOT EXISTS username text", fetch="none")
 run("ALTER TABLE users ADD COLUMN IF NOT EXISTS aliases text[] NOT NULL DEFAULT '{}'", fetch="none")
 # Their Discord avatar, for the app's people lists.
 run("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text", fetch="none")
+# Reflection jobs, queued here and run by the PC's Curator.
+run(
+    "CREATE TABLE IF NOT EXISTS reflections (id bigserial PRIMARY KEY, "
+    "character text NOT NULL REFERENCES characters(slug) ON DELETE CASCADE, status text NOT NULL DEFAULT 'pending', "
+    "from_id bigint NOT NULL DEFAULT 0, to_id bigint NOT NULL, messages int NOT NULL DEFAULT 0, "
+    "created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz, "
+    "result jsonb, error text)",
+    fetch="none",
+)
+run("CREATE INDEX IF NOT EXISTS reflections_character_status_idx ON reflections (character, status)", fetch="none")
+# One open job per character, so the loop and the app's Reflect now can't both queue the same messages.
+run(
+    "CREATE UNIQUE INDEX IF NOT EXISTS reflections_one_open_idx ON reflections (character) "
+    "WHERE status IN ('pending', 'running')",
+    fetch="none",
+)
+# The loop counts a character's messages after an id every few minutes.
+run("CREATE INDEX IF NOT EXISTS messages_character_id_idx ON messages (character, id)", fetch="none")
+run(
+    "CREATE TABLE IF NOT EXISTS traits (character text NOT NULL REFERENCES characters(slug) ON DELETE CASCADE, "
+    "trait text NOT NULL, value real NOT NULL, floor real NOT NULL DEFAULT 0.1, ceiling real NOT NULL DEFAULT 0.9, "
+    "updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (character, trait))",
+    fetch="none",
+)
+run(
+    "CREATE TABLE IF NOT EXISTS trait_history (id bigserial PRIMARY KEY, "
+    "character text NOT NULL REFERENCES characters(slug) ON DELETE CASCADE, trait text NOT NULL, value real NOT NULL, "
+    "reason text, created_at timestamptz NOT NULL DEFAULT now())",
+    fetch="none",
+)
+run("CREATE INDEX IF NOT EXISTS trait_history_idx ON trait_history (character, trait, created_at DESC)", fetch="none")
+# Where Ohm's personality starts. Only seeded while he has no traits, so reflection's changes are kept.
+run(
+    """
+    INSERT INTO traits (character, trait, value)
+    SELECT 'ohm', t.trait, t.value
+    FROM (VALUES ('sarcastic', 0.6), ('blunt', 0.5), ('wholesome', 0.3), ('chaotic', 0.4),
+                 ('curious', 0.4), ('talkative', 0.4)) AS t (trait, value)
+    WHERE EXISTS (SELECT 1 FROM characters WHERE slug = 'ohm')
+      AND NOT EXISTS (SELECT 1 FROM traits WHERE character = 'ohm')
+    ON CONFLICT DO NOTHING
+    """,
+    fetch="none",
+)
 
 
 # ── Health ──────────────────────────────────────────────────────────────────
@@ -574,6 +631,26 @@ def recent_messages(character: str, channel_id: Optional[str] = None, limit: int
     return list(reversed(rows))  # oldest first, ready for a prompt
 
 
+@app.get("/messages", dependencies=auth)
+def list_messages(character: str, after_id: Optional[int] = None, before_id: Optional[int] = None, limit: int = 500):
+    """Messages in the order they were logged, with ids strictly between `after_id` and `before_id`.
+
+    This is what reflection reads. Page through a long stretch by passing the last id back as `after_id`.
+    """
+    return run(
+        f"""
+        SELECT m.id, m.role, m.user_id, CASE WHEN m.role = 'user' THEN {NAME} END AS name,
+               m.content, m.source, m.channel_id, m.created_at
+        FROM messages m LEFT JOIN users u ON u.discord_id = m.user_id
+        WHERE m.character = %(c)s
+          AND (%(a)s::bigint IS NULL OR m.id > %(a)s::bigint)
+          AND (%(b)s::bigint IS NULL OR m.id < %(b)s::bigint)
+        ORDER BY m.id LIMIT %(n)s
+        """,
+        {"c": character, "a": after_id, "b": before_id, "n": min(limit, 2000)},
+    )
+
+
 # ── Activity (the controller's dashboard) ───────────────────────────────────
 NAME = "COALESCE(u.preferred_name, u.display_name, u.discord_id)"
 
@@ -666,6 +743,10 @@ def stats(character: str, days: int = 7, tz: str = "UTC"):
         "hours": [{"hour": h, "heard": by_hour.get(h, {}).get("heard", 0),
                    "replied": by_hour.get(h, {}).get("replied", 0)} for h in range(24)],
         "top": top,
+        "reflections": run(
+            "SELECT max(finished_at) FILTER (WHERE status = 'done') AS last_at, "
+            "count(*) FILTER (WHERE status = 'pending') AS pending FROM reflections WHERE character = %s",
+            (character,), "one"),
     }
 
 
@@ -751,14 +832,35 @@ class LogIn(BaseModel):
     data: Optional[dict] = None
 
 
-@app.post("/logs", dependencies=auth)
-def add_log(l: LogIn):
+def log(message: str, source: Optional[str] = None, level: str = "info", data: Optional[dict] = None):
     run(
         "INSERT INTO logs (level, source, message, data) VALUES (%s, %s, %s, %s)",
-        (l.level, l.source, l.message, Jsonb(l.data) if l.data is not None else None),
+        (level, source, message, Jsonb(data) if data is not None else None),
         fetch="none",
     )
+
+
+@app.post("/logs", dependencies=auth)
+def add_log(l: LogIn):
+    log(l.message, l.source, l.level, l.data)
     return {"ok": True}
+
+
+@app.get("/logs", dependencies=auth)
+def list_logs(source: Optional[str] = None, level: Optional[str] = None, since: Optional[datetime] = None,
+              limit: int = 100):
+    """Newest first. `source` is a comma list (brain,mood,reflect), which is how the app shows each feed."""
+    sources = [s.strip() for s in source.split(",") if s.strip()] if source else None
+    return run(
+        """
+        SELECT id, level, source, message, data, created_at FROM logs
+        WHERE (%(s)s::text[] IS NULL OR source = ANY(%(s)s::text[]))
+          AND (%(l)s::text IS NULL OR level = %(l)s::text)
+          AND (%(t)s::timestamptz IS NULL OR created_at > %(t)s::timestamptz)
+        ORDER BY created_at DESC, id DESC LIMIT %(n)s
+        """,
+        {"s": sources, "l": level, "t": since, "n": min(limit, 500)},
+    )
 
 
 class MetricIn(BaseModel):
@@ -785,3 +887,245 @@ def add_metric(m: MetricIn):
         fetch="none",
     )
     return {"ok": True}
+
+
+# ── Relationships ───────────────────────────────────────────────────────────
+class RelationshipPatch(BaseModel):
+    affinity_delta: Optional[float] = None  # added to the current affinity (after `affinity`, if both are sent)
+    affinity: Optional[float] = None        # set outright
+    notes: Optional[str] = None             # replaces the notes
+
+
+@app.get("/relationships", dependencies=auth)
+def list_relationships(character: str):
+    """How the character feels about each person, warmest first."""
+    return run(
+        f"""
+        SELECT r.user_id, {NAME} AS name, r.affinity, r.notes, r.updated_at
+        FROM user_relationships r JOIN users u ON u.discord_id = r.user_id
+        WHERE r.character = %s
+        ORDER BY r.affinity DESC, r.updated_at DESC
+        """,
+        (character,),
+    )
+
+
+@app.patch("/relationships/{character}/{user_id}", dependencies=auth)
+def patch_relationship(character: str, user_id: str, p: RelationshipPatch):
+    """Creates the row the first time. Affinity stays within -1 (hates) .. 1 (loves)."""
+    return run(
+        f"""
+        WITH r AS (
+            INSERT INTO user_relationships (character, user_id, affinity, notes)
+            VALUES (%(c)s, %(u)s,
+                    greatest(-1, least(1, COALESCE(%(a)s::real, 0) + COALESCE(%(d)s::real, 0))), %(n)s::text)
+            ON CONFLICT (character, user_id) DO UPDATE SET
+                affinity = greatest(-1, least(1, COALESCE(%(a)s::real, user_relationships.affinity)
+                                                 + COALESCE(%(d)s::real, 0))),
+                notes = COALESCE(%(n)s::text, user_relationships.notes),
+                updated_at = now()
+            RETURNING *
+        )
+        SELECT r.user_id, {NAME} AS name, r.affinity, r.notes, r.updated_at
+        FROM r JOIN users u ON u.discord_id = r.user_id
+        """,
+        {"c": character, "u": user_id, "a": p.affinity, "d": p.affinity_delta, "n": p.notes},
+        "one",
+    )
+
+
+# ── Reflection ──────────────────────────────────────────────────────────────
+# The NAS queues a job when enough has been said and the chat has gone quiet; the PC's Curator polls
+# /reflections/due, claims it, reads /messages, writes memories, relationships and traits, then finishes it.
+class ReflectionFinish(BaseModel):
+    result: Optional[dict] = None  # counts and a short summary of what it wrote
+    error: Optional[str] = None    # set when it failed; the job is marked failed instead of done
+
+
+def queue_reflection(character: str, min_messages: int, quiet_minutes: Optional[int], retry_minutes: Optional[int]):
+    """Queue a job for every message since the last finished reflection. Returns the row, or None when it isn't due.
+
+    The unique index on open jobs means a second job for the same character is simply not inserted.
+    """
+    return run(
+        """
+        WITH last AS (
+            SELECT COALESCE(max(to_id), 0) AS id FROM reflections WHERE character = %(c)s AND status = 'done'
+        )
+        INSERT INTO reflections (character, from_id, to_id, messages)
+        SELECT %(c)s, last.id, max(m.id), count(m.id)
+        FROM last JOIN messages m ON m.character = %(c)s AND m.id > last.id
+        GROUP BY last.id
+        HAVING count(m.id) >= %(min)s
+           AND (%(q)s::int IS NULL OR max(m.created_at) < now() - make_interval(mins => %(q)s::int))
+           AND (%(r)s::int IS NULL OR NOT EXISTS (
+                SELECT 1 FROM reflections f WHERE f.character = %(c)s AND f.status = 'failed'
+                  AND f.finished_at > now() - make_interval(mins => %(r)s::int)))
+        ON CONFLICT (character) WHERE status IN ('pending', 'running') DO NOTHING
+        RETURNING *
+        """,
+        {"c": character, "min": max(min_messages, 1), "q": quiet_minutes, "r": retry_minutes},
+        "one",
+    )
+
+
+def reflect_tick():
+    for row in run(
+        "UPDATE reflections SET status = 'pending', started_at = NULL "
+        "WHERE status = 'running' AND started_at < now() - make_interval(mins => %s) RETURNING id, character",
+        (REFLECT_STALE_MINUTES,),
+    ):
+        log(f"Reflection {row['id']} for {row['character']} took too long, queued it again", "reflect", "warning",
+            {"reflection_id": row["id"], "character": row["character"]})
+    for c in run("SELECT slug FROM characters"):
+        job = queue_reflection(c["slug"], REFLECT_MIN_MESSAGES, REFLECT_QUIET_MINUTES, REFLECT_RETRY_MINUTES)
+        if job:
+            log(f"Queued a reflection for {c['slug']}: {job['messages']} new messages", "reflect",
+                data={"reflection_id": job["id"], "character": c["slug"], "messages": job["messages"]})
+
+
+def reflect_loop():
+    while True:
+        try:
+            reflect_tick()
+        except Exception as e:  # a bad tick (database restarting, ...) waits for the next one
+            print(f"reflect tick failed: {e!r}", flush=True)
+            try:
+                log(f"Reflection check failed: {e!r}", "reflect", "error")
+            except Exception:
+                pass
+        time.sleep(REFLECT_CHECK_MINUTES * 60)
+
+
+@app.on_event("startup")
+def start_reflect_loop():
+    threading.Thread(target=reflect_loop, name="reflect", daemon=True).start()
+
+
+@app.get("/reflections", dependencies=auth)
+def list_reflections(character: Optional[str] = None, limit: int = 20):
+    return run(
+        "SELECT * FROM reflections WHERE (%(c)s::text IS NULL OR character = %(c)s::text) ORDER BY id DESC LIMIT %(n)s",
+        {"c": character, "n": min(limit, 200)},
+    )
+
+
+@app.get("/reflections/due", dependencies=auth)
+def due_reflection():
+    """The oldest pending job of any character, or null. Looking doesn't claim it."""
+    return run("SELECT * FROM reflections WHERE status = 'pending' ORDER BY id LIMIT 1", fetch="one")
+
+
+@app.post("/reflections/request", dependencies=auth)
+def request_reflection(character: str):
+    """The app's Reflect now: queue everything since the last reflection, however little, without waiting for quiet."""
+    job = queue_reflection(character, 1, None, None)
+    if job:
+        log(f"Queued a reflection for {character}: {job['messages']} new messages (asked for)", "reflect",
+            data={"reflection_id": job["id"], "character": character, "messages": job["messages"]})
+        return job
+    if run("SELECT 1 FROM reflections WHERE character = %s AND status IN ('pending', 'running')", (character,), "one"):
+        raise HTTPException(409, "A reflection is already pending or running")
+    raise HTTPException(409, "Nothing new to reflect on")
+
+
+@app.post("/reflections/{reflection_id}/claim", dependencies=auth)
+def claim_reflection(reflection_id: int):
+    """Mark a pending job running. `after_id`/`before_id` are the /messages bounds to read (both exclusive)."""
+    row = run(
+        "UPDATE reflections SET status = 'running', started_at = now() WHERE id = %s AND status = 'pending' RETURNING *",
+        (reflection_id,),
+        "one",
+    )
+    if not row:
+        if not run("SELECT 1 FROM reflections WHERE id = %s", (reflection_id,), "one"):
+            raise HTTPException(404, "Reflection not found")
+        raise HTTPException(409, "Reflection is not pending")
+    return {**row, "after_id": row["from_id"], "before_id": row["to_id"] + 1}
+
+
+@app.post("/reflections/{reflection_id}/finish", dependencies=auth)
+def finish_reflection(reflection_id: int, f: ReflectionFinish):
+    """Done, or failed when `error` is sent. A job put back to pending as stale can still be finished by its worker."""
+    row = run(
+        """
+        UPDATE reflections SET status = %s, finished_at = now(), result = %s, error = %s
+        WHERE id = %s AND status IN ('pending', 'running') RETURNING *
+        """,
+        ("failed" if f.error else "done", Jsonb(f.result) if f.result is not None else None, f.error, reflection_id),
+        "one",
+    )
+    if not row:
+        if not run("SELECT 1 FROM reflections WHERE id = %s", (reflection_id,), "one"):
+            raise HTTPException(404, "Reflection not found")
+        raise HTTPException(409, "Reflection is already finished")
+    if f.error:
+        log(f"Reflection {reflection_id} for {row['character']} failed: {f.error}", "reflect", "error",
+            {"reflection_id": reflection_id, "character": row["character"]})
+    else:
+        summary = (f.result or {}).get("summary")
+        log(f"Reflection {reflection_id} for {row['character']} done" + (f": {summary}" if summary else ""), "reflect",
+            data={"reflection_id": reflection_id, "character": row["character"], "result": f.result})
+    return row
+
+
+# ── Traits ──────────────────────────────────────────────────────────────────
+# Personality dials (0..1) reflection nudges over time, each kept between its floor and ceiling.
+class TraitIn(BaseModel):
+    trait: str
+    value: float
+    reason: Optional[str] = None  # one line on why it moved, shown in the history
+
+
+class TraitsIn(BaseModel):
+    traits: list[TraitIn]
+
+
+def _traits(character: str):
+    return run(
+        "SELECT trait, value, floor, ceiling, updated_at FROM traits WHERE character = %s ORDER BY trait",
+        (character,),
+    )
+
+
+@app.get("/traits", dependencies=auth)
+def get_traits(character: str, days: int = 30):
+    return {
+        "traits": _traits(character),
+        "history": run(
+            "SELECT trait, value, reason, created_at FROM trait_history "
+            "WHERE character = %s AND created_at >= now() - make_interval(days => %s) ORDER BY created_at",
+            (character, days),
+        ),
+    }
+
+
+@app.put("/traits/{character}", dependencies=auth)
+def put_traits(character: str, t: TraitsIn):
+    """Set trait values, clamped to each trait's floor and ceiling. Only values that changed go in the history."""
+    try:
+        with pool.connection() as conn, conn.transaction():
+            for item in t.traits:
+                name = item.trait.strip().lower()
+                if not name:
+                    continue
+                old = conn.execute(
+                    "SELECT value, floor, ceiling FROM traits WHERE character = %s AND trait = %s FOR UPDATE",
+                    (character, name),
+                ).fetchone()
+                floor, ceiling = (old["floor"], old["ceiling"]) if old else (TRAIT_FLOOR, TRAIT_CEILING)
+                value = min(max(item.value, floor), ceiling)
+                if old and abs(old["value"] - value) < 1e-4:  # stored as real, so compare loosely
+                    continue
+                conn.execute(
+                    "INSERT INTO traits (character, trait, value, floor, ceiling) VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (character, trait) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                    (character, name, value, floor, ceiling),
+                )
+                conn.execute(
+                    "INSERT INTO trait_history (character, trait, value, reason) VALUES (%s, %s, %s, %s)",
+                    (character, name, value, item.reason),
+                )
+    except errors.ForeignKeyViolation:
+        raise HTTPException(404, "Character not found")
+    return _traits(character)
