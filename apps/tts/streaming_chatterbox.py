@@ -11,6 +11,8 @@ few seconds of audio) with the same noise and HiFiGAN source, so the region that
 was already sent comes out (nearly) identical and the seam is crossfaded.
 """
 import logging
+import math
+import os
 import time
 
 import numpy as np
@@ -23,7 +25,7 @@ from transformers.generation.logits_process import (
     TopKLogitsWarper,
     TopPLogitsWarper,
 )
-from RealtimeTTS import ChatterboxEngine
+from RealtimeTTS import ChatterboxEngine, ChatterboxVoice
 from RealtimeTTS.engines.base_engine import BaseEngine
 from chatterbox.tts_turbo import punc_norm, S3GEN_SIL
 from chatterbox.models.s3gen.s3gen import S3Token2Mel
@@ -35,9 +37,13 @@ LOOKAHEAD = 3                # flow drops the last 3 tokens when finalize=False
 
 class StreamingChatterboxEngine(ChatterboxEngine):
 
-    def __init__(self, *args, first_chunk_tokens=12, chunk_tokens=32, min_chunk_tokens=6,
+    def __init__(self, voice=None, *args, first_chunk_tokens=12, chunk_tokens=32, min_chunk_tokens=6,
                  low_water_ms=400, crossfade_ms=20, watermark=True, speed=0.95, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(None, *args, **kwargs)
+        # Chatterbox Turbo's own voice (conds.pt), to go back to after a cloned one
+        self._builtin_conds = self._model.conds
+        self._voice_conds = {}  # (clip path, mtime) -> its encoded conditionals
+        self.use_voice(voice)
         # Speaking rate: < 1 is slower. Done by stretching the mels in time (CosyVoice's method), so pitch stays put
         self.speed = speed
         # When to vocode: the first pass after first_chunk_tokens (small, so audio starts fast). After that,
@@ -47,6 +53,11 @@ class StreamingChatterboxEngine(ChatterboxEngine):
         self.chunk_tokens = chunk_tokens
         self.min_chunk_tokens = min_chunk_tokens
         self.low_water = low_water_ms / 1000
+        # How long a vocode pass and a T3 step take lately (moving averages, seconds). A pass costs about
+        # the same no matter how few tokens it adds (the CFM decoder re-runs over the whole voice prompt),
+        # so when the GPU is shared and everything slows down, small passes can't keep up with playback.
+        self._pass_s = 0.1
+        self._token_s = 0.01
         # Estimate of where playback is: audio sent since playback (re)started, and when it started.
         # Carries across sentences, so a sentence that starts while the last one is still playing can wait.
         self._play_start = 0.0
@@ -56,6 +67,25 @@ class StreamingChatterboxEngine(ChatterboxEngine):
         # we bypass generate() so apply it ourselves, per chunk (~10ms each)
         self.watermark = watermark
         self.edge_margin = int(self.sampling_rate * 0.1)  # 100ms
+
+    def use_voice(self, path=None):
+        """Speak as the reference clip at `path` (5s+ of one person talking), or the built-in voice for None.
+        Each clip is encoded once (~1s) and kept, so switching back to a character later is instant.
+        Raises (and keeps the current voice) when the clip can't be used, e.g. it's under 5 seconds."""
+        if path is None:
+            self._model.conds = self._builtin_conds
+            self.voice = None
+            self._prepared_voice_path = None
+            return
+        path = os.path.abspath(path)
+        key = (path, os.path.getmtime(path))  # a clip replaced under the same name gets encoded again
+        if key not in self._voice_conds:
+            logging.info("Encoding Chatterbox prompt: %s", path)
+            self._model.prepare_conditionals(path, exaggeration=self.exaggeration, norm_loudness=self.norm_loudness)
+            self._voice_conds[key] = self._model.conds
+        self._model.conds = self._voice_conds[key]
+        self.voice = ChatterboxVoice(audio_prompt_path=path)
+        self._prepared_voice_path = path  # so synthesize()'s set_voice() sees it's already loaded
 
     # ── T3: speech tokens, one at a time ──────────────────────────────────────
     def _speech_tokens(self, text_tokens, max_gen_len=1000):
@@ -177,6 +207,18 @@ class StreamingChatterboxEngine(ChatterboxEngine):
         ? Playback really starts a bit after we send, so this errs on the low side, which is the safe side"""
         return self._play_audio - ((now or time.perf_counter()) - self._play_start)
 
+    def _tokens_to_keep_up(self, headroom=1.5):
+        """Fewest new tokens a pass has to add for the audio it makes to outlast the time it takes
+        (generating those tokens plus the pass itself), with some headroom.
+        ? Without this, running low meant vocoding every min_chunk_tokens, and with the GPU busy
+        (LLM, game, stream encoder) each pass took longer than the audio it added: ~0.25s of
+        speech, then ~0.35s of nothing, over and over"""
+        per_token = SAMPLES_PER_TOKEN / self.speed / self.sampling_rate   # seconds of audio per token
+        spare = per_token - headroom * self._token_s
+        if spare <= 0:
+            return self.chunk_tokens   # T3 alone can't keep up, so make passes as rare as possible
+        return min(self.chunk_tokens, math.ceil(headroom * self._pass_s / spare))
+
     def _trim_tail(self, audio):
         """Drop trailing silence (the stock engine trimmed each sentence; we can only trim the end)."""
         loud = np.nonzero(np.abs(audio) > self.silence_threshold)[0]
@@ -239,19 +281,29 @@ class StreamingChatterboxEngine(ChatterboxEngine):
                 self._emit(out)
                 sent += cut
 
+            step = None             # when the last T3 step ended (None: the first one also reads the text, don't count it)
             for token in self._speech_tokens(text_tokens):
                 if self.stop_synthesis_event.is_set():
                     return True
-                if token.item() < SPEECH_VOCAB:
+                # token.item() waits for the GPU, so this is the real time of one T3 step
+                is_speech = token.item() < SPEECH_VOCAB
+                now = time.perf_counter()
+                if step is not None:
+                    self._token_s += 0.05 * (now - step - self._token_s)
+                if is_speech:
                     tokens.append(token.view(1))
                 new = len(tokens) - vocoded
-                need = self.first_chunk_tokens if not vocoded else self.min_chunk_tokens
+                need = max(self.first_chunk_tokens if not vocoded else self.min_chunk_tokens,
+                           self._tokens_to_keep_up())
                 if new >= self.chunk_tokens or (new >= need and self._ahead() < self.low_water):
                     wav, src = self._vocode(torch.cat(tokens), False, noise, seed,
                                             source[:, :, :sent] if source is not None else None)
+                    # (_vocode ends by copying the audio to the CPU, so the GPU work is done by here)
+                    self._pass_s += 0.3 * (time.perf_counter() - now - self._pass_s)
                     source = src
                     push(wav, final=False)
                     vocoded = len(tokens)
+                step = time.perf_counter()
 
             if tokens and not self.stop_synthesis_event.is_set():
                 wav, _ = self._vocode(torch.cat(tokens), True, noise, seed,

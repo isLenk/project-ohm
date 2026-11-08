@@ -5,9 +5,25 @@ from fastapi.responses import StreamingResponse
 from RealtimeTTS import TextToAudioStream
 from streaming_chatterbox import StreamingChatterboxEngine
 import threading
+from pathlib import Path
 from typing import Union
 from queue import Queue
 from dependencies import cprint, create_wave_header_for_engine, log, chunk_queue, text_queue
+
+# Reference clips characters can speak as. The Characters page imports them here and a character
+# stores the file name (characters.voice.file on the NAS).
+VOICES_DIR = Path(__file__).parent / "voices"
+
+
+def voice_path(name: str) -> Path:
+    """The clip called `name` in voices/. Only a bare file name is accepted, so a request can't reach outside it."""
+    if not name or Path(name).name != name:
+        raise ValueError(f"Not a voice file name: {name!r}")
+    path = VOICES_DIR / name
+    if not path.is_file():
+        raise FileNotFoundError(f"No voice clip called {name} in {VOICES_DIR}")
+    return path
+
 
 class TTSEngine:
     stream: str
@@ -16,7 +32,10 @@ class TTSEngine:
     chunks_received: int
     pending_feed: Queue
 
+    voice_name: str = ""  # the clip in voices/ being spoken as, "" for the built-in voice
+
     # ? voice=None uses Chatterbox Turbo's built-in (female) voice. Pass a .wav path (5s+) to clone one instead, e.g. "voices/lance.wav"
+    # (characters pick theirs with set_voice)
     def load_engine(self, model_name="chatterbox", voice=None, overwrite=False, *args, **kwargs):
         if hasattr(self, "engine") and overwrite == False and self.engine.engine_name == model_name: 
             cprint("red", "Model already loaded.")
@@ -26,6 +45,7 @@ class TTSEngine:
         self.chunks_received = 0
         # ? Streams audio mid-sentence (~0.3s to first audio instead of waiting for the whole sentence)
         self.engine = StreamingChatterboxEngine(voice=voice, *args, **kwargs)
+        self.voice_name = Path(voice).name if voice else ""
         self.warm_up()
         self.engine_stream = TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop)
         self.pending_feed = Queue() 
@@ -60,6 +80,17 @@ class TTSEngine:
         except Exception:
             pass
     
+    def set_voice(self, name: str = ""):
+        """Speak as voices/<name> from now on, or the built-in voice for "". Blocks while a new clip is
+        encoded (~1s, once per clip). Only call it between replies (under the session lock).
+        Raises ValueError/FileNotFoundError for a bad name and AssertionError for a clip under 5 seconds."""
+        if not hasattr(self, "engine"):
+            raise RuntimeError("No engine loaded.")
+        self.engine.use_voice(str(voice_path(name)) if name else None)
+        if name != self.voice_name:
+            cprint("blue", f"Voice: {name or 'built-in'}")
+        self.voice_name = name
+
     def _ensure_engine(func):
         """Decorator to ensure engine is loaded before running a function"""
         def wrapper(self, *args, **kwargs):

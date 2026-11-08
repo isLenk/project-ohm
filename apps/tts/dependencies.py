@@ -1,3 +1,4 @@
+import asyncio
 import threading
 from fastapi import Depends
 from typing import Annotated
@@ -13,6 +14,10 @@ text_queue = Queue()
 
 # Chunk Queue stores audio chunks to be sent to the client
 chunk_queue = Queue()
+
+# ? The text/audio queues are shared, so only one connection can use the engine at a time.
+# Switching voices takes it too, so a voice never changes in the middle of a reply.
+session_lock = asyncio.Lock()
 
 DEBUG_LOGS_ENABLED = True
 

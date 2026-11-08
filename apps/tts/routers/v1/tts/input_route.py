@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Body, BackgroundTasks
 from fastapi.responses import StreamingResponse
-from dependencies import play_tts_semaphore, tts_lock, chunk_queue, text_queue
+from dependencies import play_tts_semaphore, tts_lock, chunk_queue, text_queue, session_lock
 from engine import engine
 import threading
 import asyncio
@@ -75,11 +75,20 @@ async def send_to_ws(websocket: fastapi.WebSocket):
         print("Send to ws task ended.")
 
 
-# ? The text/audio queues are shared, so only one connection can use the engine at a time
-session_lock = asyncio.Lock()
+async def use_voice(name: str):
+    """Switch to the character's voice for this reply. A clip that can't be used falls back to the
+    built-in voice rather than leaving the last character's voice on."""
+    try:
+        await asyncio.to_thread(engine.set_voice, name)
+    except Exception as e:
+        print(f"Can't use voice {name!r} ({e}), using the built-in voice.")
+        await asyncio.to_thread(engine.set_voice, "")
+
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: fastapi.WebSocket):
+    """?voice=<file in voices/> speaks the reply as that clip ("" for the built-in voice).
+    Without it, the voice set last is kept."""
 
     await websocket.accept()
 
@@ -87,6 +96,9 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
         print("Client connected.")
         # ? Clear out anything left from a previous client that hung up mid-response
         await asyncio.to_thread(engine.reset_stream)
+        voice = websocket.query_params.get("voice")
+        if voice is not None:
+            await use_voice(voice)  # instant unless the clip is new or was replaced
 
         send_to_ws_task = asyncio.create_task(send_to_ws(websocket))
         engine.feed_from_text_queue()
