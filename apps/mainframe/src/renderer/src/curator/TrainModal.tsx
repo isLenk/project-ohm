@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { LuCheck, LuLoader, LuX } from 'react-icons/lu'
-import { get, post, stream } from './api'
-import { cx, fmtDuration, pct } from './util'
+import { followJob, get, post, stream } from './api'
+import { REPLIES_AIM, REPLIES_LOW, cx, fmtDuration, pct } from './util'
 import { Loading } from '../components/Loader'
 
 const STAGES = [
@@ -21,6 +21,8 @@ type Preflight = {
     by_author: { name: string; share: number; count: number }[]
     after_cap: { name: string; share: number; count: number }[]
     dropped: Record<string, number>
+    /** Replies the judge model has and hasn't read (train/checks.py). */
+    checked: { checked: number; unchecked: number }
   }
   gpu: { name: string; total_gb: number; free_gb: number; processes: { pid: number; name: string; used_gb: number }[] } | null
   need_gb: number
@@ -42,18 +44,22 @@ type Run = {
   losses: { step: number; loss: number }[]
 }
 
-type Props = { onClose: () => void; onError: (e: unknown) => void; onFinished: () => void }
+type Props = { onClose: () => void; onError: (e: unknown) => void; onFinished: () => void; onEvaluate: (adapterId: string) => void }
 
-export default function TrainModal({ onClose, onError, onFinished }: Props) {
+export default function TrainModal({ onClose, onError, onFinished, onEvaluate }: Props) {
   const [pre, setPre] = useState<Preflight | null>(null)
   const [run, setRun] = useState<Run | null>(null)
   const [progress, setProgress] = useState<any>(null)
   const [stageTimes, setStageTimes] = useState<Record<string, number>>({})
   const [losses, setLosses] = useState<{ step: number; loss: number }[]>([])
+  // Loss on held-out examples, when the worker measures it (older runs and simulated ones may not).
+  const [evals, setEvals] = useState<{ step: number; loss: number }[]>([])
+  const [evalLoss, setEvalLoss] = useState<{ last: number | null; best: number | null }>({ last: null, best: null })
   const [stop, setStop] = useState<number[]>([])
-  const [ended, setEnded] = useState<{ status: string; error?: string } | null>(null)
+  const [ended, setEnded] = useState<{ status: string; error?: string; adapter_id?: string | null } | null>(null)
   const [now, setNow] = useState(Date.now())
   const [starting, setStarting] = useState(false)
+  const [checking, setChecking] = useState<string | null>(null)
 
   // Attach to a running run, or show the preflight.
   useEffect(() => {
@@ -79,7 +85,15 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
     const close = stream(`/train/runs/${run.id}/events`, (name, d) => {
       if (name === 'progress') {
         setProgress(d)
-        if (d.loss != null) setLosses((l) => (l.length && l[l.length - 1].step === d.step ? l : [...l, { step: d.step, loss: d.loss }]))
+        // The stream replays every event so far, so skip steps we already have from run.losses
+        if (d.loss != null) setLosses((l) => (l.some((x) => x.step === d.step) ? l : [...l, { step: d.step, loss: d.loss }].sort((a, b) => a.step - b.step)))
+        if (d.eval_loss != null && d.step != null)
+          setEvals((l) => (l.some((x) => x.step === d.step) ? l : [...l, { step: d.step, loss: d.eval_loss }].sort((a, b) => a.step - b.step)))
+        if (d.eval_loss != null || d.best_eval_loss != null)
+          setEvalLoss((e) => ({ last: d.eval_loss ?? e.last, best: d.best_eval_loss ?? e.best }))
+      } else if (name === 'done') {
+        if (d?.eval_loss != null || d?.best_eval_loss != null)
+          setEvalLoss((e) => ({ last: d.eval_loss ?? e.last, best: d.best_eval_loss ?? e.best }))
       } else if (name === 'stage') setStageTimes((s) => ({ ...s, [d.stage]: d.elapsed_s }))
       else if (name === 'end') {
         setEnded(d)
@@ -94,6 +108,20 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [run, ended])
+
+  // The judge reads every reply that would be trained and the export leaves out the ones that don't answer.
+  const checkReplies = async () => {
+    setChecking('Starting the judge…')
+    try {
+      const j = await post<{ id: string }>('/train/check-replies')
+      await followJob(j.id, (p) => setChecking(p.note || 'Checking…'))
+      setPre(await get<Preflight>('/train/preflight'))
+    } catch (e) {
+      onError(e)
+    } finally {
+      setChecking(null)
+    }
+  }
 
   const start = async () => {
     setStarting(true)
@@ -123,12 +151,17 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
     if (losses.length < 2) return null
     const w = 360
     const h = 56
-    const max = Math.max(...losses.map((l) => l.loss))
-    const min = Math.min(...losses.map((l) => l.loss))
+    // One scale for both lines, so a gap between them reads as overfitting
+    const all = [...losses, ...evals].map((l) => l.loss)
+    const max = Math.max(...all)
+    const min = Math.min(...all)
     const total = progress?.total_steps || losses[losses.length - 1].step
-    const pts = losses.map((l) => `${(l.step / total) * w},${4 + (1 - (l.loss - min) / (max - min || 1)) * (h - 8)}`)
-    return { d: `M${pts.join(' L')}`, w, h }
-  }, [losses, progress?.total_steps])
+    const xy = (l: { step: number; loss: number }) => `${(l.step / total) * w},${4 + (1 - (l.loss - min) / (max - min || 1)) * (h - 8)}`
+    return { d: `M${losses.map(xy).join(' L')}`, evalD: evals.length > 1 ? `M${evals.map(xy).join(' L')}` : null, w, h }
+  }, [losses, evals, progress?.total_steps])
+
+  // What the adapter learns from: Ohm's turns across every example, after the author cap.
+  const replies = pre ? pre.export.after_cap.reduce((n, a) => n + a.count, 0) : 0
 
   const statusIcon = (i: number, key: string) => {
     const doneStage = ended?.status === 'succeeded' || i < stageIndex
@@ -167,7 +200,18 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
                 <div className="text-xs text-muted">From conversations</div>
                 <div className="mt-1.5 font-mono text-[26px]">{pre.export.conversations}</div>
               </div>
+              <div>
+                <div className="text-xs text-muted">Replies to learn from</div>
+                <div className={cx('mt-1.5 font-mono text-[26px]', replies < REPLIES_LOW && 'text-[#E0B25C]')}>{replies.toLocaleString()}</div>
+                <div className="mt-0.5 text-xs text-muted">aim for {REPLIES_AIM.toLocaleString()}+</div>
+              </div>
             </div>
+            {replies > 0 && replies < REPLIES_LOW && (
+              <p className="text-[13px] leading-relaxed text-[#E0B25C]">
+                Under {REPLIES_LOW.toLocaleString()} replies the LoRA mostly memorizes these few conversations instead of learning how the group talks. Use “Find good
+                conversations” under the conversation list to approve more first.
+              </p>
+            )}
             {pre.export.after_cap.length > 0 && (
               <div>
                 <div className="mb-2 text-xs text-muted">Examples per person after the author cap</div>
@@ -191,6 +235,27 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
             <p className="text-xs text-muted">
               Left out: {Object.entries(pre.export.dropped).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ') || 'nothing'}.
             </p>
+            {pre.export.checked && (
+              <div className="flex items-center gap-3 text-xs leading-relaxed text-muted">
+                <span className="flex-1">
+                  {checking ? (
+                    <span className="inline-flex items-center gap-2">
+                      <LuLoader className="size-3.5 animate-spin" />
+                      {checking}. Ohm’s llama-server is stopped until it’s done.
+                    </span>
+                  ) : pre.export.checked.unchecked ? (
+                    `The judge model hasn’t checked ${pre.export.checked.unchecked.toLocaleString()} of these replies yet. Replies it says don’t answer the message before them are left out, so Ohm doesn’t learn to ignore people.`
+                  ) : (
+                    'The judge model has checked every reply.'
+                  )}
+                </span>
+                {!checking && pre.export.checked.unchecked > 0 && (
+                  <button onClick={checkReplies} className="h-8 shrink-0 rounded-md border border-line px-3 text-[12.5px] text-gray-200 hover:bg-menu-hover">
+                    Check them
+                  </button>
+                )}
+              </div>
+            )}
             {!pre.trainable && !pre.simulate && (
               <p className="text-[13px] text-[#E0B25C]">
                 This model has no Hugging Face weights to train on. Set them under “Trains on” in the model menu.
@@ -269,13 +334,23 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
                   </div>
                   {key === 'train' && spark && (
                     <div className="mb-2 ml-8 flex items-end gap-3">
-                      <svg role="img" aria-label="Training loss" width={spark.w} height={spark.h} className="max-w-full">
+                      <svg role="img" aria-label={spark.evalD ? 'Training loss, and eval loss dashed' : 'Training loss'} width={spark.w} height={spark.h} className="max-w-full">
                         <path d={spark.d} fill="none" stroke="#ECECEE" strokeWidth={1.5} />
+                        {spark.evalD && <path d={spark.evalD} fill="none" stroke="#5EC8E5" strokeWidth={1.5} strokeDasharray="4 3" />}
                       </svg>
                       <span className="text-xs leading-relaxed text-muted">
                         loss <span className="font-mono text-gray-100">{losses[losses.length - 1].loss.toFixed(2)}</span>
                         <br />
                         from <span className="font-mono">{losses[0].loss.toFixed(2)}</span>
+                        {evalLoss.last != null && (
+                          <>
+                            <br />
+                            <span title="Loss on held-out examples it doesn't train on. If it rises while loss falls, it's memorizing.">
+                              eval <span className="font-mono text-[#5EC8E5]">{evalLoss.last.toFixed(2)}</span>
+                              {evalLoss.best != null && <> · best <span className="font-mono">{evalLoss.best.toFixed(2)}</span></>}
+                            </span>
+                          </>
+                        )}
                       </span>
                     </div>
                   )}
@@ -313,10 +388,18 @@ export default function TrainModal({ onClose, onError, onFinished }: Props) {
           {!run && pre && (
             <button
               onClick={start}
-              disabled={starting || pre.export.examples === 0 || (!pre.trainable && !pre.simulate) || (!pre.simulate && !pre.gpu)}
+              disabled={starting || !!checking || pre.export.examples === 0 || (!pre.trainable && !pre.simulate) || (!pre.simulate && !pre.gpu)}
               className="h-9 rounded-md bg-gray-100 px-3.5 text-[13px] font-semibold text-ink hover:bg-white disabled:opacity-40"
             >
               {starting ? 'Starting…' : pre.export.examples === 0 ? 'Approve a conversation first' : 'Start training'}
+            </button>
+          )}
+          {ended?.status === 'succeeded' && ended.adapter_id && (
+            <button
+              onClick={() => onEvaluate(ended.adapter_id!)}
+              className="h-9 rounded-md border border-line px-3.5 text-[13px] text-gray-300 hover:bg-menu-hover"
+            >
+              Score it
             </button>
           )}
           {ended && (

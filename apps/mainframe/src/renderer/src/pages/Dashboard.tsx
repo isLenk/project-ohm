@@ -35,7 +35,7 @@ const Dashboard = () => {
   const { active } = useCharacters()
   const engine = useEngine()
   const [days, setDays] = useState<number>(7)
-  const [tab, setTab] = useState<'people' | 'convs'>('people')
+  const [tab, setTab] = useState<'people' | 'convs' | 'search'>('people')
   const [person, setPerson] = useState<string | null>(null)
   const [logTab, setLogTab] = useState('all')
   const slug = active?.id
@@ -58,6 +58,16 @@ const Dashboard = () => {
         : Promise.resolve([]),
     5000,
     [slug, who]
+  )
+  const searches = usePoll(
+    () =>
+      slug && tab === 'search'
+        ? window.api.getSearches
+          ? window.api.getSearches(slug, 200)
+          : Promise.reject(new Error('restart the app to load it'))
+        : Promise.resolve(null),
+    5000,
+    [slug, tab]
   )
   const health = usePoll(() => window.api.health(days), 10000, [days])
   const logs = usePoll(() => window.api.getLogs(60), 3000)
@@ -189,9 +199,19 @@ const Dashboard = () => {
                 >
                   Conversations
                 </button>
+                <button
+                  role="tab"
+                  aria-selected={tab === 'search'}
+                  className="tab text-[12.5px]"
+                  onClick={() => setTab('search')}
+                >
+                  Web search
+                </button>
               </div>
             </div>
-            {tab === 'people' ? (
+            {tab === 'search' ? (
+              <Searches list={searches.data} error={searches.error} days={days} />
+            ) : tab === 'people' ? (
               <div className="flex min-h-0 flex-1">
                 <div
                   role="listbox"
@@ -421,6 +441,79 @@ const Dashboard = () => {
           </section>
         </div>
       </div>
+    </div>
+  )
+}
+
+type Search = {
+  _id: string
+  said: string
+  query: string
+  results: { title: string; body: string; href: string }[]
+  error: string | null
+  ms: number | null
+  at: string
+}
+
+/** Every web search Ohm made in the range: what was said, what he searched, and what came back. */
+const Searches = ({ list, error, days }: { list: Search[] | null; error: string | null; days: number }) => {
+  const [open, setOpen] = useState<string | null>(null)
+  const from = Date.now() - days * 86400000
+  const shown = (list ?? [])
+    .filter((s) => new Date(s.at).getTime() >= from)
+    .map((s) => ({ ...s, results: s.results ?? [] }))
+  return (
+    <div className="min-h-0 flex-1 overflow-auto">
+      {shown.map((s) => (
+        <div key={s._id} className="border-b border-[#1c1d20]">
+          <button
+            aria-expanded={open === s._id}
+            onClick={() => setOpen(open === s._id ? null : s._id)}
+            title={s.said}
+            className="grid min-h-10 w-full cursor-pointer grid-cols-[58px_minmax(0,1fr)_auto_52px] items-center gap-3 px-3.5 text-left text-[13px] text-[#c9cbd1] hover:bg-[#17181a]"
+          >
+            <span className="text-right font-mono text-[11px] text-muted">
+              {fmtTime(s.at)}
+              <span className="block text-[10px]">{fmtDay(s.at)}</span>
+            </span>
+            <span className="truncate font-medium text-gray-100">{s.query}</span>
+            {s.error ? (
+              <span className="text-[11.5px] text-bad">failed</span>
+            ) : (
+              <Tag>
+                {s.results.length} result{s.results.length === 1 ? '' : 's'}
+              </Tag>
+            )}
+            <span className="text-right font-mono text-[11px] text-muted">{ms(s.ms)}</span>
+          </button>
+          {open === s._id && (
+            <div className="flex flex-col gap-2 px-3.5 pb-3 pl-[86px] text-[12.5px]">
+              <p className="text-muted">
+                Asked: <span className="text-[#d6d7db]">{s.said}</span>
+              </p>
+              {s.error && <p className="font-mono text-[11.5px] text-bad">{s.error}</p>}
+              {s.results.map((r, i) => (
+                <div key={i} className="leading-snug">
+                  <a
+                    href={r.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-gray-100 hover:underline"
+                  >
+                    {r.title || r.href}
+                  </a>
+                  <p className="line-clamp-2 text-[#b9bbc1]">{r.body}</p>
+                </div>
+              ))}
+              {!s.error && s.results.length === 0 && <p className="text-muted">Nothing came back.</p>}
+            </div>
+          )}
+        </div>
+      ))}
+      {error && <p className="px-3.5 py-3 text-xs text-muted">Web search: {error}</p>}
+      {list && shown.length === 0 && (
+        <p className="px-3.5 py-3 text-xs text-muted">No web searches in this range.</p>
+      )}
     </div>
   )
 }

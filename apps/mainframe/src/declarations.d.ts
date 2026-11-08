@@ -8,8 +8,12 @@ declare global {
       addCharacter: (character: any) => Promise<any>
       updateCharacter: (character: any) => Promise<any>
       deleteCharacter: (id: string) => Promise<any>
+      listVoices: () => Promise<string[]>
+      importVoice: (name: string, bytes: ArrayBuffer) => Promise<string>
+      loadVoice: (file: string) => Promise<{ loaded: boolean }>
       openDialog: (method: string, params: any) => Promise<any>
       getLogs: (count?: number) => Promise<any[]>
+      getSearches: (character?: string, count?: number) => Promise<any[]>
       curatorConfig: () => Promise<{ url: string; token: string }>
 
       listModules: () => Promise<any[]>

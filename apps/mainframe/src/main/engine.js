@@ -4,14 +4,18 @@
    (tools/_run_script.cmd) is noticed through its heartbeat and shown as running, and
    Stop ends it too, though that script starts it again on its own.
    Every start, stop and crash goes into events.db, which is where uptime comes from.
+   Its output also goes to apps/engine/engine.log (crash.log next to it has native crashes).
 */
 import { execFile, spawn } from 'child_process'
+import { createWriteStream, existsSync, renameSync, statSync } from 'fs'
+import { join } from 'path'
 import { addEvent, addLog } from './db.js'
 import { appDir, python } from './python.js'
 import { childEnv } from './settings.js'
 
 const HEARTBEAT_TIMEOUT = 20000 // ms of silence before a main.py we didn't start counts as gone
 const OUTPUT_LINES = 300
+const LOG_MAX_BYTES = 20 * 1024 * 1024 // past this, the log is moved to engine.prev.log on the next start
 
 let child = null
 let state = 'stopped' // stopped | starting | running | stopping
@@ -22,6 +26,23 @@ let stopping = false
 let silent = false // already logged that our main.py stopped answering
 const output = []
 const listeners = new Set()
+let logFile = null
+
+/** engine.log, appended to across runs so the output from before a crash is still there afterwards. */
+function openLog() {
+  const path = join(appDir('engine'), 'engine.log')
+  try {
+    if (existsSync(path) && statSync(path).size > LOG_MAX_BYTES)
+      renameSync(path, join(appDir('engine'), 'engine.prev.log'))
+    const stream = createWriteStream(path, { flags: 'a' })
+    stream.on('error', (e) => console.error(`[engine] can't write engine.log: ${e.message}`))
+    stream.write(`\n--- main.py started ${new Date().toISOString()} ---\n`)
+    return stream
+  } catch (e) {
+    console.error(`[engine] can't open engine.log: ${e.message}`)
+    return null
+  }
+}
 
 export function onEngineChange(fn) {
   listeners.add(fn)
@@ -53,6 +74,7 @@ export const engineOutput = () => output.join('')
 function keep(chunk) {
   process.stdout.write(`[engine] ${chunk}`)
   output.push(String(chunk))
+  logFile?.write(chunk)
   if (output.length > OUTPUT_LINES) output.splice(0, output.length - OUTPUT_LINES)
 }
 
@@ -81,6 +103,8 @@ export function startEngine() {
   })
   pid = child.pid
   startedAt = new Date()
+  logFile?.end()
+  logFile = openLog()
   child.stdout.on('data', keep)
   child.stderr.on('data', keep)
   child.on('error', (e) => {
@@ -95,6 +119,7 @@ export function startEngine() {
   child.on('exit', (code) => {
     const crashed = !stopping
     if (crashed) addLog('error', `main.py exited on its own (code ${code})`)
+    logFile?.write(`--- main.py exited (code ${code}${crashed ? ', crashed' : ''}) ---\n`)
     child = null
     pid = null
     startedAt = null

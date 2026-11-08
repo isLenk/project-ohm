@@ -219,8 +219,8 @@ const EnginePanel = ({ llm: first, onClose }) => {
           </Link>
         </div>
         <p className="px-4 pb-3 text-[11.5px] leading-relaxed text-muted">
-          Playing a different character card switches the model. Stopping the Python side takes Ohm
-          offline in Discord.
+          Playing a different character card switches the model and restarts the Python side as
+          that character. Stopping it takes them offline in Discord.
         </p>
       </div>
     </>

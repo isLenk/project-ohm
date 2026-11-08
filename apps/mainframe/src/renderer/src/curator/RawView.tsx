@@ -14,6 +14,7 @@ type Props = {
   onError: (e: unknown) => void
   openInThreads: (messageId: string) => void
   onApprove: (c: ConversationStats) => void
+  onUnapprove: (c: ConversationStats) => void
   /** The conversation the header acts on, marked down the left edge. */
   currentId?: number
   /** The conversation an Approve button is hovered for: marked green. */
@@ -23,7 +24,7 @@ type Props = {
   hideBots: boolean
 }
 
-export default function RawView({ feed, onSplit, onMerge, onError, openInThreads, onApprove, currentId, approvingId, onApproving, hideBots }: Props) {
+export default function RawView({ feed, onSplit, onMerge, onError, openInThreads, onApprove, onUnapprove, currentId, approvingId, onApproving, hideBots }: Props) {
   const scroller = useRef<HTMLDivElement>(null)
   const pendingUp = useRef<number | null>(null)
   const rows = useRef(new Map<string, HTMLElement>())
@@ -99,6 +100,11 @@ export default function RawView({ feed, onSplit, onMerge, onError, openInThreads
                     className="text-muted underline underline-offset-2 hover:text-[#6CCB98]"
                   >
                     Approve
+                  </button>
+                )}
+                {c.approved && (
+                  <button onClick={() => onUnapprove(c)} className="text-muted underline underline-offset-2 hover:text-bad">
+                    Unapprove
                   </button>
                 )}
                 <button

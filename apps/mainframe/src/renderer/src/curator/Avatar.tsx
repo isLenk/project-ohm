@@ -17,9 +17,10 @@ function sized(url: string, px: number) {
 }
 
 // A person's icon: their Discord avatar ringed in their color, or a colored initial if there is no avatar.
-// colorIndex overrides who.color_index (blocks carry their own copy).
-export function Avatar({ who, colorIndex, size, className }: { who: Who | undefined; colorIndex?: number; size: number; className?: string }) {
-  const c = color(colorIndex ?? who?.color_index)
+// colorIndex overrides who.color_index (blocks carry their own copy); tint overrides both (the main app
+// colors people by id, not by a Curator color index).
+export function Avatar({ who, colorIndex, tint, size, className }: { who: Who | undefined; colorIndex?: number; tint?: string; size: number; className?: string }) {
+  const c = tint ?? color(colorIndex ?? who?.color_index)
   const url = who?.avatar_url || null
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
   const failed = !!url && (failedUrl === url || broken.has(url))

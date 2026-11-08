@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LuAlignLeft, LuArchive, LuBot, LuBrain, LuCheck, LuFilePlus, LuGitBranch, LuLoader, LuMerge, LuSearch, LuSparkles, LuX } from 'react-icons/lu'
-import { CuratorError, call, dialog, followJob, get, post, type ConversationStats, type EditResult } from './api'
+import { LuAlignLeft, LuArchive, LuBot, LuBrain, LuCheck, LuFilePlus, LuGitBranch, LuLoader, LuMerge, LuSearch, LuSparkles, LuWandSparkles, LuX } from 'react-icons/lu'
+import { CuratorError, call, dialog, followJob, get, post, type BulkApproved, type Candidate, type ConversationStats, type EditResult, type Restore } from './api'
 import { useFeed } from './useFeed'
 import { useHistory, type Step } from './history'
 import { Avatar } from './Avatar'
@@ -11,15 +11,15 @@ import RawView from './RawView'
 import MemoriesView from './MemoriesView'
 import SearchPalette from './SearchPalette'
 import TrainModal from './TrainModal'
+import EvalModal from './EvalModal'
+import FindGood from './FindGood'
+import { TermPicker } from './TermPicker'
 import { ModelMenu, SaveMenu } from './Menus'
 import { approveHover, color, cx, fmtDay, fmtDuration, fmtRange, pct } from './util'
 import { LoadingOverlay, Spinner, useBusy } from '../components/Loader'
 
 type View = 'threads' | 'raw' | 'memories'
 type Filter = 'all' | 'approved' | 'archived'
-
-/** A link as it was before approval accepted it; POST /links/restore puts it back. */
-type Restore = { unit_kind: 'block' | 'message'; unit_id: string; link: { parent_id: string | null; status: string; origin: string; score: number | null } }
 
 /** What undo/redo steps call on the page (always this render's versions). */
 type Ops = {
@@ -29,6 +29,8 @@ type Ops = {
   doSplit: (messageId: string) => Promise<{ before?: ConversationStats; after?: ConversationStats; was: boolean }>
   doMerge: (id: number, firstMessageId: string) => Promise<ConversationStats>
   mergeApprovals: (c: ConversationStats) => { aboveWas: boolean; ownWas: boolean }
+  doBulk: (ids: number[]) => Promise<BulkApproved>
+  refreshAll: () => Promise<void>
 }
 type ProjectInfo = { open: boolean; path?: string; name?: string; dirty?: boolean; saved_at?: number | null; recent?: string[] }
 
@@ -55,6 +57,9 @@ export default function CuratorPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [searching, setSearching] = useState(false)
   const [training, setTraining] = useState(false)
+  const [evaluating, setEvaluating] = useState<string | null>(null)
+  // Find good conversations: 'hidden' while you look at one of its sample in the feed (it keeps its state).
+  const [finding, setFinding] = useState<'open' | 'hidden' | null>(null)
   const [activeRun, setActiveRun] = useState<{ overall: number } | null>(null)
   const [confirm, setConfirm] = useState<{ conv: ConversationStats; suggested: number; unattached: number } | null>(null)
   const [person, setPerson] = useState<string | null>(null)
@@ -584,7 +589,64 @@ export default function CuratorPage() {
     }
   }
 
-  ops.current = { applyEdit, applyConv, doApprove, doSplit, doMerge, mergeApprovals }
+  // ── bulk approval (Find good conversations) ─────────────────────────────
+  /** After many conversations changed at once: refetch the list and feed rather than patch them. */
+  const refreshAll = async () => {
+    markDirty()
+    loadConvs()
+    // Reload around the conversation in the header, without scrolling, so the approval tint and solid arrows show.
+    await feed.reset(current?.first_message_id, false).catch(onError)
+    if (current) get<ConversationStats>(`/conversations/${current.id}`).then(setCurrent).catch(() => {})
+  }
+
+  const doBulk = async (ids: number[]) => {
+    const r = await post<BulkApproved>('/conversations/approve-bulk', { ids })
+    await refreshAll()
+    return r
+  }
+
+  // `live` is shared with the panel's own Undo button, so the step can only be undone once,
+  // whichever of the two gets there first.
+  const bulkUndo = (r: BulkApproved, live = { on: true }): Step => ({
+    label: `approving ${r.approved.length.toLocaleString()} conversations`,
+    run: async () => {
+      if (!live.on) return null
+      live.on = false
+      await post('/conversations/unapprove-bulk', { ids: r.approved, accepted: r.accepted })
+      await ops.current.refreshAll()
+      return bulkStep(r.approved)
+    }
+  })
+  const bulkStep = (ids: number[]): Step => ({
+    label: `approving ${ids.length.toLocaleString()} conversations`,
+    run: async () => bulkUndo(await ops.current.doBulk(ids))
+  })
+
+  const approveBulk = async (ids: number[]) => {
+    const r = await doBulk(ids)
+    const step = bulkUndo(r)
+    history.record(step)
+    say(`Approved ${r.approved.length.toLocaleString()} conversations. Ctrl+Z undoes it.`)
+    return {
+      count: r.approved.length,
+      undo: async () => {
+        await step.run()
+      }
+    }
+  }
+
+  const rejectCandidate = async (id: number) => {
+    applyConv(await post<ConversationStats>(`/conversations/${id}/archive`), false)
+    history.record(flagStep(id, 'unarchive'))
+  }
+
+  const openCandidate = (cand: Candidate) => {
+    setFinding('hidden')
+    jumpTo(cand.first_message_id, view === 'memories' ? 'threads' : view)
+    get<ConversationStats>(`/conversations/${cand.id}`).then(setCurrent).catch(onError)
+  }
+
+  ops.current = { applyEdit, applyConv, doApprove, doSplit, doMerge, mergeApprovals, doBulk, refreshAll }
 
   const jumpTo = (messageId: string, to: View = 'threads') => {
     setView(to)
@@ -702,7 +764,8 @@ export default function CuratorPage() {
   const c = current
 
   return (
-    <div className="flex h-full min-h-0 flex-wrap overflow-hidden">
+    // data-terms: Ctrl+click any word in here to define it (TermPicker).
+    <div data-terms className="flex h-full min-h-0 flex-wrap overflow-hidden">
       {/* ── sidebar ── */}
       <nav aria-label="Curator" className="flex h-full w-[300px] max-w-full flex-col border-r border-[#2f3037] bg-ink">
         <div className="flex items-end gap-5 border-b border-[#2f3037] px-5 pt-3">
@@ -823,7 +886,7 @@ export default function CuratorPage() {
             </p>
           )}
         </VirtualRows>
-        <ApprovedFooter refresh={convs} />
+        <ApprovedFooter refresh={convs} onFind={() => setFinding('open')} />
       </nav>
 
       {/* ── main ── */}
@@ -855,7 +918,7 @@ export default function CuratorPage() {
             <LuBot className="size-4" />
             {hideBots && <span className="absolute top-1/2 left-1/2 h-[1.5px] w-5 -translate-x-1/2 -translate-y-1/2 -rotate-45 rounded bg-current" />}
           </button>
-          <ModelMenu onError={onError} refreshKey={modelsKey} />
+          <ModelMenu onError={onError} refreshKey={modelsKey} onEvaluate={setEvaluating} />
           {guessAll ? (
             <span className="flex h-9 items-center gap-2 rounded-md border border-line pr-1 pl-3 text-[13px]" title="The model is guessing reply arrows for every unattached block">
               <LuSparkles className="size-4 shrink-0 text-[#A78BFA]" />
@@ -952,8 +1015,15 @@ export default function CuratorPage() {
               <LuArchive className="size-4" />
             </button>
             {c.approved ? (
-              <button onClick={() => setFlag(c, 'unapprove')} className="flex h-9 items-center gap-2 rounded-md border border-line px-3.5 text-[13px] hover:bg-raised">
-                <LuCheck className="size-4 text-[#6CCB98]" /> Approved
+              <button
+                onClick={() => setFlag(c, 'unapprove')}
+                title="Take approval off. It won't be exported or trained on until you approve it again; Ctrl+Z undoes it."
+                className="group/unapprove flex h-9 items-center gap-2 rounded-md border border-line px-3.5 text-[13px] hover:bg-raised"
+              >
+                <LuCheck className="size-4 text-[#6CCB98] group-hover/unapprove:hidden group-focus-visible/unapprove:hidden" />
+                <LuX className="hidden size-4 text-bad group-hover/unapprove:block group-focus-visible/unapprove:block" />
+                <span className="group-hover/unapprove:hidden group-focus-visible/unapprove:hidden">Approved</span>
+                <span className="hidden group-hover/unapprove:inline group-focus-visible/unapprove:inline">Unapprove</span>
               </button>
             ) : (
               <button
@@ -984,6 +1054,7 @@ export default function CuratorPage() {
                 approvingId={approvingId}
                 onApproving={setApprovingId}
                 onApprove={approve}
+                onUnapprove={(conv) => setFlag(conv, 'unapprove')}
                 hideBots={hideBots}
               />
             )}
@@ -998,6 +1069,7 @@ export default function CuratorPage() {
                 approvingId={approvingId}
                 onApproving={setApprovingId}
                 onApprove={approve}
+                onUnapprove={(conv) => setFlag(conv, 'unapprove')}
                 hideBots={hideBots}
               />
             )}
@@ -1009,6 +1081,7 @@ export default function CuratorPage() {
         )}
       </main>
 
+      <TermPicker onDirty={markDirty} onError={onError} />
       {searching && (
         <SearchPalette
           authors={feed.authors}
@@ -1035,7 +1108,31 @@ export default function CuratorPage() {
             setModelsKey((k) => k + 1)
             setActiveRun(null)
           }}
+          onEvaluate={(id) => {
+            setTraining(false)
+            setEvaluating(id)
+          }}
         />
+      )}
+      {evaluating && <EvalModal adapterId={evaluating} onClose={() => setEvaluating(null)} onError={onError} />}
+      {finding && (
+        <FindGood
+          hidden={finding === 'hidden'}
+          authors={feed.authors}
+          onClose={() => setFinding(null)}
+          onOpen={openCandidate}
+          onReject={rejectCandidate}
+          onApprove={approveBulk}
+          onError={onError}
+        />
+      )}
+      {finding === 'hidden' && (
+        <button
+          onClick={() => setFinding('open')}
+          className="fixed right-5 bottom-5 z-40 flex h-9 items-center gap-2 rounded-md border border-[#3a3b42] bg-[#1d1e22] px-3.5 text-[13px] shadow-xl hover:bg-menu-hover"
+        >
+          <LuWandSparkles className="size-4" /> Back to Find good conversations
+        </button>
       )}
       {confirm && (
         <Dialog
@@ -1067,7 +1164,7 @@ export default function CuratorPage() {
   )
 }
 
-function ApprovedFooter({ refresh }: { refresh: unknown }) {
+function ApprovedFooter({ refresh, onFind }: { refresh: unknown; onFind: () => void }) {
   const [counts, setCounts] = useState<{ approved: number; conversations: number } | null>(null)
   useEffect(() => {
     get('/project')
@@ -1088,6 +1185,13 @@ function ApprovedFooter({ refresh }: { refresh: unknown }) {
         <div className="h-full bg-gray-100" style={{ width: pct(share) }} />
       </div>
       <p className="text-xs text-muted">Only approved conversations are exported.</p>
+      <button
+        onClick={onFind}
+        title="Approve many good conversations at once, after skimming a sample"
+        className="mt-1 flex h-8 items-center justify-center gap-2 rounded-md border border-line text-[13px] hover:bg-raised"
+      >
+        <LuWandSparkles className="size-4" /> Find good conversations…
+      </button>
     </div>
   )
 }

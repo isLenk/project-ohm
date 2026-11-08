@@ -15,6 +15,7 @@ type Props = {
   /** Start a new conversation at this message. */
   onSplit: (messageId: string) => void
   onApprove: (c: ConversationStats) => void
+  onUnapprove: (c: ConversationStats) => void
   /** The conversation the header acts on, marked down the left edge. */
   currentId?: number
   /** The conversation an Approve button is hovered for: marked green. */
@@ -41,13 +42,14 @@ type Drag = { kind: 'block' | 'message'; unitId: string; from: string; ts: numbe
 
 const HEAD = 9
 // Arrow trunks: first lane's x in the gutter, distance between lanes, and how many fit before wrapping.
-// The first lane clears the drag handles at x=24.
+// The first lane clears the block dots at x=10.
 const LANE_X0 = 36
 const LANE_STEP = 10
 const LANES = Math.floor((GUTTER - 8 - LANE_X0) / LANE_STEP) + 1
 const LANE_GAP = 10 // px two trunks in one lane must stay apart
+const DRAG_START = 5 // px a press on a message has to move before it drags an arrow instead of clicking
 
-export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge, onSplit, onApprove, currentId, approvingId, onApproving, hideBots }: Props) {
+export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge, onSplit, onApprove, onUnapprove, currentId, approvingId, onApproving, hideBots }: Props) {
   const scroller = useRef<HTMLDivElement>(null)
   const content = useRef<HTMLDivElement>(null)
   const gutter = useRef<HTMLDivElement>(null)
@@ -56,7 +58,7 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
   const [height, setHeight] = useState(0)
   const [hover, setHover] = useState<string | null>(null)
   const [hoverBlock, setHoverBlock] = useState<string | null>(null)
-  // A message under the pointer: if others reply to it, their arrows and lines light up.
+  // A message under the pointer: what it replies to and what replies to it light up, with their arrows.
   const [hoverTarget, setHoverTarget] = useState<string | null>(null)
   const [drag, setDrag] = useState<Drag | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string; ok: boolean } | null>(null)
@@ -111,11 +113,48 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
     return () => ro.disconnect()
   }, [measure])
 
-  // ── jump to a message ───────────────────────────────────────────────────
+  // ── hold the view still ─────────────────────────────────────────────────
+  // The top message on screen and where it is. When the feed reloads (merge, split) or the list
+  // changes size (the header above it rewraps on approve), scroll so it's back in the same spot.
+  const keep = useRef<{ key: string; top: number } | null>(null)
+  const pickKeep = useCallback(() => {
+    const s = scroller.current
+    if (!s) return
+    const edge = s.getBoundingClientRect().top
+    let best: { key: string; top: number } | null = null
+    anchors.current.forEach((el, key) => {
+      if (!key.startsWith('m:')) return // messages survive a reload; conversation dividers may not
+      const top = el.getBoundingClientRect().top
+      if (top >= edge && (!best || top < best.top)) best = { key, top }
+    })
+    keep.current = best
+  }, [])
+  const holdStill = useCallback(() => {
+    const k = keep.current
+    const el = k && anchors.current.get(k.key)
+    if (k && el && scroller.current) {
+      const moved = el.getBoundingClientRect().top - k.top
+      if (Math.abs(moved) >= 1) scroller.current.scrollTop += moved
+    }
+    pickKeep()
+  }, [pickKeep])
+
+  useLayoutEffect(holdStill, [feed.items, hideBots, holdStill])
+
   useEffect(() => {
-    if (!feed.jump) return
+    if (!scroller.current) return
+    const ro = new ResizeObserver(holdStill)
+    ro.observe(scroller.current)
+    return () => ro.disconnect()
+  }, [holdStill])
+
+  // ── jump to a message ───────────────────────────────────────────────────
+  const jumped = useRef<number | null>(null) // each jump happens once, not again when more loads
+  useEffect(() => {
+    if (!feed.jump || jumped.current === feed.jump.nonce) return
     const el = anchors.current.get(`m:${feed.jump.messageId}`)
     if (el) {
+      jumped.current = feed.jump.nonce
       follow.current = false
       let owner: ConversationStats | null = null
       for (const it of feed.items) {
@@ -127,7 +166,10 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
         ;(anchors.current.get(`c:${owner?.id}`) ?? el).scrollIntoView({ block: 'start' })
         return undefined
       }
-      el.scrollIntoView({ block: 'center' })
+      // Already on screen (merging or splitting right there): leave the scroll alone, just flash it
+      const view = scroller.current!.getBoundingClientRect()
+      const r = el.getBoundingClientRect()
+      if (r.top < view.top || r.bottom > view.bottom) el.scrollIntoView({ block: 'center' })
       setFlash(feed.jump.messageId)
       const t = setTimeout(() => setFlash(null), 1600)
       return () => clearTimeout(t)
@@ -139,6 +181,7 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
   const onScroll = useCallback(() => {
     const s = scroller.current
     if (!s) return
+    pickKeep()
     if (s.scrollTop + s.clientHeight > s.scrollHeight - 600 && feed.next) feed.more('down')
     if (s.scrollTop < 300 && feed.prev && pendingUp.current == null) {
       pendingUp.current = s.scrollHeight
@@ -155,7 +198,7 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
       else if (!current) current = it.conversation
     }
     if (follow.current) onCurrent(current)
-  }, [feed, onCurrent])
+  }, [feed, onCurrent, pickKeep])
 
   useEffect(() => {
     onScroll()
@@ -194,11 +237,17 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
   )
   const chunk = useMemo(() => chunks(items), [items])
 
-  // Everything replying to the hovered message: their arrows, and each reply's lines with its author's colour.
+  // The hovered message's conversation around it: everything replying to it (each reply's lines in its
+  // author's colour) and the message it replies to itself (in the colour of its own arrow), with those arrows.
   const replies = useMemo(() => {
     if (!hoverTarget || drag) return null
     const incoming = arrows.filter((a) => a.to === hoverTarget)
-    if (!incoming.length) return null
+    // Its own arrow: a split-off line has one; otherwise it goes with its block's
+    const msg = messages.get(hoverTarget)
+    const outgoing = msg?.link
+      ? arrows.find((a) => a.kind === 'message' && a.unitId === hoverTarget)
+      : arrows.find((a) => a.kind === 'block' && a.unitId === msg?.block_id)
+    if (!incoming.length && !outgoing) return null
     const lines = new Map<string, string>() // message id -> colour
     for (const a of incoming) {
       if (a.kind === 'message') lines.set(a.unitId, color(a.colorIndex))
@@ -208,8 +257,10 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
           ?.messages.filter((m) => !m.link)
           .forEach((m) => lines.set(m.id, color(a.colorIndex)))
     }
-    return { arrows: new Set(incoming.map((a) => a.key)), lines }
-  }, [hoverTarget, drag, arrows, feed.blocks])
+    if (outgoing) lines.set(outgoing.to, color(outgoing.colorIndex))
+    const on = outgoing ? [...incoming, outgoing] : incoming
+    return { arrows: new Set(on.map((a) => a.key)), lines }
+  }, [hoverTarget, drag, arrows, feed.blocks, messages])
 
   // ── edits ───────────────────────────────────────────────────────────────
   const run = useCallback(
@@ -244,20 +295,47 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
     setDrag({ ...d, x: e.clientX - g.left, y: e.clientY - g.top })
   }
 
-  // Clicking a message starts an arrow from its block (Alt: from just that line); the next click picks
-  // what it replies to. A line that's already split off is its own unit either way.
+  // Where an arrow from a message starts. A block's top line stands for the whole block; any other line
+  // in it is just that line (Alt: just the line, even the top one). A split-off line is its own unit.
+  const linkFrom = (b: Block, m: Message, alt: boolean): Omit<Drag, 'x' | 'y'> => {
+    const own = b.messages.filter((x) => !x.link)
+    if (m.link || alt || (own.length > 1 && m.id !== own[0].id)) return { kind: 'message', unitId: m.id, from: `m:${m.id}`, ts: m.ts, blockId: b.id }
+    return { kind: 'block', unitId: b.id, from: `b:${b.id}`, ts: own[0]?.ts ?? m.ts, blockId: b.id }
+  }
+
+  // Clicking a message starts an arrow; the next click picks what it replies to.
   const startLink = (e: React.MouseEvent, b: Block, m: Message) => {
+    if (dragged.current) return // the click that ends a drag from this line
     if (drag || (e.target as HTMLElement).closest('button, a')) return
     if (window.getSelection()?.toString()) return // selecting text to copy, not linking
     const g = gutter.current!.getBoundingClientRect()
-    const at = { x: e.clientX - g.left, y: e.clientY - g.top, click: true }
-    if (m.link || e.altKey) {
-      setDrag({ kind: 'message', unitId: m.id, from: `m:${m.id}`, ts: m.ts, blockId: b.id, ...at })
-    } else {
-      const own = b.messages.filter((x) => !x.link)
-      setDrag({ kind: 'block', unitId: b.id, from: `b:${b.id}`, ts: own[0]?.ts ?? m.ts, blockId: b.id, ...at })
-    }
+    setDrag({ ...linkFrom(b, m, e.altKey), x: e.clientX - g.left, y: e.clientY - g.top, click: true })
   }
+
+  // Pressing a message and moving drags an arrow out of it instead, dropped like a dot's.
+  const press = useRef<{ x: number; y: number; b: Block; m: Message; alt: boolean } | null>(null)
+  const dragged = useRef(false)
+  const pressLine = (e: React.PointerEvent, b: Block, m: Message) => {
+    if (drag || e.button !== 0 || (e.target as HTMLElement).closest('button, a')) return
+    press.current = { x: e.clientX, y: e.clientY, b, m, alt: e.altKey }
+  }
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const p = press.current
+      if (!p || Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_START) return
+      press.current = null
+      window.getSelection()?.removeAllRanges() // the press began selecting text
+      const g = gutter.current!.getBoundingClientRect()
+      setDrag({ ...linkFrom(p.b, p.m, p.alt), x: e.clientX - g.left, y: e.clientY - g.top })
+    }
+    const release = () => (press.current = null)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', release)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', release)
+    }
+  }, [])
 
   useEffect(() => {
     if (!drag) return
@@ -283,6 +361,11 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
       const d = drag
       setDrag(null)
       setDropTarget(null)
+      if (!d.click) {
+        // Letting go over the line it started from would click it and start click mode
+        dragged.current = true
+        setTimeout(() => (dragged.current = false))
+      }
       if (!t || !t.ok) return
       if (d.kind === 'message' && t.sameBlock) {
         // dropped back on its own block: follow the block again
@@ -503,6 +586,15 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
                     <LuCheck className="size-3.5" /> Approve
                   </button>
                 )}
+                {c.approved && (
+                  <button
+                    onClick={() => onUnapprove(c)}
+                    title="Take approval off this conversation; Ctrl+Z undoes it"
+                    className="flex items-center gap-1 rounded border border-line px-2 py-0.5 text-gray-300 opacity-0 group-hover/conv:opacity-100 hover:bg-raised hover:text-white focus:opacity-100"
+                  >
+                    <LuX className="size-3.5" /> Unapprove
+                  </button>
+                )}
                 <span className="h-px flex-1 bg-[#3f4049]" />
                 <span className="text-muted">
                   {c.people} people · {c.messages} msgs
@@ -518,10 +610,13 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
           const parent = b.link?.parent_id ? messages.get(b.link.parent_id) : null
           const ownCount = b.messages.filter((m) => !m.link).length
           const loose = !b.link && b.messages.some((m) => !m.link && !m.excluded)
+          // An arrow over the block's top (its name or first line) replies to the whole block: light it all
+          const blockTarget = first && dropTarget?.id === first.id ? (dropTarget.ok ? '#26364F' : '#3a2323') : null
           return (
             <div
               key={`b${b.id}`}
               className={cx('group/block relative flex gap-3.5 py-2', approveMark(chunk.get(`b${b.id}`), currentId, approvingId))}
+              style={blockTarget ? { backgroundColor: blockTarget, boxShadow: `0 0 0 6px ${blockTarget}`, borderRadius: 6 } : undefined}
               onMouseEnter={() => setHoverBlock(b.id)}
               onMouseLeave={() => setHoverBlock((h) => (h === b.id ? null : h))}
             >
@@ -550,7 +645,7 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
                     {parent?.content_text ?? b.link.parent_preview}
                   </div>
                 )}
-                <div ref={register(`b:${b.id}`)} className="flex items-baseline gap-2.5 leading-[22px]">
+                <div ref={register(`b:${b.id}`)} data-mid={first?.id} className="flex items-baseline gap-2.5 leading-[22px]">
                   <span className="text-[14px] font-semibold text-gray-100">{nameOf(author)}</span>
                   {!!author?.is_bot && <BotTag />}
                   <span className="text-[11.5px] text-muted">{first ? fmtTime(first.ts) : ''}</span>
@@ -579,6 +674,7 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
                     key={m.id}
                     data-mid={m.id}
                     ref={register(`m:${m.id}`)}
+                    onPointerDown={(e) => pressLine(e, b, m)}
                     onClick={(e) => startLink(e, b, m)}
                     onMouseEnter={() => setHoverTarget(m.id)}
                     onMouseLeave={() => setHoverTarget((h) => (h === m.id ? null : h))}
@@ -586,8 +682,10 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
                       'group/line -mx-2 flex items-start gap-2 rounded px-2 text-[14.5px] leading-6',
                       m.excluded ? 'text-muted line-through' : 'text-[#D6D7DB]',
                       flash === m.id && 'bg-[#2B3A55]',
-                      dropTarget?.id === m.id && (dropTarget.ok ? 'bg-[#26364F]' : 'bg-[#3a2323]'),
+                      dropTarget?.id === m.id && m.id !== first?.id && (dropTarget.ok ? 'bg-[#26364F]' : 'bg-[#3a2323]'),
                       replies && hoverTarget === m.id && 'bg-[#2a2c33] text-white',
+                      // no arrows in or out yet: just a faint mark that it's the line under the mouse
+                      !replies && !drag && hoverTarget === m.id && flash !== m.id && 'bg-white/[0.035]',
                       m.link && 'underline decoration-2 underline-offset-4'
                     )}
                     style={{
@@ -679,7 +777,7 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
                 </g>
               )
             })}
-            {/* drag-to-split handles on the hovered block's lines */}
+            {/* drag-to-split handles on the hovered block's lines, left of its bracket */}
             {feed.blocks
               .filter((b) => b.messages.filter((m) => !m.link).length > 1)
               .flatMap((b) =>
@@ -691,7 +789,7 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
                     return (
                       <circle
                         key={`h${m.id}`}
-                        cx={24}
+                        cx={-7}
                         cy={y}
                         r={3.5}
                         fill="#212229"
@@ -710,13 +808,21 @@ export default function ThreadsView({ feed, onEdit, onError, onCurrent, onMerge,
                   })
               )}
             {drag && dragFrom != null && (
-              <path
-                d={`M10 ${dragFrom} C 70 ${dragFrom}, 70 ${drag.y}, ${drag.x} ${drag.y}`}
-                fill="none"
-                stroke="#ECECEE"
-                strokeWidth={2}
-                strokeDasharray="4 4"
-              />
+              <>
+                <path
+                  d={`M10 ${dragFrom} C 70 ${dragFrom}, 70 ${drag.y}, ${drag.x} ${drag.y}`}
+                  fill="none"
+                  stroke="#ECECEE"
+                  strokeWidth={2}
+                  strokeDasharray="4 4"
+                />
+                {/* where it starts: filled for a whole block, hollow for one line (like a split-off line's dot) */}
+                {drag.kind === 'block' ? (
+                  <circle cx={10} cy={dragFrom} r={5} fill="#ECECEE" />
+                ) : (
+                  <circle cx={10} cy={dragFrom} r={4} fill="#212229" stroke="#ECECEE" strokeWidth={2} />
+                )}
+              </>
             )}
           </svg>
 

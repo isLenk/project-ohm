@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   LuChevronDown,
@@ -30,6 +30,19 @@ const toIcon = async (file: File) => {
 const IMPORT = '__import'
 const fileName = (path: string) => path.split(/[\\/]/).pop()
 
+// Chatterbox won't clone from less than this (and only listens to the first ~10 seconds)
+const MIN_CLIP_SECONDS = 5
+const clipSeconds = async (bytes: ArrayBuffer) => {
+  const ctx = new AudioContext()
+  try {
+    return (await ctx.decodeAudioData(bytes.slice(0))).duration
+  } catch {
+    throw new Error("That file couldn't be read as audio.")
+  } finally {
+    ctx.close()
+  }
+}
+
 const Characters = () => {
   const navigate = useNavigate()
   const { list, setList } = useCharacters()
@@ -38,6 +51,12 @@ const Characters = () => {
   const [draft, setDraft] = useState(null) // the character open in the editor
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
+  const [voices, setVoices] = useState<string[]>(null) // clips in apps/tts/voices
+  const voiceInput = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    window.api.listVoices().then(setVoices, () => setVoices([]))
+  }, [])
 
   useEffect(() => {
     if (!draft && list?.length) setDraft(list.find((c) => c.status === 'Active') ?? list[0])
@@ -54,10 +73,16 @@ const Characters = () => {
   const bases = models?.base_models ?? []
   const baseOf = (c) => bases.find((b) => b.id === c?.model?.base_model_id)
   const adapterOf = (c) => models?.adapters.find((a) => a.id === c?.model?.adapter_id)
+  // Names come from the curator; the ids are saved on the card. Without the curator the ids are
+  // still there, so say so instead of looking like nothing was picked.
+  const missing = (what) =>
+    models ? `${what} not found` : modelsError ? `${what} saved, curator offline` : 'Loading…'
   const modelLabel = (c) => {
+    if (!c?.model?.base_model_id) return 'No model picked'
     const base = baseOf(c)
+    if (!base) return missing('Model')
     const adapter = adapterOf(c)
-    return base ? `${base.name}${adapter ? ` + ${adapter.name}` : ''}` : 'No model picked'
+    return `${base.name}${adapter ? ` + ${adapter.name}` : c.model.adapter_id ? ` + ${missing('LoRA')}` : ''}`
   }
 
   const save = async (c) => {
@@ -75,7 +100,8 @@ const Characters = () => {
         status: 'Inactive',
         description: '',
         icon: 'star',
-        model: draft?.model ?? {}
+        model: draft?.model ?? {},
+        voice: {}
       }
       // The NAS assigns the real id (a slug), so use what comes back.
       const saved = (await window.api.addCharacter(fresh)) || fresh
@@ -83,8 +109,40 @@ const Characters = () => {
       setDraft(saved)
     })
 
-  /* One card in play at a time: activate this one, deactivate whichever was, and put its
-     model on llama-server (switching the adapter live, or restarting it for a new base). */
+  /* Puts c's model on llama-server: switches the adapter live, or restarts it for a new base.
+     Returns what to tell the user about it. */
+  const switchModel = async (c, relabel) => {
+    if (!c.model?.base_model_id) return 'Pick a base model to switch the LLM too.'
+    const r = await put('/models/active', {
+      base_model_id: c.model.base_model_id,
+      adapter_id: c.model.adapter_id ?? null
+    })
+    if (!r.llm?.running) return 'Their model loads with the engine.'
+    if (r.applied) return ''
+    relabel(`Restarting llama-server on ${modelLabel(c)}…`)
+    const job = await post('/llm/restart')
+    const result = await followJob(job.id, () => {})
+    return result?.ok
+      ? `Running on ${modelLabel(c)}.`
+      : 'llama-server did not come back. Check its window.'
+  }
+
+  /* Gets the TTS server speaking as c now, so their first voice reply doesn't wait on the clip
+     being encoded. Returns what to tell the user about it. */
+  const switchVoice = async (c, relabel) => {
+    const file = c.voice?.file ?? ''
+    relabel(file ? `Loading ${c.name}'s voice…` : `Switching to the built-in voice…`)
+    try {
+      await window.api.loadVoice(file)
+      return '' // or the TTS server isn't up: the engine loads it when it is
+    } catch (e) {
+      return `Couldn't load ${c.name}'s voice: ${message(e)} They'll use the built-in voice.`
+    }
+  }
+
+  /* One card in play at a time: activate this one, deactivate whichever was, switch the LLM to
+     its model and the TTS to its voice, and restart the engine, which loads the card in play when
+     it starts. */
   const play = (c) =>
     run(`Putting ${c.name} in play…`, async (relabel) => {
       await Promise.all(
@@ -93,28 +151,18 @@ const Characters = () => {
           .map((x) => save({ ...x, status: x.id === c.id ? 'Active' : 'Inactive' }))
       )
       setDraft((d) => (d?.id === c.id ? { ...d, status: 'Active' } : d))
-      if (!c.model?.base_model_id)
-        return setNote(`${c.name} is in play. Pick a base model to switch the LLM too.`)
-      const r = await put('/models/active', {
-        base_model_id: c.model.base_model_id,
-        adapter_id: c.model.adapter_id ?? null
-      })
-      if (r.applied || !r.llm?.running) {
-        setNote(
-          r.llm?.running
-            ? `${c.name} is in play.`
-            : `${c.name} is in play. Their model loads with the engine.`
-        )
-        return
+      const notes = [`${c.name} is in play.`, await switchModel(c, relabel)]
+      // The saved voice, not the editor's: that's what the engine reads from the card
+      notes.push(await switchVoice(characters.find((x) => x.id === c.id) ?? c, relabel))
+      const engine = await window.api.engineStatus()
+      if (engine.external) {
+        // Started by hand: killing it would leave its script and ours both starting one
+        notes.push(`Restart main.py to talk as ${c.name}.`)
+      } else if (engine.state !== 'stopped') {
+        relabel(`Restarting the engine as ${c.name}…`)
+        await window.api.restartEngine()
       }
-      relabel(`Restarting llama-server on ${modelLabel(c)}…`)
-      const job = await post('/llm/restart')
-      const result = await followJob(job.id, () => {})
-      setNote(
-        result?.ok
-          ? `${c.name} is in play on ${modelLabel(c)}.`
-          : 'llama-server did not come back. Check its window.'
-      )
+      setNote(notes.filter(Boolean).join(' '))
     })
 
   const remove = async () => {
@@ -140,14 +188,25 @@ const Characters = () => {
   const editModel = (changes) => edit({ model: { ...draft.model, ...changes } })
 
   // Status is owned by "Play this card", so take the current one rather than the draft's.
+  // Saving the card in play with a different model puts it on llama-server too, like "Play this card".
+  // The bot reads the card on every reply, but the Engine panel and llama-server's own scales would
+  // otherwise keep showing the old LoRA.
   const saveDraft = () =>
-    run('Saving…', async () => {
-      const saved = await save({
-        ...draft,
-        status: characters.find((c) => c.id === draft.id)?.status
-      })
+    run('Saving…', async (relabel) => {
+      const before = characters.find((c) => c.id === draft.id)
+      const saved = await save({ ...draft, status: before?.status })
       setDraft(saved)
-      setNote('Saved.')
+      const ids = (c) => `${c?.model?.base_model_id ?? ''}|${c?.model?.adapter_id ?? ''}`
+      const inPlay = before?.status === 'Active'
+      const switched = inPlay && ids(before) !== ids(saved) ? await switchModel(saved, relabel) : ''
+      // The running engine re-reads the card's voice every 30 seconds; this checks the clip works
+      // and has it encoded by then
+      const voiced =
+        inPlay && (before?.voice?.file ?? '') !== (saved.voice?.file ?? '')
+          ? (await switchVoice(saved, relabel)) ||
+            `${saved.name}'s new voice is used from their next reply (within 30 seconds).`
+          : ''
+      setNote(['Saved.', switched, voiced].filter(Boolean).join(' '))
     })
 
   const pickBase = async (value) => {
@@ -175,6 +234,24 @@ const Characters = () => {
       editModel({ adapter_id: after.adapters[0].id })
     })
   }
+
+  const pickVoice = (value) => {
+    if (value === IMPORT) return voiceInput.current?.click()
+    edit({ voice: value ? { file: value } : {} })
+  }
+
+  const importVoice = (file: File) =>
+    run(`Adding ${file.name}…`, async () => {
+      const bytes = await file.arrayBuffer()
+      const seconds = await clipSeconds(bytes)
+      if (seconds <= MIN_CLIP_SECONDS)
+        throw new Error(
+          `${file.name} is only ${seconds.toFixed(1)} seconds. A voice clip needs more than ${MIN_CLIP_SECONDS} seconds of speech.`
+        )
+      const saved = await window.api.importVoice(file.name, bytes)
+      setVoices(await window.api.listVoices())
+      setDraft((d) => ({ ...d, voice: { file: saved } }))
+    })
 
   const attachProject = async () => {
     const r = await pick({ filters: [{ name: 'Ohm project', extensions: ['ohm'] }] })
@@ -303,6 +380,44 @@ const Characters = () => {
 
             <div className="flex flex-col gap-3.5 border-t border-line pt-4.5">
               <div className="flex items-baseline gap-2.5">
+                <h3 className="text-[13.5px] font-semibold">Voice</h3>
+                <span className="text-xs text-muted">What they sound like in voice calls</span>
+              </div>
+              <label className="flex flex-col gap-1.5 text-[12.5px] text-soft">
+                Voice clip
+                <Select value={draft.voice?.file ?? ''} onChange={pickVoice} disabled={!voices}>
+                  <option value="">Built-in voice</option>
+                  {draft.voice?.file && voices && !voices.includes(draft.voice.file) && (
+                    <option value={draft.voice.file}>
+                      {draft.voice.file} (not in apps/tts/voices)
+                    </option>
+                  )}
+                  {(voices ?? []).map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                  <option value={IMPORT}>Import a voice clip…</option>
+                </Select>
+                <span className="text-xs text-muted">
+                  5 to 10 seconds of one person talking clearly, with no music or background noise.
+                </span>
+              </label>
+              <input
+                ref={voiceInput}
+                type="file"
+                accept=".wav,.flac,.mp3,.ogg"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  e.target.value = '' // so picking the same file again still fires
+                  if (file) importVoice(file)
+                }}
+              />
+            </div>
+
+            <div className="flex flex-col gap-3.5 border-t border-line pt-4.5">
+              <div className="flex items-baseline gap-2.5">
                 <h3 className="text-[13.5px] font-semibold">Model</h3>
                 <span className="text-xs text-muted">Base model, then an optional LoRA on top</span>
               </div>
@@ -310,8 +425,15 @@ const Characters = () => {
 
               <label className="flex flex-col gap-1.5 text-[12.5px] text-soft">
                 Base model
-                <Select value={draft.model?.base_model_id ?? ''} onChange={pickBase}>
+                <Select
+                  value={draft.model?.base_model_id ?? ''}
+                  onChange={pickBase}
+                  disabled={!models}
+                >
                   <option value="">None picked</option>
+                  {draft.model?.base_model_id && !base && (
+                    <option value={draft.model.base_model_id}>{missing('Model')}</option>
+                  )}
                   {bases.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
@@ -337,6 +459,9 @@ const Characters = () => {
                   disabled={!base}
                 >
                   <option value="">None, base model only</option>
+                  {draft.model?.adapter_id && !adapterOf(draft) && (
+                    <option value={draft.model.adapter_id}>{missing('LoRA')}</option>
+                  )}
                   {adapters.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}

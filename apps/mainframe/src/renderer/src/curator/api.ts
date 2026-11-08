@@ -76,6 +76,52 @@ export type EditResult = {
   dirty: boolean
 }
 
+/** A link as it was before approval accepted it; POST /links/restore (or unapprove-bulk) puts it back. */
+export type Restore = {
+  unit_kind: 'block' | 'message'
+  unit_id: string
+  link: { parent_id: string | null; status: string; origin: string; score: number | null }
+}
+
+/** What GET /conversations/candidates checks. Left out = the service's defaults. */
+export type Criteria = {
+  min_messages: number
+  min_people: number
+  max_gap_ms: number
+  max_media: number
+  min_attached: number
+  min_repliers: number
+}
+
+export type Candidate = {
+  id: number
+  channel_id: string
+  first_ts: number
+  last_ts: number
+  first_message_id: string
+  messages: number
+  people: number
+  /** About how many Ohm turns it would add to training. */
+  replies: number
+  repliers: number
+  max_gap_ms: number
+  media: number
+  attached: number
+  authors: string[]
+}
+
+export type Candidates = {
+  criteria: Criteria
+  defaults: Criteria
+  candidates: Candidate[]
+  replies: number
+  skipped: Record<string, number>
+  reasons: Record<string, string>
+  approved: { conversations: number; replies: number }
+}
+
+export type BulkApproved = { approved: number[]; skipped: number[]; accepted: Restore[]; dirty: boolean }
+
 export class CuratorError extends Error {
   status: number
   code: string

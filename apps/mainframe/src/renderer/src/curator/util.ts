@@ -16,6 +16,12 @@ const day = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' 
 
 export const fmtTime = (ms: number) => time.format(new Date(ms))
 export const fmtDay = (ms: number) => day.format(new Date(ms))
+const dayYear = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+/** "Nov 5 · 9:18 PM", with the year when it isn't this year: memories can be about a particular day. */
+export const fmtWhen = (ms: number) => {
+  const d = new Date(ms)
+  return `${(d.getFullYear() === new Date().getFullYear() ? day : dayYear).format(d)} · ${time.format(d)}`
+}
 export const fmtRange = (a: number, b: number) => `${fmtTime(a)} – ${fmtTime(b)}`
 
 export function fmtDuration(seconds: number | null | undefined) {
@@ -28,6 +34,12 @@ export function fmtDuration(seconds: number | null | undefined) {
 }
 
 export const pct = (x: number) => `${Math.round(x * 100)}%`
+
+// Trainable replies (Ohm's turns) a LoRA wants. Below REPLIES_LOW it mostly learns the few
+// conversations it saw instead of how the group talks.
+export const REPLIES_AIM = 1500
+export const REPLIES_LOW = 800
+export const aimHint = (replies: number) => `${replies.toLocaleString()} replies approved · aim for ${REPLIES_AIM.toLocaleString()}+`
 
 export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(' ')

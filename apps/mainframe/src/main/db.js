@@ -18,6 +18,16 @@ const eventsDB = new Datastore({
 })
 eventsDB.ensureIndex({ fieldName: 'at' })
 
+// Every web search Ohm made, posted by the engine (utils/WebSearch.py), for the dashboard's Web search tab.
+// { character, said, query, results: [{ title, body, href }], error, ms, at }
+const searchesDB = new Datastore({
+  filename: 'searches.db',
+  autoload: true
+})
+searchesDB.ensureIndex({ fieldName: 'at' })
+const SEARCH_DAYS = 30 // older searches are dropped when the app starts
+searchesDB.remove({ at: { $lt: new Date(Date.now() - SEARCH_DAYS * 86400000) } }, { multi: true })
+
 function addLog(log_type, message) {
   console.log(`Adding log: ${log_type} - ${message}`)
   const logEntry = {
@@ -49,4 +59,4 @@ const find = (db, query, sort = { at: 1 }) =>
       .exec((err, docs) => (err ? reject(err) : resolve(docs)))
   )
 
-export { charactersDB, logsDB, eventsDB, addLog, addEvent, find }
+export { charactersDB, logsDB, eventsDB, searchesDB, addLog, addEvent, find }

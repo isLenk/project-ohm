@@ -1,7 +1,7 @@
 import express from 'express'
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { addEvent, addLog } from './db.js'
+import { addEvent, addLog, searchesDB } from './db.js'
 import { engineStatus, heard, onEngineChange } from './engine.js'
 import { nas } from './nas.js'
 import { appDir } from './python.js'
@@ -11,7 +11,8 @@ import { restartTTS } from './tts.js'
 const api = express()
 api.use(express.json())
 
-/* Modules: one per folder in modules/ that has a body.json ({ name, description, required }).
+/* Modules: one per folder in modules/ that has a body.json ({ name, description, required, default }).
+   default: false makes it opt-in (off until turned on, e.g. vision, which looks at the screen).
    They're read from the folders so the app knows them while main.py is off; main.py's heartbeat
    then fills in how each one is doing:
      ok: true (working) | false (failing) | null (off, or main.py isn't running)
@@ -29,9 +30,10 @@ function loadModules() {
       const {
         name = folder,
         description = '',
-        required = false
+        required = false,
+        default: on = true
       } = JSON.parse(readFileSync(body, 'utf8'))
-      modules[name] = { name, description, required, ok: null, detail: '', since: null }
+      modules[name] = { name, description, required, optIn: !on, ok: null, detail: '', since: null }
     } catch (e) {
       console.error(`Could not read ${body}:`, e.message)
     }
@@ -39,19 +41,25 @@ function loadModules() {
 }
 loadModules()
 
-const disabled = () =>
+const listed = (key) =>
   new Set(
-    setting('OHM_DISABLED_MODULES')
+    setting(key)
       .split(',')
       .map((name) => name.trim())
       .filter(Boolean)
   )
+const disabled = () => listed('OHM_DISABLED_MODULES')
+const optedIn = () => listed('OHM_ENABLED_MODULES') // the opt-in modules that are turned on
+
+const isEnabled = (m, off = disabled(), on = optedIn()) =>
+  m.required || (m.optIn ? on.has(m.name) : !off.has(m.name))
 
 export function listModules() {
   const off = disabled()
+  const on = optedIn()
   return Object.values(modules).map((m) => ({
     ...m,
-    enabled: m.required || !off.has(m.name),
+    enabled: isEnabled(m, off, on),
     restarting: restarts.has(m.name)
   }))
 }
@@ -61,10 +69,17 @@ export function setModuleEnabled(name, on) {
   const m = modules[name]
   if (!m) throw new Error(`No module called ${name}`)
   if (m.required) throw new Error(`${name} is required and always runs.`)
-  const off = disabled()
-  if (on) off.delete(name)
-  else off.add(name)
-  saveSettings({ OHM_DISABLED_MODULES: [...off].join(',') })
+  if (m.optIn) {
+    const list = optedIn()
+    if (on) list.add(name)
+    else list.delete(name)
+    saveSettings({ OHM_ENABLED_MODULES: [...list].join(',') })
+  } else {
+    const off = disabled()
+    if (on) off.delete(name)
+    else off.add(name)
+    saveSettings({ OHM_DISABLED_MODULES: [...off].join(',') })
+  }
   addLog('update', `${name} turned ${on ? 'on' : 'off'}`)
   return listModules()
 }
@@ -119,10 +134,11 @@ api.post('/api/modules/heartbeat', (req, res) => {
       name: string,
       description: string,
       required: boolean,
+      default?: boolean (false: opt-in)
     }
 */
 api.post('/api/modules', (req, res) => {
-  const { name, description, required } = req.body
+  const { name, description, required, default: on = true } = req.body
   const known = Boolean(modules[name])
   modules[name] = {
     ok: null,
@@ -131,7 +147,8 @@ api.post('/api/modules', (req, res) => {
     ...modules[name],
     name,
     description,
-    required
+    required,
+    optIn: !on
   }
   if (!known) addLog('info', `New Module - ${name} (req=${required})`)
   res.status(201).json({ message: 'Module added successfully' })
@@ -158,7 +175,21 @@ api.get('/api/modules/', (req, res) => {
       missingRequiredModules: missing.map((m) => m.name)
     })
   }
-  return res.status(200).json({ ready: true, modules, disabled: [...off] })
+  const notOn = Object.values(modules).filter((m) => !isEnabled(m, off)).map((m) => m.name)
+  return res.status(200).json({ ready: true, modules, disabled: notOn })
+})
+
+/* A web search Ohm made (utils/WebSearch.py), for the dashboard
+    POST /api/searches
+    body { character, said, query, results: [{ title, body, href }], error, ms }
+*/
+api.post('/api/searches', (req, res) => {
+  const { character = '', said = '', query, results = [], error = null, ms = null } = req.body
+  if (!query) return res.status(400).json({ message: 'query is required' })
+  searchesDB.insert(
+    { character, said, query, results, error, ms, at: new Date() },
+    (err) => (err ? res.status(500).json({ message: err.message }) : res.status(201).json({}))
+  )
 })
 
 api.post('/api/send', (req, res) => {

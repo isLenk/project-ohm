@@ -54,6 +54,7 @@ export const nas = {
   get: <T = any>(path: string): Promise<T> => window.api.nas('GET', path),
   post: <T = any>(path: string, body: any = {}): Promise<T> => window.api.nas('POST', path, body),
   patch: <T = any>(path: string, body: any = {}): Promise<T> => window.api.nas('PATCH', path, body),
+  put: <T = any>(path: string, body: any = {}): Promise<T> => window.api.nas('PUT', path, body),
   del: <T = any>(path: string): Promise<T> => window.api.nas('DELETE', path)
 }
 
@@ -80,8 +81,11 @@ export function usePoll<T>(load: () => Promise<T>, ms: number, deps: any[] = [])
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let live = true
+    // ? Through a promise so a loader that throws right away (e.g. a window.api call the running
+    // preload doesn't have yet) shows up as `error` instead of taking down the whole page
     const run = () =>
-      load()
+      Promise.resolve()
+        .then(load)
         .then((d) => live && (setData(d), setError(null)))
         .catch((e) => live && setError(message(e)))
     run()

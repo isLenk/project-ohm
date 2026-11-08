@@ -32,7 +32,7 @@ type Models = {
   llm: { running: boolean; model_path: string | null }
 }
 
-export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => void; refreshKey: number }) {
+export function ModelMenu({ onError, refreshKey, onEvaluate }: { onError: (e: unknown) => void; refreshKey: number; onEvaluate: (adapterId: string) => void }) {
   const [open, setOpen] = useState(false)
   const [m, setM] = useState<Models | null>(null)
   const [hf, setHf] = useState<string | null>(null)
@@ -196,6 +196,17 @@ export function ModelMenu({ onError, refreshKey }: { onError: (e: unknown) => vo
             </button>
           ))}
           {!adapters.length && <div className="px-3.5 pb-2 text-xs leading-relaxed text-muted">None yet. Each finished training run lands here.</div>}
+          {adapter && (
+            <button
+              onClick={() => {
+                setOpen(false)
+                onEvaluate(adapter.id)
+              }}
+              className="flex w-full items-center px-3.5 py-2 text-left text-gray-300 hover:bg-menu-hover"
+            >
+              Score this LoRA…
+            </button>
+          )}
           {restart && (
             <div className="mx-3.5 my-2 flex items-center gap-2 text-xs text-[#E0B25C]">
               <span className="flex-1">llama-server needs a restart to load this.</span>

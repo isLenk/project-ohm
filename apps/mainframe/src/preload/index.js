@@ -7,12 +7,16 @@ const api = {
   addCharacter: (character) => ipcRenderer.invoke('add-character', character),
   updateCharacter: (character) => ipcRenderer.invoke('update-character', character),
   deleteCharacter: (characterId) => ipcRenderer.invoke('delete-character', characterId),
+  listVoices: () => ipcRenderer.invoke('list-voices'),
+  importVoice: (name, bytes) => ipcRenderer.invoke('import-voice', name, bytes),
+  loadVoice: (file) => ipcRenderer.invoke('load-voice', file),
   openDialog: (method, params) => {
     return ipcRenderer.invoke('dialog', method, params)
   },
   println: (message) => ipcRenderer.send('println', message),
   addLog: (log_type, message) => ipcRenderer.invoke('println', log_type, message),
   getLogs: async (count) => await ipcRenderer.invoke('get-logs', count),
+  getSearches: (character, count) => ipcRenderer.invoke('get-searches', character, count),
   curatorConfig: () => ipcRenderer.invoke('curator-config'),
 
   listModules: () => ipcRenderer.invoke('list-modules'),

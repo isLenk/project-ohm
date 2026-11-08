@@ -3,11 +3,17 @@ import { join } from 'path'
 import { optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { modules, listModules, setModuleEnabled, restartModule } from './api.js'
-import { logsDB, addLog } from './db.js'
+import { logsDB, searchesDB, addLog, find } from './db.js'
 import { listCharacters, addCharacter, updateCharacter, deleteCharacter } from './characters.js'
 import { dialog } from 'electron/main'
-import { startCurator, stopCurator, curatorConfig } from './curator.js'
-import { startTTS, stopTTS } from './tts.js'
+import {
+  startCurator,
+  stopCurator,
+  restartCurator,
+  curatorConfig,
+  CURATOR_SETTINGS
+} from './curator.js'
+import { startTTS, stopTTS, listVoices, importVoice, loadVoice } from './tts.js'
 import {
   engineStatus,
   engineOutput,
@@ -18,7 +24,7 @@ import {
 } from './engine.js'
 import { health } from './health.js'
 import { nasCall } from './nas.js'
-import { getSettings, saveSettings } from './settings.js'
+import { getSettings, saveSettings, setting } from './settings.js'
 
 function createWindow() {
   // Create the browser window.
@@ -112,13 +118,24 @@ app.whenReady().then(() => {
   ipcMain.handle('nas', (event, method, path, body) => nasCall(method, path, body))
   saveSettings({}) // encrypts secrets saved in plain text by older versions
   ipcMain.handle('get-settings', () => getSettings())
-  ipcMain.handle('save-settings', (event, values) => saveSettings(values))
+  ipcMain.handle('save-settings', (event, values) => {
+    const curatorEnv = () => CURATOR_SETTINGS.map((key) => setting(key)).join('\n')
+    const before = curatorEnv()
+    const saved = saveSettings(values)
+    if (curatorEnv() !== before)
+      restartCurator().catch((e) => console.error(`[curator] ${e.message}`))
+    return saved
+  })
 
   // Characters live on the NAS when its address is set (see characters.js).
   ipcMain.handle('get-characters', () => listCharacters())
   ipcMain.handle('add-character', (event, character) => addCharacter(character))
   ipcMain.handle('update-character', (event, character) => updateCharacter(character))
   ipcMain.handle('delete-character', (event, characterId) => deleteCharacter(characterId))
+  // Voice clips characters speak as (see tts.js)
+  ipcMain.handle('list-voices', () => listVoices())
+  ipcMain.handle('import-voice', (event, name, bytes) => importVoice(name, bytes))
+  ipcMain.handle('load-voice', (event, file) => loadVoice(file))
 
   ipcMain.handle('dialog', async (event, method, params) => {
     return dialog[method](params)
@@ -136,6 +153,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('add-log', (event, log_type, message) => {
     addLog(log_type, message)
+  })
+
+  ipcMain.handle('get-searches', async (event, character, count = 100) => {
+    const docs = await find(searchesDB, character ? { character } : {}, { at: -1 })
+    return docs.slice(0, count)
   })
 
   ipcMain.handle('get-logs', async (event, count = 20) => {
