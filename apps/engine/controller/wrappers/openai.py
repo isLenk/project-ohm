@@ -12,7 +12,7 @@ from config.constants import VOICE_PROMPT
 from controller.adapters import Adapters
 from controller.memory import format_people, memory
 from modules.mood.mood import mood
-from modules.vision import screen as screen_module
+from modules.vision import describe as describe_module, screen as screen_module
 from utils import WebSearch
 
 GLOSSARY_HISTORY = 6  # recent messages also checked for terms, so a reply to earlier slang still gets it
@@ -89,17 +89,21 @@ class OpenAIModel:
 
     def create(self, prompt, system=None, assistant="aight lol", related_memories=None, history=None, voice=False,
                web_results=None, glossary=True, base=False, people=None, images=None, screen=None, summary=None,
-               **kwargs):
+               seen=None, **kwargs):
         """One chat request. Replies run with the character's adapter; base=True (utility calls) without.
         images: data URLs (utils/Vision.py) of pictures sent with `prompt`.
         screen: a screenshot data URL (modules/vision/screen.py) of the screen being shared with him.
+        seen: the line that goes with the screenshot, the window in front and the text on it (screen.look).
         summary: what's been going on in the chat lately (controller/brief.py).
+        A cloud description of the screen (modules/vision/describe.py, opt-in) goes in while it's fresh.
 
         The system prompt is only the personality (and the voice prompt), the way the LoRA was trained, and the
         history comes right after it. Everything that changes turn to turn goes in a note at the end of the
         newest user message, so llama-server can reuse its cache of the system prompt and history."""
         context = []  # per-turn notes, see context_note()
+        happening = ""  # ? only in his own replies, not in utility calls that bring their own system prompt
         if system is None:
+            happening = describe_module.current()
             system = self.system.strip()
             if voice:
                 system += "\n\n" + VOICE_PROMPT.format(name=self.name).strip()
@@ -135,6 +139,10 @@ class OpenAIModel:
             context.append("You can see the screen someone here is sharing with you right now (the last picture). "
                            "Use it when it's relevant: answer what they ask about it, or react to what's on it like "
                            "a friend looking over their shoulder. Keep it short and don't describe the whole screen.")
+            if seen:
+                context.append(seen)
+        if happening:
+            context.append(f"What's happening on their screen: {happening}")
 
         messages = [{"role": "system", "content": system}]
         if history:

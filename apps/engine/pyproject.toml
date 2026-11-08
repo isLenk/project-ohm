@@ -24,6 +24,13 @@ dependencies = [
     "torch==2.5.1",
     "torchaudio==2.5.1",
     "ohm-brain", # routes one-shot LLM tasks (apps/brain)
+    # Windows' built-in OCR for text on the screen (modules/vision/ocr.py)
+    "winrt-runtime>=4.1.0; sys_platform == 'win32'",
+    "winrt-windows-media-ocr>=4!10.0.28000.2957; sys_platform == 'win32'",
+    "winrt-windows-graphics-imaging>=4!10.0.28000.2957; sys_platform == 'win32'",
+    "winrt-windows-storage-streams>=4!10.0.28000.2957; sys_platform == 'win32'",
+    "winrt-windows-globalization>=4!10.0.28000.2957; sys_platform == 'win32'",
+    "winrt-windows-foundation>=4!10.0.28000.2957; sys_platform == 'win32'",
 ]
 
 [tool.uv]

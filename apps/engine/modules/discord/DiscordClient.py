@@ -134,25 +134,27 @@ class DiscordClient(discord.Client):
         people = self.people_in(said)
         checks = self.model.pre_checks(said)  # one call for "search the web?" and "look at the screen?"
         latency.mark("pre_checks")
-        turn.prompt(turn.line, memories, people, screen=self.look_at_screen(said, checks), checks=checks)
+        shot, seen = self.look_at_screen(said, checks)
+        turn.prompt(turn.line, memories, people, screen=shot, seen=seen, checks=checks)
         return turn
 
-    def look_at_screen(self, said, checks=None) -> str | None:
-        """A screenshot if the vision module is on and `said` is about the screen, else None.
-        checks: the reply's pre_checks(), so the screen question isn't asked a second time."""
+    def look_at_screen(self, said, checks=None) -> tuple[str | None, str]:
+        """(a screenshot, the line saying what's on it) if the vision module is on and `said` is about the screen,
+        else (None, ""). checks: the reply's pre_checks(), so the screen question isn't asked a second time."""
         if not screen.on() or not said.strip() or not (checks or self.model.pre_checks(said))["screen"]:
-            return None
-        shot = screen.capture()
+            return None, ""
+        shot, seen = screen.look()
         if shot:
-            print("[vision] Looking at the screen")
-        return shot
+            print(f"[vision] Looking at the screen. {seen}")
+        return shot, seen
 
-    def make_idle_stream(self, channel, about_screen=False):
+    def make_idle_stream(self, channel, about_screen=False, region=None):
         """Start something Ohm says on his own when the call has gone quiet.
-        about_screen: something new came up on the screen (modules/vision/watch.py), so talk about that."""
+        about_screen: something new came up on the screen (modules/vision/watch.py), so talk about that.
+        region: where on the screen it came up, so the screenshot shows just that (watch.changed_region)."""
         turn = Turn(self, channel, "voice")
         present = [self.speaker_name(m) for m in getattr(channel, "members", []) if not m.bot]
-        shot = screen.capture()  # None unless the vision module is on
+        shot, seen = screen.look(region)  # (None, "") unless the vision module is on
         idea = ("comment on what's on the screen you can see" if shot and about_screen else
                 "comment on what's on the screen you can see, follow up on what you were just talking about, "
                 "or ask someone something" if shot else
@@ -161,7 +163,7 @@ class DiscordClient(discord.Client):
             f"(Nobody has said anything for a bit. Say one short thing to keep the hangout going: {idea}. "
             "Just say the line, nothing else."
             + (f" In the call right now: {', '.join(present)}." if present else "") + ")",
-            screen=shot, checks=NO_CHECKS,  # ? nobody asked anything, so there's nothing to look up
+            screen=shot, seen=seen, checks=NO_CHECKS,  # ? nobody asked anything, so there's nothing to look up
         )
         return turn
 
@@ -211,10 +213,10 @@ class DiscordClient(discord.Client):
         people = self.people_in(said, message.mentions)
         history = self.history(turn.channel_id)
         checks = self.model.pre_checks(self.incoming_text(message))
+        shot, seen = self.look_at_screen(self.incoming_text(message), checks)
         response, contains_intent = self.model.generate_text(
             turn.line, related_memories=memories, history=history, stop=turn.labels(history), people=people,
-            images=images or None, screen=self.look_at_screen(self.incoming_text(message), checks), checks=checks,
-            summary=brief.current(turn.channel_id),
+            images=images or None, screen=shot, seen=seen, checks=checks, summary=brief.current(turn.channel_id),
         )
 
         # One reply: no leading "Ohm:", and nothing past where he starts writing other people's lines
@@ -317,16 +319,16 @@ class Turn:
             self._tags.set_speakers(self.speakers)  # so a leading "Lenk: ..." isn't read out either
         return stop_sequences(self.speakers)
 
-    def prompt(self, text, memories=None, people=None, screen=None, checks=None):
+    def prompt(self, text, memories=None, people=None, screen=None, checks=None, seen=None):
         """Open the LLM stream (with the conversation so far as context). `people`: see DiscordClient.people_in.
-        screen: a screenshot to show him with it (DiscordClient.look_at_screen).
+        screen, seen: a screenshot to show him with it and the line on what's in it (DiscordClient.look_at_screen).
         checks: the reply's pre_checks() (OpenAIModel.pre_checks), None to have them done here."""
         # ? In voice, a hard cap so a "how do I..." question can't turn into a minute-long lecture
         limit = {"max_tokens": VOICE_MAX_TOKENS, "voice": True} if self.source == "voice" else {}
         history = self.client.history(self.channel_id)
         self._stream = self.client.model.generate_stream_text(
             text, related_memories=memories, history=history, stop=self.labels(history), people=people,
-            screen=screen, checks=checks, summary=brief.current(self.channel_id), **limit,
+            screen=screen, seen=seen, checks=checks, summary=brief.current(self.channel_id), **limit,
         )
         self._chunks = iter(self._stream)
 

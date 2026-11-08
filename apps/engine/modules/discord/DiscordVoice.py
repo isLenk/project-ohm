@@ -318,10 +318,11 @@ class DiscordVoice:
             return
         await self._speak(self.discord_client.make_stream_response, said_by, self.vc.channel)
 
-    async def speak_unprompted(self, about_screen=False):
-        """Say something on his own because the call has gone quiet (about_screen: about something new on the screen)"""
+    async def speak_unprompted(self, about_screen=False, region=None):
+        """Say something on his own because the call has gone quiet (about_screen: about something new on the screen,
+        region: where on it, see watch.changed_region)"""
         print("\n", "-" * 20, "\n[voice] Quiet for a while, saying something")
-        await self._speak(self.discord_client.make_idle_stream, self.vc.channel, about_screen)
+        await self._speak(self.discord_client.make_idle_stream, self.vc.channel, about_screen, region)
 
     async def idle_worker(self):
         """Every so often, if nobody has said anything for IDLE_SECONDS, maybe start talking.
