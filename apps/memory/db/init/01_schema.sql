@@ -29,6 +29,9 @@ CREATE TABLE users (
     discord_id     text PRIMARY KEY,             -- snowflakes stored as text
     display_name   text,
     preferred_name text,
+    username       text,                         -- Discord handle
+    aliases        text[] NOT NULL DEFAULT '{}', -- real name, nicknames: other names a message may use for them
+    avatar_url     text,                         -- Discord avatar, for the app's people lists
     first_seen     timestamptz NOT NULL DEFAULT now(),
     last_seen      timestamptz NOT NULL DEFAULT now()
 );
@@ -86,6 +89,16 @@ CREATE TABLE knowledge (                       -- things every character knows (
     created_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ON knowledge USING hnsw (embedding vector_cosine_ops);
+
+CREATE TABLE glossary (                        -- slang, game names, typos (from the Curator's General terminology)
+    source       text NOT NULL,                  -- the Curator project it came from
+    term         text NOT NULL,                  -- 'hll'
+    definition   text,                           -- 'Hell Let Loose, a WW2 shooter'
+    relation     text,                           -- typo | same, with related_term
+    related_term text,
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (source, term)
+);
 
 -- ── Conversations ─────────────────────────────────────────────────────────
 CREATE TABLE sessions (

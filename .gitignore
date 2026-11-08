@@ -20,3 +20,8 @@ __pycache__/
 
 # Python venv (uv sync --all-packages)
 /.venv/
+
+# Local databases and personal files
+apps/mainframe/*.db
+apps/tts/voices/
+apps/curator/unsloth_compiled_cache/

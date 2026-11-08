@@ -72,6 +72,16 @@ run(
     fetch="none",
 )
 run("CREATE INDEX IF NOT EXISTS knowledge_embedding_idx ON knowledge USING hnsw (embedding vector_cosine_ops)", fetch="none")
+run(
+    "CREATE TABLE IF NOT EXISTS glossary (source text NOT NULL, term text NOT NULL, definition text, relation text, "
+    "related_term text, updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (source, term))",
+    fetch="none",
+)
+# Every name someone goes by, so a message that names them can bring up what's known about them.
+run("ALTER TABLE users ADD COLUMN IF NOT EXISTS username text", fetch="none")
+run("ALTER TABLE users ADD COLUMN IF NOT EXISTS aliases text[] NOT NULL DEFAULT '{}'", fetch="none")
+# Their Discord avatar, for the app's people lists.
+run("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text", fetch="none")
 
 
 # ── Health ──────────────────────────────────────────────────────────────────
@@ -185,21 +195,55 @@ def delete_character(slug: str):
 class User(BaseModel):
     display_name: Optional[str] = None
     preferred_name: Optional[str] = None
+    username: Optional[str] = None          # the Discord handle, e.g. "lenk_07"
+    aliases: Optional[list[str]] = None     # real name, nicknames. Sent whole: replaces the list
+    avatar_url: Optional[str] = None        # their Discord avatar (the server one if they set one)
+
+
+def _aliases(names: Optional[list[str]]) -> Optional[list[str]]:
+    if names is None:
+        return None
+    out = []
+    for n in names:
+        n = " ".join(n.split())
+        if n and n.lower() not in (o.lower() for o in out):
+            out.append(n)
+    return out
 
 
 @app.put("/users/{discord_id}", dependencies=auth)
 def upsert_user(discord_id: str, u: User):
     return run(
         """
-        INSERT INTO users (discord_id, display_name, preferred_name) VALUES (%s, %s, %s)
+        INSERT INTO users (discord_id, display_name, preferred_name, username, aliases, avatar_url)
+        VALUES (%s, %s, %s, %s, COALESCE(%s, '{}'::text[]), %s)
         ON CONFLICT (discord_id) DO UPDATE SET
             display_name = COALESCE(EXCLUDED.display_name, users.display_name),
             preferred_name = COALESCE(EXCLUDED.preferred_name, users.preferred_name),
+            username = COALESCE(EXCLUDED.username, users.username),
+            aliases = COALESCE(%s, users.aliases),
+            avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
             last_seen = now()
         RETURNING *
         """,
-        (discord_id, u.display_name, u.preferred_name),
+        (discord_id, u.display_name, u.preferred_name, u.username, _aliases(u.aliases), u.avatar_url,
+         _aliases(u.aliases)),
         "one",
+    )
+
+
+@app.get("/users", dependencies=auth)
+def list_users():
+    """Everyone the NAS has a name for, with every name they go by (the bot matches messages against these)."""
+    return run(
+        f"""
+        SELECT u.discord_id AS user_id, {NAME} AS name, u.display_name, u.preferred_name, u.username, u.aliases,
+               u.avatar_url
+        FROM users u
+        WHERE u.display_name IS NOT NULL OR u.preferred_name IS NOT NULL OR u.username IS NOT NULL
+           OR cardinality(u.aliases) > 0
+        ORDER BY u.last_seen DESC
+        """
     )
 
 
@@ -287,6 +331,14 @@ def search_memories(s: MemorySearch):
              ORDER BY embedding <=> %(q)s
              LIMIT %(k)s)
             UNION ALL
+            -- Facts kept for one person (the People tab, the Curator). Their ids are user_facts ids.
+            (SELECT id, fact, 0.7, ARRAY[user_id], 'user_fact', created_at, 1 - (embedding <=> %(q)s)
+             FROM user_facts
+             WHERE character = %(c)s AND embedding IS NOT NULL
+               AND (%(u)s::text IS NULL OR user_id = %(u)s::text)
+             ORDER BY embedding <=> %(q)s
+             LIMIT %(k)s)
+            UNION ALL
             -- Lore and shared knowledge never fade, so they rank as important and brand new.
             (SELECT id, content, 0.8, '{}'::text[], 'lore', now(), 1 - (embedding <=> %(q)s)
              FROM lore WHERE character = %(c)s AND %(u)s::text IS NULL
@@ -307,7 +359,7 @@ def search_memories(s: MemorySearch):
         """,
         params,
     )
-    recalled = [r["id"] for r in rows if r["kind"] not in ("lore", "knowledge")]
+    recalled = [r["id"] for r in rows if r["kind"] not in ("lore", "knowledge", "user_fact")]
     if recalled:
         run("UPDATE memories SET last_recalled_at = now() WHERE id = ANY(%s)", (recalled,), fetch="none")
     return rows
@@ -410,6 +462,42 @@ def edit_knowledge(knowledge_id: int, n: Note):
 def delete_knowledge(knowledge_id: int):
     run("DELETE FROM knowledge WHERE id = %s", (knowledge_id,), fetch="none")
     return {"deleted": knowledge_id}
+
+
+# ── Glossary ────────────────────────────────────────────────────────────────
+# Slang, game names and typos a group uses, defined in the Curator's General terminology tab. Every
+# character gets them, so the bot reads "hll" or "ceebs" right. Each Curator project is one `source`.
+class GlossaryTerm(BaseModel):
+    term: str
+    definition: Optional[str] = None
+    relation: Optional[str] = None  # typo | same, with related_term
+    related_term: Optional[str] = None
+
+
+class GlossaryIn(BaseModel):
+    terms: list[GlossaryTerm]
+
+
+@app.get("/glossary", dependencies=auth)
+def list_glossary():
+    return run("SELECT term, definition, relation, related_term, source, updated_at FROM glossary ORDER BY term, updated_at DESC")
+
+
+@app.put("/glossary/{source}", dependencies=auth)
+def replace_glossary(source: str, g: GlossaryIn):
+    """Replace everything one source (a Curator project) defined, so removed terms go too."""
+    rows = [(source, t.term.strip().lower(), t.definition, t.relation, t.related_term)
+            for t in g.terms if t.term.strip() and (t.definition or t.related_term)]
+    with pool.connection() as conn, conn.transaction():
+        conn.execute("DELETE FROM glossary WHERE source = %s", (source,))
+        if rows:
+            conn.cursor().executemany(
+                "INSERT INTO glossary (source, term, definition, relation, related_term) VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (source, term) DO UPDATE SET definition = EXCLUDED.definition, relation = EXCLUDED.relation, "
+                "related_term = EXCLUDED.related_term, updated_at = now()",
+                rows,
+            )
+    return {"source": source, "terms": len(rows)}
 
 
 def _edit_note(table: str, note_id: int, n: Note):
@@ -586,7 +674,7 @@ def people(character: str, days: Optional[int] = None, limit: int = 100):
     """Everyone who has talked to the character, most recent first, with how much Ohm knows about them."""
     return run(
         f"""
-        SELECT u.discord_id AS user_id, {NAME} AS name,
+        SELECT u.discord_id AS user_id, {NAME} AS name, u.display_name, u.username, u.aliases, u.avatar_url,
                count(m.id) AS messages, max(m.created_at) AS last_seen,
                count(m.id) FILTER (WHERE m.source = 'voice') AS voice,
                (SELECT count(*) FROM user_facts f WHERE f.user_id = u.discord_id AND f.character = %(c)s) AS facts,

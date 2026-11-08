@@ -9,7 +9,7 @@ Embeddings (all-MiniLM-L6-v2, 384-dim) are created here on the CPU, so the PC do
 3. `docker compose up -d --build`
 4. From the PC: `curl http://<nas-ip>:8100/health`
 
-`db/init/01_schema.sql` only runs when `data/postgres` is empty. Tables added later (`knowledge`) are also created by the API on start.
+`db/init/01_schema.sql` only runs when `data/postgres` is empty. Tables and columns added later (`knowledge`, `glossary`, `users.username`/`aliases`/`avatar_url`) are also created by the API on start.
 After pulling changes to `app/`, rebuild: `docker compose up -d --build api`. To reset everything:
 `docker compose down && rm -rf data/postgres && docker compose up -d`.
 
@@ -20,11 +20,12 @@ After pulling changes to `app/`, rebuild: `docker compose up -d --build api`. To
 | GET/PUT | /characters, /characters/{slug} | Character profiles (PUT also records a version) |
 | PATCH | /characters/{slug} | Partial update; `configs` is merged (used by the controller UI) |
 | DELETE | /characters/{slug} | Delete a character **and all its memories/history** |
-| PUT | /users/{discord_id} | Create/update a user |
+| PUT | /users/{discord_id} | Create/update a user: `display_name`, `preferred_name`, `username`, `avatar_url`, `aliases` (real name, nicknames; sent whole, replaces the list) |
+| GET | /users | Everyone with a name, with every name they go by. The bot matches messages against these |
 | GET/POST | /users/{discord_id}/facts | Per-character facts about a user |
 | DELETE | /users/{discord_id}/facts/{id} | Forget a fact (used by the Curator's Forget) |
 | POST | /memories | Store a memory (embedded automatically) |
-| POST | /memories/search | Top memories ranked by similarity, importance, recency, plus the character's lore and shared knowledge (`kind` `lore`/`knowledge`) |
+| POST | /memories/search | Top memories ranked by similarity, importance, recency, plus the person's kept facts, the character's lore and shared knowledge (`kind` `user_fact`/`lore`/`knowledge`). With `user_id`, only that person's memories and facts |
 | DELETE | /memories/{id} | Forget a memory |
 | POST | /messages | Log a chat/voice turn |
 | GET | /messages/recent | Recent history for a character/channel |
@@ -33,6 +34,8 @@ After pulling changes to `app/`, rebuild: `docker compose up -d --build api`. To
 | PATCH | /memories/{id} | Edit a memory's text or importance (re-embedded) |
 | GET/POST | /lore?character=, PATCH/DELETE /lore/{id} | What one character knows about itself |
 | GET/POST | /knowledge, PATCH/DELETE /knowledge/{id} | What every character knows. Created on start if the database predates it |
+| GET | /glossary | Words the groups use (slang, game names, typos) and what they mean. Every character gets them |
+| PUT | /glossary/{source} | Replace one Curator project's terms (`{terms: [{term, definition, relation, related_term}]}`) |
 | PATCH | /users/{discord_id}/facts/{id} | Edit a fact |
 | GET | /stats | The controller dashboard: counts, reply time, messages per hour, top people |
 | GET | /people, /people/{discord_id}/messages | Who talked to a character, and their latest lines with the replies |
