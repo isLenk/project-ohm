@@ -21,6 +21,7 @@ export const BRAIN_KEYS = [
   'BRAIN_ROLE_JUDGE',
   'BRAIN_ROLE_REFLECT',
   'BRAIN_ROLE_LABEL',
+  'BRAIN_ROLE_SCREEN',
   'DEEPSEEK_API_KEY',
   'OPENROUTER_API_KEY',
   'BRAIN_DEEPSEEK_MODEL',
@@ -29,7 +30,9 @@ export const BRAIN_KEYS = [
   'BRAIN_CODEX_REASONING',
   'BRAIN_CLAUDE_MODEL',
   'BRAIN_LOCAL_ONLY',
-  'BRAIN_DAILY_USD'
+  'BRAIN_DAILY_USD',
+  // Not the brain's own setting: the engine reads it to send screen changes to BRAIN_ROLE_SCREEN
+  'OHM_SCREEN_CLOUD'
 ]
 
 // The keys the Settings page edits. Anything else in settings.json is ignored.

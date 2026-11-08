@@ -160,7 +160,7 @@ const Settings = () => {
       ? INTEGRATION_KEYS
       : (SECTIONS.find((s) => s.id === id)?.fields.map((f) => f[0] as string) ?? [])
     ).some((key) => values[key] !== saved[key])
-  const field: FieldFn = (key, label, hint, type, placeholder, options) => (
+  const field: FieldFn = (key, label, hint, type, placeholder, options, disabled) => (
     <Field
       key={key}
       name={key}
@@ -172,6 +172,7 @@ const Settings = () => {
       value={values[key]}
       isSet={secretsSet.includes(key)}
       locked={locked.includes(key)}
+      disabled={disabled}
       onChange={(v) => set(key, v)}
     />
   )
@@ -286,7 +287,8 @@ const Row = ({ label, hint, children, htmlFor = undefined }) => (
   </div>
 )
 
-const Field = ({ name, label, hint, type, placeholder, options = undefined, value, isSet, locked, onChange }) => {
+// disabled: another setting overrides this one (only switches use it so far)
+const Field = ({ name, label, hint, type, placeholder, options = undefined, value, isSet, locked, disabled = false, onChange }) => {
   const [show, setShow] = useState(false)
   const browse = async () => {
     const r = await dialog('showOpenDialog', {
@@ -324,7 +326,7 @@ const Field = ({ name, label, hint, type, placeholder, options = undefined, valu
           role="switch"
           aria-checked={on}
           aria-label={label}
-          disabled={locked}
+          disabled={locked || disabled}
           onClick={() => onChange(on ? '' : '1')}
           className={`relative h-5.5 w-10 cursor-pointer justify-self-end rounded-full disabled:opacity-50 ${on ? 'bg-accent' : 'bg-[#3a3c42]'}`}
         >

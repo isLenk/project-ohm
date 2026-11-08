@@ -15,7 +15,8 @@ export type FieldFn = (
   hint: string,
   type: string,
   placeholder: string,
-  options?: string[]
+  options?: string[],
+  disabled?: boolean
 ) => ReactNode
 
 const BACKENDS = ['local', 'qwen', 'deepseek', 'openrouter', 'codex', 'claude']
@@ -48,7 +49,13 @@ const ROLES = [
     'Looks back over a finished conversation for traits, relationships and new memories',
     'codex,deepseek'
   ],
-  ['LABEL', 'Label', 'Names things: threads, topics and training runs', 'codex']
+  ['LABEL', 'Label', 'Names things: threads, topics and training runs', 'codex'],
+  [
+    'SCREEN',
+    'Screen',
+    'Describes what’s on the host’s screen, one line every 30 s while it changes; only used when Screen to the cloud is on',
+    'codex'
+  ]
 ] as const
 
 /** Every key this section edits, so the nav can mark it when something isn't saved yet. */
@@ -62,6 +69,7 @@ export const INTEGRATION_KEYS = [
   'OPENROUTER_API_KEY',
   'BRAIN_OPENROUTER_MODEL',
   'BRAIN_LOCAL_ONLY',
+  'OHM_SCREEN_CLOUD',
   'BRAIN_DAILY_USD'
 ]
 
@@ -188,6 +196,19 @@ const Integrations = ({
         'Never call a cloud backend; every job runs here',
         'switch',
         ''
+      )}
+      {/* Local only already keeps every brain job here, so this switch has nothing to add then */}
+      {field(
+        'OHM_SCREEN_CLOUD',
+        'Screen to the cloud',
+        'Sends a cropped screenshot of this PC to the Screen backend when the screen changes, so Ohm knows what’s happening on it. Live replies still look at the screen with the local model. Off: screenshots never leave this PC.' +
+          (values.BRAIN_LOCAL_ONLY === '1'
+            ? ' Local only is on and wins, so nothing is sent.'
+            : ''),
+        'switch',
+        '',
+        undefined,
+        values.BRAIN_LOCAL_ONLY === '1'
       )}
       {field(
         'BRAIN_DAILY_USD',
