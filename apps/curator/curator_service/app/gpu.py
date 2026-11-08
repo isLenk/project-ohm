@@ -13,7 +13,7 @@ from typing import Optional
 
 import requests
 
-from .config import LLAMA_CPP_DIR, LLM_SERVER_URL
+from .config import JUDGE_PORT, LLAMA_CPP_DIR, LLM_SERVER_URL
 
 try:
     import psutil
@@ -158,12 +158,20 @@ def start(snap: dict, cmdline: list[str]) -> Optional[int]:
         return None
 
 
+def is_judge(cmdline: list[str]) -> bool:
+    """The judge model's llama-server (train/evaluate.py), which runs on its own port and is never Ohm's."""
+    return any(a == "--port" and i + 1 < len(cmdline) and cmdline[i + 1] == str(JUDGE_PORT) for i, a in enumerate(cmdline))
+
+
 def running_llama() -> Optional[dict]:
+    """Ohm's llama-server, if it's running. The judge's is left out, so nothing remembers or restarts it as Ohm's."""
     if psutil is None:
         return None
     for p in psutil.process_iter(["pid", "name"]):
         if "llama-server" in (p.info["name"] or "").lower():
-            return snapshot(p.info["pid"])
+            snap = snapshot(p.info["pid"])
+            if snap and not is_judge(snap["cmdline"]):
+                return snap
     return None
 
 

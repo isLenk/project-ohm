@@ -29,6 +29,11 @@ RUNS_DIR = DATA_DIR / "runs"
 LLAMA_CPP_DIR = Path(os.getenv("LLAMA_CPP_DIR", REPO_ROOT.parent / "llama.cpp"))
 MODELS_DIR = Path(os.getenv("CURATOR_MODELS_DIR", LLAMA_CPP_DIR / "models"))
 
+# The bigger model that scores an adapter's replies (train/evaluate.py). It runs on its own port while
+# Ohm's llama-server is stopped, since both don't fit in 24 GB.
+JUDGE_MODEL = Path(os.getenv("CURATOR_JUDGE_MODEL", MODELS_DIR / "Qwen3.6-27B-Q4_K_M.gguf"))
+JUDGE_PORT = int(os.getenv("CURATOR_JUDGE_PORT", "5055"))
+
 LLM_URL = os.getenv("CURATOR_LLM_URL", "http://127.0.0.1:5000/v1").rstrip("/")
 LLM_SERVER_URL = LLM_URL[: -len("/v1")] if LLM_URL.endswith("/v1") else LLM_URL
 

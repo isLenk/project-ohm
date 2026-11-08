@@ -15,6 +15,7 @@ https://claude.ai/artifact/A8tf4deQ2rFQhWcrPCKKqb (ask Lance for access; it is p
 | [api.md](api.md) | HTTP + SSE endpoints the UI calls |
 | [search.md](search.md) | Ctrl+K query grammar and how to run it |
 | [memories.md](memories.md) | Memory extraction, review, sync to `memory_service` |
+| [terminology.md](terminology.md) | General terminology: unfamiliar words, definitions, typos, Ctrl+click |
 | [training.md](training.md) | Export to JSONL, LoRA training, adapter conversion, progress events |
 
 ## Vocabulary
@@ -44,11 +45,12 @@ There is no "pending" status. A conversation is either approved, archived, or ne
 |---|---|
 | Threads | Paged feed of blocks with links, conversation dividers, per-conversation stats (people, message count, author skew), link edits, approve |
 | Raw | Same paged feed without links. Split/merge conversations. |
+| Find good conversations | Candidates that pass quality criteria, a skip breakdown, a random sample to skim and reject, approve many at once with undo (api.md, Finding good conversations) |
 | Memories | Per-person candidate memories with source messages; keep, edit, forget, link to person |
 | Ctrl+K | Search over messages, people, conversations; text, regex, person filter, operators |
 | Model dropdown | List of imported base models and trained adapters (app-wide, not per project); import new |
 | Save menu | Save, save as, open, export approved as JSONL. Autosave later. |
-| Train modal | Start a run, stream progress (stage, step, loss, elapsed, ETA), cancel, reconnect after closing |
+| Train modal | Trainable replies (after the author cap; aim for 1,500+, warns under 800), start a run, stream progress (stage, step, loss, eval loss when the worker reports it, elapsed, ETA), cancel, reconnect after closing |
 
 ## Architecture
 
@@ -83,11 +85,12 @@ apps/curator/curator_service/
   app/schema.py        project + registry schemas (data-model.md); the source of truth
   app/project.py       open/save .ohm through a working copy
   app/threads.py       links, validation, undo, suggester (threading.md)
-  app/conversations.py stats, approval, split/merge, rebuild from silences
+  app/conversations.py stats, approval, split/merge, rebuild from silences, bulk candidates + approval
   app/feed.py          paged feed for Threads and Raw
   app/search.py        Ctrl+K grammar + execution (search.md)
   app/embeddings.py    optional MiniLM vectors, near-duplicates
   app/memories.py      extraction, style traits, sync (memories.md)
+  app/terms.py         general terminology: unfamiliar words, definitions (terminology.md)
   app/export.py        examples, context chains, dedupe, author cap (training.md)
   app/gpu.py           VRAM check, pause/restart llama-server, live adapter switching
   app/train/runs.py    run manager, progress over SSE

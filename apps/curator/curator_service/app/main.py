@@ -19,12 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import conversations, embeddings, export, feed, gpu, importer, jobs, llm, memories, model_links, search, threads
+from . import conversations, embeddings, export, feed, gpu, importer, jobs, llm, memories, model_links, search, terms, threads
 from .config import MODELS_DIR, PORT, TRAIN_SIMULATE
 from .errors import ApiError
 from .project import Project, require_project, state
 from .registry import get_registry
-from .train import runs
+from .train import checks, evaluate, runs
 
 TOKEN = os.getenv("CURATOR_TOKEN", "")
 
@@ -77,7 +77,8 @@ def _maybe_embed(project: Project) -> None:
 @app.get("/health")
 def health():
     status = gpu.status()
-    return {"ok": True, "project_open": state.project is not None,
+    # pid: so the app can restart a service it can't use (one started with a token it doesn't know)
+    return {"ok": True, "pid": os.getpid(), "project_open": state.project is not None,
             "gpu": {"name": status["name"], "vram_gb": status["total_gb"]} if status else None,
             "llama_server": llm.up(), "memory_service": bool(memories.MEMORY_API_URL),
             "embeddings": embeddings.available(), "simulate_training": TRAIN_SIMULATE}
@@ -102,6 +103,7 @@ def _swap(project: Project) -> dict:
     if state.project is not None:
         state.project.close()
     state.project = project
+    terms.share_soon(project)  # terms defined before the bot could read them, or while the NAS was down
     reg = get_registry()
     recent = [str(project.path)] + [r for r in reg.get("recent", []) if r != str(project.path)]
     reg.put("recent", recent[:8])
@@ -366,6 +368,49 @@ def conversations_list(filter: str = "all"):
         return {"conversations": conversations.listing(p.conn, filter)}
 
 
+@app.get("/conversations/candidates")
+def conversations_candidates(min_messages: Optional[int] = None, min_people: Optional[int] = None,
+                             max_gap_ms: Optional[int] = None, max_media: Optional[float] = None,
+                             min_attached: Optional[float] = None, min_repliers: Optional[int] = None):
+    """Unapproved conversations that look good enough to approve in bulk. Criteria left out use the defaults."""
+    p = require_project()
+    with p.lock:
+        r = conversations.candidates(p.conn, min_messages=min_messages, min_people=min_people, max_gap_ms=max_gap_ms,
+                                     max_media=max_media, min_attached=min_attached, min_repliers=min_repliers)
+    for s in r["passed"]:
+        del s["reasons"]
+    return {"criteria": r["criteria"], "defaults": conversations.CRITERIA, "candidates": r["passed"],
+            "replies": r["replies"], "skipped": r["skipped"], "reasons": conversations.REASONS,
+            "approved": r["approved"]}
+
+
+class BulkBody(BaseModel):
+    ids: list[int]
+
+
+class BulkUndoBody(BaseModel):
+    ids: list[int]
+    accepted: list[dict] = []
+
+
+@app.post("/conversations/approve-bulk")
+def conversations_approve_bulk(b: BulkBody):
+    """Approve many at once (like approve with confirm). Send the result to unapprove-bulk to undo it."""
+    p = require_project()
+    with p.tx() as conn:
+        out = conversations.approve_many(conn, b.ids)
+    return dirty(out)  # after the commit, which is what marks the project dirty
+
+
+@app.post("/conversations/unapprove-bulk")
+def conversations_unapprove_bulk(b: BulkUndoBody):
+    """Undo approve-bulk: {ids: what it approved, accepted: the arrows it accepted}."""
+    p = require_project()
+    with p.tx() as conn:
+        out = conversations.unapprove_many(conn, b.ids, b.accepted)
+    return dirty(out)
+
+
 @app.get("/conversations/{cid}")
 def conversation_get(cid: int):
     p = require_project()
@@ -465,10 +510,11 @@ def memories_add(author_id: str, b: MemoryNew):
 
 
 @app.post("/people/{author_id}/memories/keep-all")
-def memories_keep_all(author_id: str):
+def memories_keep_all(author_id: str, sure: bool = False):
+    """sure=true keeps only the sure bets."""
     p = require_project()
     with p.tx() as conn:
-        return dirty({"kept": memories.keep_all(conn, author_id)})
+        return dirty({"kept": memories.keep_all(conn, author_id, sure_only=sure)})
 
 
 @app.patch("/memories/{memory_id}")
@@ -476,6 +522,127 @@ def memory_patch(memory_id: int, b: MemoryPatch):
     p = require_project()
     with p.tx() as conn:
         return dirty(memories.update(conn, memory_id, b.text, b.status, b.linked_author_id))
+
+
+class MergeBody(BaseModel):
+    ids: list[int]
+
+
+@app.post("/memories/{memory_id}/merge")
+def memory_merge(memory_id: int, b: MergeBody):
+    p = require_project()
+    with p.tx() as conn:
+        return dirty(memories.merge(conn, memory_id, b.ids))
+
+
+@app.get("/messages/{message_id}/around")
+def message_around(message_id: str, before: int = 8, after: int = 4):
+    p = require_project()
+    with p.lock:
+        return memories.around(p.conn, message_id, min(max(before, 0), 50), min(max(after, 0), 50))
+
+
+# ── general terminology ─────────────────────────────────────────────────────
+class TermBody(BaseModel):
+    term: str
+    definition: Optional[str] = None
+    relation: Optional[str] = None
+    related_term: Optional[str] = None
+
+
+class TermPatch(BaseModel):
+    definition: Optional[str] = None
+    relation: Optional[str] = None
+    related_term: Optional[str] = None
+    ignored: Optional[bool] = None
+
+
+@app.get("/terms")
+def terms_get():
+    p = require_project()
+    with p.lock:
+        out = {"terms": terms.listing(p.conn), "counts": terms.counts(p.conn)}
+    out["shared"] = terms.shared_status(p)
+    return out
+
+
+@app.post("/terms")
+def terms_save(b: TermBody):
+    p = require_project()
+    with p.tx() as conn:
+        out = dirty(terms.save(conn, b.term, b.definition, b.relation, b.related_term))
+    terms.share_soon(p)
+    return out
+
+
+@app.post("/terms/scan")
+def terms_scan():
+    p = require_project()
+    with p.tx() as conn:
+        return dirty(terms.scan(conn))
+
+
+@app.patch("/terms/{term_id}")
+def term_patch(term_id: int, b: TermPatch):
+    p = require_project()
+    with p.tx() as conn:
+        out = dirty(terms.update(conn, term_id, b.definition, b.relation, b.related_term, b.ignored))
+    terms.share_soon(p)
+    return out
+
+
+@app.delete("/terms/{term_id}")
+def term_delete(term_id: int):
+    p = require_project()
+    with p.tx() as conn:
+        terms.delete(conn, term_id)
+        out = dirty({"deleted": term_id})
+    terms.share_soon(p)
+    return out
+
+
+class SuggestBody(BaseModel):
+    ids: Optional[list[int]] = None  # just these terms (asked again even if they have a suggestion)
+
+
+@app.post("/terms/suggest")
+def terms_suggest(b: SuggestBody):
+    """Background job: the local model suggests a meaning for every unknown term without one."""
+    p = require_project()
+    if not llm.up():
+        raise ApiError(503, "llm_down", "Start llama-server (Ohm's LLM on :5000) to suggest definitions.")
+    return jobs.start("terms", lambda job: terms.suggest(p, job, b.ids))
+
+
+@app.post("/terms/accept-all")
+def terms_accept_all():
+    p = require_project()
+    with p.tx() as conn:
+        out = dirty({"accepted": terms.accept_all(conn)})
+    terms.share_soon(p)
+    return out
+
+
+@app.post("/terms/{term_id}/accept")
+def term_accept(term_id: int):
+    p = require_project()
+    with p.tx() as conn:
+        out = dirty(terms.accept(conn, term_id))
+    terms.share_soon(p)
+    return out
+
+
+@app.delete("/terms/{term_id}/suggestion")
+def term_dismiss(term_id: int):
+    p = require_project()
+    with p.tx() as conn:
+        return dirty(terms.dismiss(conn, term_id))
+
+
+@app.post("/terms/share")
+def terms_share():
+    """Send the defined terms to memory_service now (they also go after every change)."""
+    return terms.share(require_project())
 
 
 @app.post("/memories/extract")
@@ -491,7 +658,9 @@ def memories_sync():
     p = require_project()
     character = p.setting("character")
     with p.tx() as conn:
-        return dirty(memories.sync(conn, character))
+        out = dirty(memories.sync(conn, character))
+    out["terms"] = terms.share(p)
+    return out
 
 
 # ── jobs ────────────────────────────────────────────────────────────────────
@@ -799,6 +968,35 @@ def train_events(run_id: str):
 @app.post("/train/runs/{run_id}/cancel")
 def train_cancel(run_id: str):
     return runs.cancel(get_registry(), run_id)
+
+
+@app.post("/train/check-replies")
+def train_check_replies():
+    """Job `check_replies`: the judge reads every reply the export would train on and says whether it answers
+    the line before it (train/checks.py). The export leaves out the ones that don't."""
+    project, reg = require_project(), get_registry()
+    todo = checks.prepare(project, reg)
+    return jobs.start("check_replies", lambda job: checks.run(project, reg, todo, job))
+
+
+@app.get("/eval/{adapter_id}")
+def eval_get(adapter_id: str):
+    """The last evaluation of an adapter, or {"exists": false}."""
+    reg = get_registry()
+    adapter = reg.adapter(adapter_id)
+    row = reg.one("SELECT run_dir FROM train_runs WHERE id = ?", (adapter.get("run_id"),)) if adapter.get("run_id") else None
+    saved = evaluate.load(Path(row["run_dir"])) if row else None
+    return {"exists": True, **saved} if saved else {"exists": False, "trained_here": bool(row),
+                                                     "judge": evaluate.JUDGE_MODEL.stem,
+                                                     "judge_ready": evaluate.JUDGE_MODEL.is_file()}
+
+
+@app.post("/eval/{adapter_id}")
+def eval_start(adapter_id: str):
+    """Score an adapter with the judge model, as a job (train/evaluate.py). Stops and restarts llama-server."""
+    reg = get_registry()
+    prep = evaluate.prepare(reg, adapter_id)
+    return jobs.start("eval", lambda job: evaluate.run(reg, prep, job))
 
 
 if __name__ == "__main__":

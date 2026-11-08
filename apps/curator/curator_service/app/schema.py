@@ -11,9 +11,48 @@ from . import textless
 
 APPLICATION_ID = 0x4F484D31  # 'OHM1'
 
-PROJECT_VERSION = 5
+PROJECT_VERSION = 8
 
-PROJECT_SCHEMA = """
+# The model's suggested meaning for a term (terms.py suggest), as JSON. Added in 6 -> 7.
+TERMS_SUGGESTION = "ALTER TABLE terms ADD COLUMN suggestion TEXT;\n"
+
+
+def _add_suggestion(conn) -> None:
+    # Checked first: tests (and dev builds) reopen current files with an older user_version.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(terms)")}
+    if "suggestion" not in cols:
+        conn.execute(TERMS_SUGGESTION)
+
+# The judge model's verdict on each trained reply (train/checks.py): does it answer the line before it?
+# The export leaves out the ones that don't. Added in 7 -> 8.
+REPLY_CHECKS_TABLE = """
+CREATE TABLE IF NOT EXISTS reply_checks (
+  reply_ids   TEXT PRIMARY KEY,               -- the Ohm turn's message ids, comma-joined (export.reply_key)
+  answers     INTEGER NOT NULL,               -- 1 if it answers the line before it
+  judge       TEXT NOT NULL,                  -- the judge model's file name, without .gguf
+  checked_at  INTEGER NOT NULL
+);
+"""
+
+# General terminology (terms.py). Shared by new projects and the 5 -> 6 migration.
+TERMS_TABLE = """
+CREATE TABLE terms (
+  id            INTEGER PRIMARY KEY,
+  term          TEXT NOT NULL UNIQUE,          -- lowercase word or short phrase
+  definition    TEXT,
+  relation      TEXT CHECK (relation IN ('typo','same')),
+  related_term  TEXT,                          -- lowercase; need not be a row here ("alc" -> "alcohol")
+  ignored       INTEGER NOT NULL DEFAULT 0,    -- "it's a normal word"
+  origin        TEXT NOT NULL CHECK (origin IN ('detected','manual')),
+  uses          INTEGER NOT NULL DEFAULT 0,
+  people        INTEGER NOT NULL DEFAULT 0,
+  examples      TEXT NOT NULL DEFAULT '[]',    -- JSON list of message ids, newest first
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+"""
+
+PROJECT_SCHEMA = TERMS_TABLE + TERMS_SUGGESTION + REPLY_CHECKS_TABLE + """
 CREATE TABLE meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -214,6 +253,13 @@ PROJECT_MIGRATIONS: list[Union[str, Callable]] = [
     "",
     # 4 -> 5: messages with no text aren't kept at all any more; remove them and point replies past them.
     textless.remove,
+    # 5 -> 6: general terminology (terms.py).
+    # IF NOT EXISTS: tests (and dev builds) reopen current files with an older user_version.
+    "BEGIN;" + TERMS_TABLE.replace("CREATE TABLE terms", "CREATE TABLE IF NOT EXISTS terms") + "COMMIT;",
+    # 6 -> 7: suggested meanings for terms.
+    _add_suggestion,
+    # 7 -> 8: the judge's verdicts on trained replies.
+    "BEGIN;" + REPLY_CHECKS_TABLE + "COMMIT;",
 ]
 
 DEFAULT_SETTINGS = {

@@ -225,6 +225,28 @@ def test_export_replays_each_person_as_ohm(project):
         e["assistant_turns"] for e in data["examples"])
 
 
+def test_export_trains_only_replies_to_the_last_line(project):
+    with project.tx() as conn:
+        conversations.approve(conn, 1, confirm=True)
+        # KaptainDoosh's roll call answers ELEVIST from before KaptainDoosh's own "Mb I was out" turn
+        threads._write(conn, "block", block_of(project, "1010"), "1001", "accepted", "manual")
+    data = export.build(project)
+    # The opener and Zhingstin's "Baro could hit" start topics (root arrows); the bot only ever answers
+    assert not any(e["speaker"] == "Zhingstin Ji" for e in data["examples"])
+    assert data["dropped"]["starts a topic"] == 2
+    kaptain = next(e for e in data["examples"] if e["speaker"] == "KaptainDoosh")
+    # "Mb I was out" answers 1003, two lines up: that line is moved to the end so it's what Ohm answers
+    context, reply = kaptain["messages"][-2]["content"], kaptain["messages"][-1]["content"]
+    assert context.splitlines()[-1] == "unanticipatedinflation: we running barotrauma this night? @Ohm"
+    assert "Baro could hit" in context.splitlines()[-2]
+    assert reply.startswith("Mb I was out all day")
+    assert "1010" not in kaptain["source_message_ids"] and data["dropped"]["answers something older"] == 1
+    with project.lock:
+        estimate = conversations._replies(conversations._snapshot(project.conn, [conversations.get(project.conn, 1)])[1],
+                                          set())
+    assert sum(estimate.values()) == sum(s["count"] for s in data["by_author"])
+
+
 def test_export_carries_parent_into_a_later_conversation(project):
     # Conversation 2 opens with Zhingstin answering KaptainDoosh's 1010 from the night before
     with project.tx() as conn:
@@ -241,6 +263,44 @@ def test_export_carries_parent_into_a_later_conversation(project):
     kaptain = next(e for e in data["examples"] if e["speaker"] == "KaptainDoosh")
     assert "@ELEVIST" not in kaptain["messages"][1]["content"]
     assert kaptain["messages"][-1]["content"] == "pulling up now"
+
+
+def test_export_starts_over_after_a_long_silence(project):
+    with project.tx() as conn:
+        conversations.approve(conn, 1, confirm=True)
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'split_gap_ms'", (json.dumps(30 * 60_000),))
+    kaptain = [e for e in export.build(project)["examples"] if e["speaker"] == "KaptainDoosh"]
+    late = next(e for e in kaptain if e["messages"][-1]["content"].startswith("Mb I was out"))
+    # 79 quiet minutes before KaptainDoosh's reply: only the message it answers comes along
+    assert late["segment"] > 0
+    assert late["messages"][1]["content"] == "unanticipatedinflation: we running barotrauma this night? @Ohm"
+    assert all("Baro could hit" not in m["content"] for m in late["messages"])
+
+
+def test_export_drops_links_pings_and_transcripts(project):
+    with project.tx() as conn:
+        threads._write(conn, "block", block_of(project, "1013"), "1011", "accepted", "manual")
+        # Zhingstin answers KaptainDoosh's 1010 and pings them first; the bot's reply would ping them anyway
+        conn.execute("UPDATE messages SET content_text = '@KaptainDoosh im in, give me 5' WHERE id = '1011'")
+        # KaptainDoosh's 1013 becomes a link: the model can't send real ones
+        conn.execute("UPDATE messages SET content_text = 'https://tenor.com/view/x' WHERE id = '1013'")
+        conversations.approve(conn, 2, confirm=True)
+    data = export.build(project)
+    zhing = next(e for e in data["examples"] if e["speaker"] == "Zhingstin Ji")
+    assert zhing["messages"][-1]["content"] == "im in, give me 5"
+    assert not any(e["speaker"] == "KaptainDoosh" and "1013" in e["source_message_ids"] for e in data["examples"])
+    assert data["dropped"]["links or media"] == 1
+
+
+def test_export_reply_filters():
+    unping = export._unping(["ELEVIST", "elevist"])
+    assert unping("@ELEVIST @elevist, yo @ELEVIST") == "yo @ELEVIST"
+    assert unping("@ELEVISTS yo") == "@ELEVISTS yo"  # someone else
+    msgs = [{"ts": t} for t in (0, 60_000, 60_000 + 31 * 60_000, 60_000 + 32 * 60_000)]
+    assert [len(s) for s in export._segments(msgs, 30 * 60_000)] == [2, 2]
+    assert export._media({"content_text": "look https://x.y", "attachments": "[]"})
+    assert export._media({"content_text": "crazy snipe", "attachments": '[{"fileName": "a.png"}]'})
+    assert not export._media({"content_text": "crazy snipe", "attachments": "[]"})
 
 
 def test_export_chunks_long_conversations():
@@ -347,3 +407,37 @@ def test_old_project_migrates(tmp_path):
         assert p.scalar("SELECT COUNT(*) FROM model_link_scans") == 0
     finally:
         p.close()
+
+
+# ── training ────────────────────────────────────────────────────────────────
+def test_held_out_conversations_are_whole_and_stable():
+    from curator_service.app.train import worker
+
+    rows = [{"conversation_id": c} for c in range(40) for _ in range(3)]
+    held = worker.held_out(rows, 1337)
+    assert len(held) == 4 and held == worker.held_out(list(reversed(rows)), 1337)
+    assert worker.held_out(rows[:30], 1337) == set()  # 10 conversations: all of them are needed
+
+
+def test_curator_questions_go_to_the_base_model(monkeypatch):
+    from curator_service.app import llm
+
+    class R:
+        ok = True
+
+        def __init__(self, data):
+            self.data = data
+
+        def json(self):
+            return self.data
+
+        def raise_for_status(self):
+            pass
+
+    sent = []
+    monkeypatch.setattr(llm, "_adapters", (0.0, None))
+    monkeypatch.setattr(llm.requests, "get", lambda url, **k: R([{"id": 0, "scale": 1.0}, {"id": 1, "scale": 1.0}]))
+    monkeypatch.setattr(llm.requests, "post", lambda url, json, **k: sent.append(json) or R(
+        {"choices": [{"message": {"content": "ok"}}]}))
+    assert llm.chat("sys", "hi") == "ok"
+    assert sent[0]["lora"] == [{"id": 0, "scale": 0.0}, {"id": 1, "scale": 0.0}]

@@ -3,6 +3,8 @@
 Only conversations can be approved, and only approved, unarchived ones are exported.
 """
 
+import json
+import re
 import sqlite3
 from bisect import bisect_right
 from typing import Optional
@@ -145,6 +147,204 @@ def approve(conn, conversation_id: int, confirm: bool) -> dict:
                              "link": {k: u["link"][k] for k in ("parent_id", "status", "origin", "score")}})
     conn.execute("UPDATE conversations SET approved_at = ? WHERE id = ?", (now_ms(), conversation_id))
     return {**stats(conn, get(conn, conversation_id)), "accepted": accepted}
+
+
+# ── bulk approval ───────────────────────────────────────────────────────────
+# Approving one at a time gave ~270 training replies in an evening; a LoRA wants 1,500 or more.
+# So the app proposes conversations that look like real chat, the user skims a sample and
+# archives the bad ones, then approves the rest at once.
+CRITERIA = {
+    "min_messages": 8,             # kept messages
+    "min_people": 3,               # people, not bots
+    "max_gap_ms": 30 * 60 * 1000,  # longest silence inside it
+    "max_media": 0.25,             # share of messages that are only a link, or carry an attachment
+    "min_attached": 0.8,           # share of units with an arrow (any status)
+    "min_repliers": 2,             # different people who'd get a trainable reply
+}
+# Checked in this order; a skipped conversation is counted under the first one it fails.
+REASONS = {
+    "too_short": "too short",
+    "few_people": "too few people",
+    "long_silence": "long silence inside",
+    "mostly_links": "mostly links or attachments",
+    "unattached": "too many replies without an arrow",
+    "few_repliers": "too few people replying",
+}
+_LINK_ONLY = re.compile(r"^(\s*<?https?://\S+>?)+\s*$")
+
+
+def _media(m) -> bool:
+    """Only a link (gifs are tenor links), or a file. Link previews ("embed") don't count."""
+    if _LINK_ONLY.match(m["content_text"] or ""):
+        return True
+    att = m["attachments"] or "[]"
+    return att != "[]" and any(a.get("type") in ("attachment", "sticker") for a in json.loads(att))
+
+
+def _replies(snap: dict, bots: set) -> dict[str, int]:
+    """Roughly the assistant turns export.build would make from this conversation, per person.
+
+    Each run of one person's messages becomes one Ohm turn when that person is replayed, if its arrow
+    points at something said since their last counted turn (or in an earlier conversation, which the
+    export carries over). Like the export: bots aren't replayed, unattached messages and most
+    one-word replies ("lol") are dropped, and so are later lines answering something else.
+    Silences inside the conversation, chunk overlap and the author cap aren't counted.
+    """
+    from . import export  # export imports this module
+
+    attached, parents = {}, {}
+    inside = {m["id"] for m in snap["messages"]}
+    for u in snap["units"]:
+        for m in u["messages"]:
+            attached[m["id"]] = u["link"] is not None
+            if u["link"]:
+                parents[m["id"]] = u["link"]["parent_id"]
+    runs: list[list] = []
+    for m in snap["messages"]:
+        if m["excluded"]:
+            continue
+        if runs and runs[-1][0]["author_id"] == m["author_id"]:
+            runs[-1].append(m)
+        else:
+            runs.append([m])
+    out: dict[str, int] = {}
+    speakers = {r[0]["author_id"] for r in runs}
+    heard: dict[str, set] = {a: set() for a in speakers}  # ids said by others since that person's last counted turn
+    for run in runs:
+        who = run[0]["author_id"]
+        ids = {m["id"] for m in run}
+        before = heard[who]
+        for other in speakers - {who}:
+            heard[other] |= ids
+        if who in bots:
+            continue
+        ok = [m for m in run if attached.get(m["id"])]
+        if not ok:
+            continue
+        parent = parents.get(ok[0]["id"])
+        if parent is None or (parent in inside and parent not in before):
+            continue
+        ok = [m for m in ok if parents.get(m["id"]) == parent or parents.get(m["id"]) in ids]
+        text = "\n".join(m["content_text"] for m in ok).strip()
+        if not text or len(text) > export.MAX_REPLY_CHARS:
+            continue
+        norm = text.lower().strip(" .!?")
+        if (norm in export.SHORT_REPLIES or len(norm) < 2) and export._frac(ok[0]["id"]) >= export.KEEP_SHORT:
+            continue
+        out[who] = out.get(who, 0) + 1
+        heard[who] = set()
+    return out
+
+
+def _score(conv: dict, snap: dict, bots: set, c: dict) -> dict:
+    msgs = [m for m in snap["messages"] if not m["excluded"]]
+    people = {m["author_id"] for m in msgs if m["author_id"] not in bots}
+    by_author: dict[str, int] = {}
+    for m in msgs:
+        by_author[m["author_id"]] = by_author.get(m["author_id"], 0) + 1
+    gap =max((b["ts"] - a["ts"] for a, b in zip(msgs, msgs[1:])), default=0)
+    media = sum(_media(m) for m in msgs) / (len(msgs) or 1)
+    live = [u for u in snap["units"] if any(not m["excluded"] for m in u["messages"])]
+    attached = sum(u["link"] is not None for u in live) / (len(live) or 1)
+    replies = _replies(snap, bots)
+    fails = [code for code, bad in (
+        ("too_short", len(msgs) < c["min_messages"]),
+        ("few_people", len(people) < c["min_people"]),
+        ("long_silence", gap > c["max_gap_ms"]),
+        ("mostly_links", media > c["max_media"]),
+        ("unattached", attached < c["min_attached"]),
+        ("few_repliers", len(replies) < c["min_repliers"]),
+    ) if bad]
+    return {
+        "id": conv["id"], "channel_id": conv["channel_id"], "first_ts": conv["first_ts"], "last_ts": conv["last_ts"],
+        "first_message_id": conv["first_message_id"], "messages": len(msgs), "people": len(people),
+        "replies": sum(replies.values()), "repliers": len(replies), "max_gap_ms": gap,
+        "media": round(media, 3), "attached": round(attached, 3), "reasons": fails,
+        "authors": sorted(by_author, key=lambda a: -by_author[a])[:6],  # most messages first, for avatars
+    }
+
+
+def _bots(conn) -> set:
+    return {r[0] for r in conn.execute("SELECT id FROM authors WHERE is_bot")}
+
+
+def candidates(conn, **criteria) -> dict:
+    """Score every conversation that isn't approved or archived against `criteria` (CRITERIA by default).
+
+    Returns {"criteria", "passed": [...], "skipped": {reason: count}, "replies": estimated total
+    for the passed ones, "approved": {"conversations", "replies"} for what's already approved}.
+    """
+    c = {**CRITERIA, **{k: v for k, v in criteria.items() if v is not None}}
+    unknown = set(c) - set(CRITERIA)
+    if unknown:
+        raise ApiError(422, "bad_criteria", f"Unknown criteria: {', '.join(sorted(unknown))}.")
+    convs = [dict(r) for r in conn.execute("SELECT * FROM conversations WHERE archived_at IS NULL ORDER BY first_ts")]
+    snaps = _snapshot(conn, convs)
+    bots = _bots(conn)
+    passed, skipped = [], {code: 0 for code in REASONS}
+    approved = {"conversations": 0, "replies": 0}
+    for conv in convs:
+        if conv["approved_at"] is not None:
+            approved["conversations"] += 1
+            approved["replies"] += sum(_replies(snaps[conv["id"]], bots).values())
+            continue
+        s = _score(conv, snaps[conv["id"]], bots, c)
+        if s["reasons"]:
+            skipped[s["reasons"][0]] += 1
+        else:
+            passed.append(s)
+    return {"criteria": c, "passed": passed, "replies": sum(s["replies"] for s in passed),
+            "skipped": skipped, "approved": approved}
+
+
+def _by_ids(conn, ids: list[int]) -> list[dict]:
+    out = []
+    for i in range(0, len(ids), 500):  # stay under SQLite's parameter limit
+        part = ids[i:i + 500]
+        out += [dict(r) for r in conn.execute(
+            f"SELECT * FROM conversations WHERE id IN ({','.join('?' * len(part))})", part)]
+    return out
+
+
+def approve_many(conn, ids: list[int]) -> dict:
+    """approve(confirm=True) for each conversation, with one snapshot for all of them.
+
+    Already approved, archived or missing ones are skipped, so undo only touches what this changed.
+    """
+    convs = [c for c in _by_ids(conn, list(dict.fromkeys(ids))) if c["approved_at"] is None and c["archived_at"] is None]
+    snaps = _snapshot(conn, convs)
+    accepted, link_ids = [], []
+    for c in convs:
+        for u in snaps[c["id"]]["units"]:
+            if u["link"] and u["link"]["status"] == "suggested":
+                link_ids.append((now_ms(), u["link"]["id"]))
+                accepted.append({"unit_kind": u["kind"], "unit_id": u["id"],
+                                 "link": {k: u["link"][k] for k in ("parent_id", "status", "origin", "score")}})
+    conn.executemany("UPDATE links SET status = 'accepted', updated_at = ? WHERE id = ?", link_ids)
+    done = [c["id"] for c in convs]
+    conn.executemany("UPDATE conversations SET approved_at = ? WHERE id = ?", [(now_ms(), i) for i in done])
+    kept = set(done)
+    return {"approved": done, "skipped": [i for i in ids if i not in kept], "accepted": accepted}
+
+
+def unapprove_many(conn, ids: list[int], accepted: list[dict]) -> dict:
+    """Undo approve_many: approval off, and the arrows it accepted back to suggestions.
+
+    An arrow changed since (moved, detached) is left as it is now.
+    """
+    restored = 0
+    for a in accepted:
+        link = a.get("link") or {}
+        cur = conn.execute(
+            "UPDATE links SET status = ?, origin = ?, score = ?, updated_at = ? "
+            "WHERE unit_kind = ? AND unit_id = ? AND status = 'accepted' AND parent_id IS ?",
+            (link.get("status", "suggested"), link.get("origin", "suggested"), link.get("score"), now_ms(),
+             a["unit_kind"], str(a["unit_id"]), link.get("parent_id")),
+        )
+        restored += cur.rowcount
+    changed = [c["id"] for c in _by_ids(conn, list(dict.fromkeys(ids))) if c["approved_at"] is not None]
+    conn.executemany("UPDATE conversations SET approved_at = NULL WHERE id = ?", [(i,) for i in changed])
+    return {"unapproved": changed, "restored": restored}
 
 
 def set_flag(conn, conversation_id: int, column: str, on: bool) -> dict:

@@ -22,7 +22,7 @@ A `.ohm` file is a plain SQLite 3 database.
 
 ```sql
 PRAGMA application_id = 0x4F484D31;  -- 'OHM1', lets us reject random .sqlite files
-PRAGMA user_version   = 3;           -- schema version, bump on every migration
+PRAGMA user_version   = 7;           -- schema version, bump on every migration
 PRAGMA journal_mode   = WAL;
 PRAGMA foreign_keys   = ON;
 ```
@@ -140,6 +140,29 @@ CREATE TABLE filter_rules (             -- "filter out" rules, e.g. regex or bot
   kind          TEXT NOT NULL,          -- 'regex' | 'author' | 'min_words' | 'link_only'
   value         TEXT NOT NULL,
   enabled       INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE terms (                    -- general terminology (terminology.md)
+  id            INTEGER PRIMARY KEY,
+  term          TEXT NOT NULL UNIQUE,   -- lowercase word or short phrase
+  definition    TEXT,
+  relation      TEXT CHECK (relation IN ('typo','same')),
+  related_term  TEXT,                   -- lowercase; need not be a row here
+  ignored       INTEGER NOT NULL DEFAULT 0,   -- marked a normal word
+  origin        TEXT NOT NULL CHECK (origin IN ('detected','manual')),
+  uses          INTEGER NOT NULL DEFAULT 0,
+  people        INTEGER NOT NULL DEFAULT 0,
+  examples      TEXT NOT NULL DEFAULT '[]',   -- message ids, newest first
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  suggestion    TEXT                    -- JSON, the model's guess waiting for approval (version 7)
+);
+
+CREATE TABLE reply_checks (             -- the judge model's verdicts on trained replies (version 8, training.md)
+  reply_ids     TEXT PRIMARY KEY,       -- the Ohm turn's message ids, comma-joined (export.reply_key)
+  answers       INTEGER NOT NULL,       -- 1 if it answers the line before it; 0 is left out of training
+  judge         TEXT NOT NULL,          -- the judge model's file name, without .gguf
+  checked_at    INTEGER NOT NULL
 );
 
 CREATE TABLE memories (                 -- candidates; kept ones are also pushed to memory_service

@@ -13,24 +13,31 @@ Examples use **rotation**, from Smarth's `training/discord_dataset.py` (PR #3). 
 Which messages go where:
 
 - **Excluded messages** are left out entirely.
+- **Only answers are targets.** A reply counts only if its arrow points at something said since that person's last turn (or at a message carried over, see below). That message, with the rest of its block, is moved to the end of the `user` turn, so every Ohm turn answers the last line before it. At runtime the bot answers the message that pinged it, which is always the last line it sees. A topic start (root arrow) is dropped as `starts a topic`. A reply to something older, or to the person's own earlier line, is dropped as `answers something older`, and so are later lines of a turn that answer something else. Without this, about half the replies in a busy chat answered something a few lines up or nothing at all, and the adapter learned to say whatever fit the chat instead of answering.
 - **Bots** are context only, never replayed.
 - **Unattached messages** (their unit has no link) still show as context when someone else is replayed, because the bot sees everything said in the channel. They are never trained as replies.
 - **Short replies** (`lol`, `ok`, `same`, … under 2 characters after trimming) are mostly dropped as targets. A fixed 10% stays, picked by message id, so the model still says "lol" sometimes.
 - **Replies over 600 characters** are dropped as targets.
-- **Turn order:** a replay starts on a user turn and ends on an assistant turn. A person's opening message, with nothing before it, is not a target. The bot only ever answers.
+- **Replies over 4 lines** (`MAX_REPLY_LINES`) are dropped as targets. Long bursts teach turns that never hand back.
+- **Links, gifs and attachments** are dropped from targets, message by message. The model can't see or send real ones, so it would make them up. They stay as context in other people's turns.
+- **A leading @mention of the person being answered** is taken off a target line (`@Lenk yo` becomes `yo`). The person is whoever the reply arrow points to, else whoever spoke last. The bot answers with a Discord reply, which pings them already. Other mentions stay, and the bot turns them into real pings.
+- **Replies with a line that starts like a speaker label** (`Lenk:`, `Ohm:`) are dropped as targets. That's the shape of a transcript, which the bot must never write.
+- **Turn order:** a replay starts on a user turn and ends on an assistant turn. A person's opening message, with nothing before it, has nothing to answer, so it is not a target. The bot only ever answers.
 
 **Chunking:** conversations longer than `max_len` are split at turn pairs, repeating the last 2 pairs at the start of the next chunk. The budget is `max_len × 3` characters minus the system prompt. The worker still drops anything that tokenizes over `max_len`.
 
-The thread links don't shape the context. A replay is linear by time, like the bot's own channel history.
+**Silences:** a conversation is cut into segments wherever nobody spoke for longer than the project's `split_gap_ms` (30 minutes by default), and each segment is replayed on its own (`segment` in the record). The bot only sees the last 30 minutes too.
 
-One exception: a reply whose parent is in an **earlier conversation** gets the parent's block, up to and including the parent message, as a `user` turn right before it. Without it, a reply that opens its own conversation (after a long gap) would have nothing before it and never be trained. The carried block is context only: it is never a target, and it is left out of its own author's replay.
+Apart from moving the answered message to the end, a replay is linear by time, like the bot's own channel history. So the arrows decide what gets trained: arrows the model suggested and nobody checked are trusted as they are.
+
+One exception: a reply whose parent is **before its segment** (in an earlier conversation, or before a silence in this one) gets the parent's block, up to and including the parent message, as a `user` turn right before it. Without it, a reply after a long gap would have nothing before it and never be trained. The carried block is context only: it is never a target, and it is left out of its own author's replay.
 
 ### Export record (`/export/jsonl`)
 
 One record per line. `messages` is exactly what gets trained:
 
 ```json
-{"id": "conv:12:1234:0", "conversation_id": 12, "speaker": "KaptainDoosh", "speaker_id": "1234",
+{"id": "conv:12:0:1234:0", "conversation_id": 12, "segment": 0, "speaker": "KaptainDoosh", "speaker_id": "1234",
  "chunk": 0, "chunks": 1, "assistant_turns": 1, "source_message_ids": ["...", "..."],
  "messages": [
    {"role": "system", "content": "<Ohm's personality>"},
@@ -53,7 +60,7 @@ Apply these, and report each count in `GET /export/preview` (`dropped`):
 The format is the one the bot already sends (`controller/wrappers/openai.py`, `modules/discord/DiscordClient.py`):
 
 ```
-system:    Ohm's personality (config/constants.py, models["ohm"]["personality"].strip())
+system:    the project character's personality from the NAS, like the bot (config/constants.py when the NAS is down)
 user:      unanticipatedinflation: we running barotrauma this night? @Ohm
            Zhingstin Ji: Baro could hit
 assistant: Mb I was out all day and just got home
@@ -61,7 +68,7 @@ user:      ...
 assistant: ...
 ```
 
-At runtime the bot sends the last 30 minutes of channel history the same way: `Name: text` user turns, its own replies as assistant turns, and same-role turns merged (`_merge_same_role`). The only difference is the "Things you remember" notes it appends to the system prompt. If the personality text in `config/constants.py` changes, retrain, because the system prompt is part of every example.
+At runtime the bot sends the last 30 minutes of channel history the same way: `Name: text` user turns, its own replies as assistant turns, and same-role turns merged (`_merge_same_role`). The only difference is what it appends to the system prompt: the "Things you remember" notes, and a "People who came up" block for anyone the message names (by display name, Discord handle, or a name added on the Memories page). If the personality changes (Characters page, or `config/constants.py` for the offline copy), retrain, because the system prompt is part of every example. Keep its examples as "if someone says X, you'd say Y", not `name: line` pairs: a model that drifts copies a `lenk:`/`Ohm:` block word for word as a transcript.
 
 - Render it with the base model's own chat template from the HF tokenizer (`tokenizer.apply_chat_template`). Gemma 4 has a real system turn, so ignore older Gemma guides on this. Never hand-write the special tokens.
 - Compute loss on the assistant turns only (`train_on_responses_only`), so every Ohm turn in a multi-turn example is trained and no user turn is.
@@ -93,7 +100,13 @@ Default config, matching the Train modal:
   "load_in_4bit": true, "seed": 1337, "speakers": null }
 ```
 
-Use QLoRA (4-bit base) by default so E4B fits on a consumer GPU. `batch_size: auto` means: try the largest batch that fits, and fall back on CUDA out-of-memory.
+Use QLoRA (4-bit base) by default so E4B fits on a consumer GPU. `batch_size: auto` means: try the largest batch that fits, and fall back on CUDA out-of-memory. The effective batch is 16 either way.
+
+**Schedule:** warmup is 10% of the steps, then a cosine decay. (A fixed 5 warmup steps on a 26-example run meant 6 steps in all, with the rate still climbing on the last one.) Transformers 5 has no `warmup_ratio`; a float under 1 in `warmup_steps` is the ratio.
+
+**Held-out conversations:** with 20 or more conversations, 10% of them (at least 3) are kept out of training, whole, since each is replayed once per person. The loss on them is measured 8 times per run (`eval_loss`, `best_eval_loss` in progress and done events), and the adapter saved is the checkpoint with the lowest held-out loss, not the last step. Training loss on chat stays high (around 3), so judge a run by the held-out loss and by sample replies.
+
+**Size:** aim for 1,500–3,000 assistant turns. A few hundred only nudges the model, which can weaken its turn-taking without teaching the voice.
 
 ### Stages
 
@@ -163,9 +176,40 @@ This was checked against the current llama.cpp server README.
   - `POST /lora-adapters` with `[{"id": 0, "scale": 1.0}]` sets the global scale.
   - Or per request: send `"lora": [{"id": 0, "scale": 1.0}]` in the completion body. Requests with different LoRA settings are not batched together.
 
+Adapters left out of a per-request `lora` list count as scale 0 (checked on b12144), so a request names the full set.
+
+**The bot doesn't trust the global scales.** Every reply request names the in-play character's adapter (`configs.ui.model.adapter_id` on the NAS, resolved to a file through the registry) at 1.0 and every other loaded adapter at 0. Its utility calls (intent, web search, memory notes) and all of the Curator's own calls (`llm.chat`) send every adapter at 0, so they run on the base model. The global scales once ended up with two adapters both at 1.0, which stacked them. A character whose adapter isn't loaded yet runs without one, and the engine says to restart llama-server.
+
 So `PUT /models/active` works like this:
 
 1. If the chosen adapter file is already loaded, POST the new scales to `/lora-adapters`. No restart is needed.
 2. If it is a newly trained file, restart llama-server once with every registered adapter for that base on `--lora`, plus `--lora-init-without-apply`. Then do step 1.
 
 Update `executables/_run_llama.cmd`, or better, have the controller build the command from the registry.
+
+## 6. Scoring an adapter
+
+The held-out loss says how well an adapter predicts the group's wording. It can't tell whether Ohm answers what was said: the first adapter had a fine loss and still replied "so they are gonna have a blue one now" to "Can you actually hear me?". So a finished adapter can be scored by a bigger local model (`train/evaluate.py`). Open it with **Score it** at the end of a run, or **Score this LoRA…** in the model menu.
+
+**Judge model:** `Qwen3.6-27B-Q4_K_M.gguf` (unsloth/Qwen3.6-27B-GGUF, 15.7 GB) in llama.cpp's `models` folder. `CURATOR_JUDGE_MODEL` points elsewhere, `CURATOR_JUDGE_PORT` (5055) moves it. It's left out of the model dropdown: it's never Ohm. On the 3090 it uses about 17 GB. It serves 4 requests at once (`-np 4`, 4096 tokens of context each), about 2 to 3 seconds per verdict each.
+
+**What gets scored:** the last Ohm turn of every held-out example of the run (up to 60), so only adapters trained here can be scored, and only runs with 20+ conversations hold any out. Plus 8 probes shaped like the live messages that went wrong ("Can you actually hear me?", "Tell me something interesting."), asked by whoever talks most in the held-out chats.
+
+**Two passes,** since Ohm's model and the judge don't fit in 24 GB together:
+
+1. llama-server on the adapter's base answers each context three ways with per-request `lora` scales: no adapter, the adapter at 1.0, and at 0.6. Temperature 1.0 like the bot, a fixed seed per item.
+2. Ohm's llama-server stops and the judge starts on its own port. For each context it gets the candidates plus the person's real reply, shuffled and labeled A, B, C…, and says which answer the last message. Then, for the voice, it gets each of Ohm's replies paired with the real one, in random order, and is told one was written by the person and one by an AI imitating them: which did the person write? Reasoning is off: on the calibration below, thinking took 60 s a verdict and changed nothing.
+
+The voice test was a ranking at first: order all the candidates by how much they sound like someone in the group. The judge put the base model's polished jokes ("flamingos are basically nature's pink traffic cones") above the group's own replies, so the ranking measured wit, not likeness. A blind pair against the real reply can't reward that.
+
+Afterwards Ohm's llama-server is started again if it was running, with the active adapter on. The result is `eval.json` in the run folder: per variant, the share that answer the last message and, for held-out chats, the share the judge took for the real reply (**passes as real**: 50% means it can't tell them apart, 0% means it always spots the bot), for held-out chats and probes separately, plus every reply with its verdicts.
+
+**Calibration (2026-11-07):** on 20 held-out chats the judge counted 18 of the real replies as answering, and 5 of 20 real replies swapped in from other chats. Four of those five did fit ("play?" answered by "im joinng"), so it's about 1 in 20 wrong. The real reply's row is the ceiling to compare against: the group doesn't always answer either.
+
+## 7. Checking replies with the judge
+
+Laying each reply out after the message it answers (section 1) isn't enough on its own. The judge counted only about two thirds of the group's real replies as answering the line before them: the arrow was a guess, or the person was carrying on their own thread. The first adapter trained on that data answered 58% of held-out chats, against 83% for the base model, so it had learned to ignore what was just said.
+
+So before training, the judge can read every reply the export would train on (`train/checks.py`, **Check them** in the Train modal, `POST /train/check-replies`). It sees the reply as it would be trained, after the chat before it, and says whether it answers the last line. Verdicts are stored per reply in the project (`reply_checks`, keyed by the reply's message ids), so a reply is checked once, and a later check only reads replies that are new. The export leaves out every reply the judge says doesn't answer, counted as `doesn't answer (judge)`. Unchecked replies are trained as before. An unreadable verdict isn't stored, so the next check tries it again.
+
+Like scoring, it stops Ohm's llama-server for the length of the check and starts it again afterwards.

@@ -22,6 +22,20 @@ STAGES = ["export", "tokenize", "train", "save"]
 WEIGHTS = {"export": 0.02, "tokenize": 0.03, "train": 0.85, "save": 0.10}
 SAVE_ESTIMATE_S = 90
 PROGRESS_EVERY_S = 2.0
+WARMUP = 0.1        # share of steps spent warming up the learning rate
+HOLD_OUT = 0.1      # share of conversations kept out of training to score the adapter on
+MIN_CONVS = 20      # below this every conversation is needed for training, so nothing is held out
+EVALS = 8           # held-out scores per run
+
+
+def held_out(rows: list[dict], seed: int) -> set:
+    """Conversation ids kept for evaluation. Whole conversations, since the same one is replayed once per
+    person and would otherwise leak into training."""
+    convs = sorted({r.get("conversation_id") for r in rows if r.get("conversation_id") is not None})
+    if len(convs) < MIN_CONVS:
+        return set()
+    random.Random(seed).shuffle(convs)
+    return set(convs[:max(3, round(len(convs) * HOLD_OUT))])
 
 
 class Reporter:
@@ -72,19 +86,23 @@ def simulate(run_dir: Path, rep: Reporter, cfg: dict) -> None:
     rep.progress("tokenize", 1.0, force=True, dropped_too_long=0)
     rep.stage("train")
     total = max(20, cfg["examples"] * cfg["epochs"] // 2)
-    loss = 2.4
+    loss, eval_loss, best = 2.4, None, None
     for step in range(1, total + 1):
         time.sleep(0.25)
         loss = max(0.9, loss * 0.985 + random.uniform(-0.02, 0.02))
+        if step % max(1, total // EVALS) == 0:
+            eval_loss = round(loss + 0.3, 4)
+            best = min(best or eval_loss, eval_loss)
         epoch = math.ceil(step / (total / cfg["epochs"]))
         rep.progress("train", step / total, force=step == total, step=step, total_steps=total, epoch=epoch,
-                     epochs=cfg["epochs"], loss=round(loss, 4), eta_s=rep.eta(step, total))
+                     epochs=cfg["epochs"], loss=round(loss, 4), eval_loss=eval_loss, best_eval_loss=best,
+                     eta_s=rep.eta(step, total))
     rep.stage("save")
     out = run_dir / "adapter.gguf"
     out.write_bytes(b"GGUF-simulated")
     time.sleep(1)
     rep.emit("done", status="succeeded", adapter_gguf=str(out), peft_dir=None, final_loss=round(loss, 4),
-             elapsed_s=rep.elapsed())
+             eval_loss=eval_loss, best_eval_loss=best, elapsed_s=rep.elapsed())
 
 
 def train(run_dir: Path, rep: Reporter, cfg: dict) -> None:
@@ -105,18 +123,23 @@ def train(run_dir: Path, rep: Reporter, cfg: dict) -> None:
     )
     text_tok = getattr(tokenizer, "tokenizer", tokenizer)
     rows = [json.loads(line) for line in (run_dir / "dataset.jsonl").read_text(encoding="utf-8").splitlines() if line]
-    texts, dropped = [], 0
+    held = held_out(rows, cfg["seed"])
+    texts, eval_texts, dropped = [], [], 0
     for i, r in enumerate(rows):
         text = tokenizer.apply_chat_template(r["messages"], tokenize=False, add_generation_prompt=False)
         if len(text_tok(text, add_special_tokens=False)["input_ids"]) > cfg["max_len"]:
             dropped += 1
             continue
-        texts.append(text)
+        (eval_texts if r.get("conversation_id") in held else texts).append(text)
         rep.progress("tokenize", (i + 1) / len(rows), dropped_too_long=dropped)
-    rep.progress("tokenize", 1.0, force=True, dropped_too_long=dropped)
+    rep.progress("tokenize", 1.0, force=True, dropped_too_long=dropped, eval_examples=len(eval_texts))
     if not texts:
         raise RuntimeError(f"Every example is longer than max_len ({cfg['max_len']} tokens).")
     dataset = Dataset.from_dict({"text": texts})
+    eval_dataset = Dataset.from_dict({"text": eval_texts}) if eval_texts else None
+    # Effective batch is 16 whichever batch size fits (4x4, 2x8, 1x16)
+    total_steps = math.ceil(len(texts) / 16) * cfg["epochs"]
+    eval_steps = max(1, total_steps // EVALS)
 
     model = FastModel.get_peft_model(
         model, finetune_vision_layers=False, finetune_language_layers=True, finetune_attention_modules=True,
@@ -127,10 +150,15 @@ def train(run_dir: Path, rep: Reporter, cfg: dict) -> None:
     class Progress(TrainerCallback):
         def __init__(self):
             self.loss = None
+            self.eval_loss = None
+            self.best_eval_loss = None
 
         def on_log(self, args, state, control, logs=None, **kw):
             if logs and "loss" in logs:
                 self.loss = round(float(logs["loss"]), 4)
+            if logs and "eval_loss" in logs:
+                self.eval_loss = round(float(logs["eval_loss"]), 4)
+                self.best_eval_loss = min(self.best_eval_loss or self.eval_loss, self.eval_loss)
             self._send(state, force=True)
 
         def on_step_end(self, args, state, control, **kw):
@@ -142,6 +170,7 @@ def train(run_dir: Path, rep: Reporter, cfg: dict) -> None:
             total = state.max_steps or 1
             rep.progress("train", state.global_step / total, force=force, step=state.global_step, total_steps=total,
                          epoch=math.ceil(state.epoch or 0) or 1, epochs=cfg["epochs"], loss=self.loss,
+                         eval_loss=self.eval_loss, best_eval_loss=self.best_eval_loss,
                          eta_s=rep.eta(state.global_step, total))
 
     attempts = [(4, 4), (2, 8), (1, 16)]
@@ -150,17 +179,25 @@ def train(run_dir: Path, rep: Reporter, cfg: dict) -> None:
     rep.stage("train")
     callback = Progress()
     for bs, ga in attempts:
+        # Warmup is a share of the run: a fixed 5 steps on a 6-step run never let the rate come down.
         args = dict(
             dataset_text_field="text", per_device_train_batch_size=bs, gradient_accumulation_steps=ga,
-            num_train_epochs=cfg["epochs"], learning_rate=cfg["lr"], logging_steps=1, warmup_steps=5,
-            optim="adamw_8bit", lr_scheduler_type="linear", seed=cfg["seed"], report_to="none",
+            # Transformers 5 reads a float under 1 as a share of the steps (warmup_ratio is gone)
+            num_train_epochs=cfg["epochs"], learning_rate=cfg["lr"], logging_steps=1, warmup_steps=WARMUP,
+            optim="adamw_8bit", lr_scheduler_type="cosine", seed=cfg["seed"], report_to="none",
             output_dir=str(run_dir / "checkpoints"), save_strategy="no",
         )
+        if eval_dataset is not None:
+            # Score held-out conversations as it goes and keep the best point, not just the last one
+            args.update(eval_strategy="steps", eval_steps=eval_steps, save_strategy="steps", save_steps=eval_steps,
+                        save_total_limit=2, load_best_model_at_end=True, metric_for_best_model="eval_loss",
+                        greater_is_better=False, per_device_eval_batch_size=bs)
         try:
             sft_args = SFTConfig(max_length=cfg["max_len"], **args)
         except TypeError:  # older TRL
             sft_args = SFTConfig(max_seq_length=cfg["max_len"], **args)
-        trainer = SFTTrainer(model=model, tokenizer=tokenizer, train_dataset=dataset, args=sft_args, callbacks=[callback])
+        trainer = SFTTrainer(model=model, tokenizer=tokenizer, train_dataset=dataset, eval_dataset=eval_dataset,
+                             args=sft_args, callbacks=[callback])
         if train_on_responses_only:
             trainer = train_on_responses_only(trainer, instruction_part="<|turn>user\n", response_part="<|turn>model\n")
         try:
@@ -184,7 +221,8 @@ def train(run_dir: Path, rep: Reporter, cfg: dict) -> None:
     gguf = convert(peft_dir, cfg, run_dir)
     rep.progress("save", 1.0, force=True)
     rep.emit("done", status="succeeded", adapter_gguf=str(gguf), peft_dir=str(peft_dir),
-             final_loss=callback.loss, elapsed_s=rep.elapsed())
+             final_loss=callback.loss, eval_loss=callback.eval_loss, best_eval_loss=callback.best_eval_loss,
+             elapsed_s=rep.elapsed())
 
 
 def convert(peft_dir: Path, cfg: dict, run_dir: Path) -> Path:

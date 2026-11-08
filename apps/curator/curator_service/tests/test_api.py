@@ -39,6 +39,9 @@ def test_full_flow(tmp_path):
     assert c.post(f"/conversations/{first['id']}/approve", json={}).status_code == 409
     assert c.post(f"/conversations/{first['id']}/approve", json={"confirm": True}).json()["approved"]
     assert [x["id"] for x in c.get("/conversations?filter=approved").json()["conversations"]] == [first["id"]]
+    assert not c.post(f"/conversations/{first['id']}/unapprove").json()["approved"]
+    assert c.get("/conversations?filter=approved").json()["conversations"] == []
+    assert c.post(f"/conversations/{first['id']}/approve", json={"confirm": True}).json()["approved"]
 
     s = c.get("/search", params={"q": "@Kaptain baro"}).json()
     assert len(s["messages"]) == 2 and s["people"]
@@ -48,6 +51,13 @@ def test_full_flow(tmp_path):
     m = c.post(f"/people/{kaptain['author_id']}/memories", json={"text": "Plays Barotrauma with the group."}).json()
     assert m["status"] == "kept"
     assert c.patch(f"/memories/{m['id']}", json={"status": "forgotten"}).json()["status"] == "forgotten"
+    other = c.post(f"/people/{kaptain['author_id']}/memories", json={"text": "Plays baro most weekends."}).json()
+    merged = c.post(f"/memories/{m['id']}/merge", json={"ids": [other["id"]]}).json()
+    assert merged["id"] == m["id"] and merged["priority"] == "interest"
+    assert [x["id"] for x in c.get(f"/people/{kaptain['author_id']}/memories").json()["memories"]] == [m["id"]]
+    msg = s["messages"][0]["id"]
+    near = c.get(f"/messages/{msg}/around", params={"before": 2, "after": 1}).json()
+    assert msg in [x["id"] for x in near["messages"]] and len(near["messages"]) <= 4
     assert c.post("/memories/extract", json={}).status_code == 503  # no llama-server in tests
     assert c.post("/links/guess", json={}).json()["error"] == "llm_down"
 

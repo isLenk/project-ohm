@@ -93,6 +93,7 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 |---|---|---|
 | PATCH | `/messages/{id}` | `{ excluded: bool }` |
 | GET | `/messages/{id}/context` | — returns the message's thread path to the root (used by the training preview) |
+| GET | `/messages/{id}/around` | `?before=8&after=4` — the message with the channel messages just before and after it (memory source preview) |
 
 ## Conversations
 
@@ -105,6 +106,41 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 | POST | `/conversations/{id}/unarchive` | — | |
 | POST | `/conversations/split` | `{ before_message_id }` | "Split here" in the Raw view |
 | POST | `/conversations/{id}/merge-up` | — | "Merge with above" |
+| GET | `/conversations/candidates` | criteria as query params, see below | Unapproved, unarchived conversations good enough to approve in bulk |
+| POST | `/conversations/approve-bulk` | `{ ids: [...] }` | Approve each like `approve` with `confirm: true`, in one transaction. Returns `{ approved: [ids], skipped: [ids], accepted: [restore...], dirty }`. Already approved, archived or missing ids are skipped |
+| POST | `/conversations/unapprove-bulk` | `{ ids, accepted }` | Undo approve-bulk: send back its `approved` and `accepted`. Approval comes off and accepted arrows go back to suggestions, except arrows changed since. Returns `{ unapproved: [ids], restored, dirty }` |
+
+### Finding good conversations
+
+Approving one at a time gave ~270 training replies in an evening; a LoRA wants 1,500 or more. "Find good conversations" (the button under the conversation list) proposes conversations, you skim a random sample and reject (archive) the bad ones, then approve enough of the rest to reach a reply target.
+
+`GET /conversations/candidates` takes any of these; left out means the default:
+
+| Param | Default | Passes when |
+|---|---|---|
+| `min_messages` | 8 | kept (not excluded) messages ≥ this |
+| `min_people` | 3 | people who aren't bots ≥ this |
+| `max_gap_ms` | 1800000 | no silence between two kept messages longer than this |
+| `max_media` | 0.25 | share of messages that are only a link (gifs are tenor links) or carry a file ≤ this. Link previews don't count |
+| `min_attached` | 0.8 | share of units with an arrow, any status ≥ this |
+| `min_repliers` | 2 | people who'd get at least one trainable reply ≥ this |
+
+```json
+{
+  "criteria": { "min_messages": 8, ... }, "defaults": { ... },
+  "candidates": [
+    { "id": 12, "channel_id": "…", "first_ts": 0, "last_ts": 0, "first_message_id": "…",
+      "messages": 24, "people": 4, "replies": 14, "repliers": 4, "max_gap_ms": 540000,
+      "media": 0.04, "attached": 0.93, "authors": ["id", ...] }
+  ],
+  "replies": 59978,
+  "skipped": { "too_short": 5604, "few_people": 521, "long_silence": 78, "mostly_links": 74, "unattached": 50, "few_repliers": 1 },
+  "reasons": { "too_short": "too short", ... },
+  "approved": { "conversations": 42, "replies": 284 }
+}
+```
+
+A skipped conversation is counted under the first criterion it fails, in the order above. `replies` is about how many assistant turns the export would make (`conversations._replies`): one per run of a person's messages, minus bots, unattached messages, most one-word replies and the opening run, the same rules as `export.build`. It leaves out chunk overlap and the author cap; on the real project it was within 1–2% of the export. `authors` is the six people with the most messages, for avatars. Scoring all 8.6k conversations (130k messages) takes about 1.5 s.
 
 ## Search
 
@@ -115,11 +151,29 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 | Method | Path | Body / query |
 |---|---|---|
 | GET | `/people` | — authors with message counts, share, memory counts by status |
-| GET | `/people/{author_id}/memories` | `?status=new\|kept\|forgotten` |
+| GET | `/people/{author_id}/memories` | `?status=new\|kept\|forgotten`. Each memory has `priority`, `group`, `confidence` (0–1) and `sure` (see memories.md) |
 | POST | `/people/{author_id}/memories` | `{ category, text }` (Add memory) |
 | PATCH | `/memories/{id}` | `{ text?, status?, linked_author_id? }` |
-| POST | `/people/{author_id}/memories/keep-all` | — |
-| POST | `/memories/sync` | — push kept, unsynced memories to `memory_service` |
+| POST | `/people/{author_id}/memories/keep-all` | `?sure=true` keeps only the sure bets |
+| POST | `/memories/{id}/merge` | `{ ids }` — fold these memories into `{id}`: their sources move over, then they are deleted |
+| POST | `/memories/sync` | — push kept, unsynced memories to `memory_service`, and share the terms (`terms` in the reply) |
+
+## General terminology
+
+See terminology.md.
+
+| Method | Path | Body / query |
+|---|---|---|
+| GET | `/terms` | — `{ terms, counts, shared }`; each term has `status`, `uses`, `people`, `examples` (newest messages using it) and `suggestion`. `shared` is how the last push to `memory_service` went (`{ ok, terms, at, error }`), or null |
+| POST | `/terms` | `{ term, definition?, relation?, related_term? }` — add or update by text (Ctrl+click). `""` clears a field |
+| PATCH | `/terms/{id}` | `{ definition?, relation?: 'typo'\|'same', related_term?, ignored? }` |
+| DELETE | `/terms/{id}` | — |
+| POST | `/terms/scan` | — look for unfamiliar words; returns `{ found, added, removed }` |
+| POST | `/terms/suggest` | `{ ids? }` — job (`kind: 'terms'`): the local model suggests a meaning for each unknown term without one (or just `ids`, asked again). Result `{ terms, suggested, kinds, failed, stopped }` |
+| POST | `/terms/{id}/accept` | — apply the term's suggestion |
+| POST | `/terms/accept-all` | — apply every waiting suggestion; returns `{ accepted }` |
+| DELETE | `/terms/{id}/suggestion` | — dismiss it; the term stays unknown and isn't asked about again |
+| POST | `/terms/share` | — send the defined and linked terms to `memory_service` now; returns `shared` |
 
 ## Models (registry, app-wide)
 
@@ -152,7 +206,12 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 | GET | `/train/runs/{id}` | — | run row, plus the last progress event |
 | GET | `/train/runs/{id}/events` | — | SSE stream (`training.md`); reconnect any time |
 | POST | `/train/runs/{id}/cancel` | — | |
+| POST | `/train/check-replies` | — | job `check_replies`: the judge reads every reply the export would train on that it hasn't yet (`training.md` section 7). Stops and restarts llama-server. 409 `no_judge`, `run_active`. `/train/preflight` counts them in `export.checked` |
+| GET | `/eval/{adapter_id}` | — | the adapter's last score (`eval.json`), or `{exists: false, trained_here, judge, judge_ready}` |
+| POST | `/eval/{adapter_id}` | — | job `eval`: score it with the judge model (`training.md` section 6). Stops and restarts llama-server. 409 `not_trained_here`, `no_judge`, `run_active`, `nothing_held_out` |
 
 ## Health
 
-`GET /health` → `{ ok, project_open, gpu: { name, vram_gb } | null, llama_server: bool, memory_service: bool }`
+`GET /health` → `{ ok, pid, project_open, gpu: { name, vram_gb } | null, llama_server: bool, memory_service: bool }`
+
+No token needed. `pid` lets the app restart a service that rejects its token (`apps/mainframe/src/main/curator.js`).
