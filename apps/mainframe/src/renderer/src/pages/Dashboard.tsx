@@ -22,6 +22,7 @@ const RANGES = [
   ['30d', 30]
 ] as const
 const TAG_COLOR = { update: 'text-warn', error: 'text-bad' }
+const SOURCE_COLOR = { brain: 'text-clay', mood: 'text-[#a78bfa]', reflect: 'text-[#5ec8e5]' }
 const DAY_COLOR: Record<Day, string> = {
   up: 'bg-[#4e9c74]',
   restarted: 'bg-warn',
@@ -71,12 +72,22 @@ const Dashboard = () => {
   )
   const health = usePoll(() => window.api.health(days), 10000, [days])
   const logs = usePoll(() => window.api.getLogs(60), 3000)
+  // The brain, mood and reflection jobs log to the NAS rather than this app, so the Brain tab reads there
+  const brainLogs = usePoll(
+    () =>
+      logTab === 'brain'
+        ? nas.get('/logs?source=brain,mood,reflect&limit=100')
+        : Promise.resolve(null),
+    5000,
+    [logTab]
+  )
   const models = usePoll(() => get('/models'), 30000)
 
   const s = stats.data
   const h = health.data
   const base = models.data?.base_models.find((m) => m.id === active?.model?.base_model_id)
   const adapter = models.data?.adapters.find((a) => a.id === active?.model?.adapter_id)
+  // Empty on the Brain tab, which shows the NAS's logs instead
   const system = (logs.data ?? []).filter((l) => logTab === 'all' || l.log_type === logTab)
   const top = s?.top ?? []
   const peak = Math.max(1, ...(s?.hours ?? []).map((x) => x.heard + x.replied))
@@ -408,7 +419,7 @@ const Dashboard = () => {
                 System log
               </h2>
               <div role="tablist" aria-label="Log type" className="flex gap-3.5">
-                {['all', 'update', 'error'].map((t) => (
+                {['all', 'update', 'error', 'brain'].map((t) => (
                   <button
                     key={t}
                     role="tab"
@@ -422,6 +433,7 @@ const Dashboard = () => {
               </div>
             </div>
             <ul className="max-h-[210px] flex-1 overflow-auto py-1.5 font-mono text-[11.5px]">
+              {logTab === 'brain' && <BrainLog list={brainLogs.data} error={brainLogs.error} />}
               {system.map((l) => (
                 <li
                   key={l._id}
@@ -436,12 +448,82 @@ const Dashboard = () => {
                   <span className="break-all text-[#c9cbd1]">{l.message}</span>
                 </li>
               ))}
-              {system.length === 0 && <li className="px-3.5 py-1 text-muted">Nothing logged.</li>}
+              {logTab !== 'brain' && system.length === 0 && <li className="px-3.5 py-1 text-muted">Nothing logged.</li>}
             </ul>
           </section>
         </div>
       </div>
     </div>
+  )
+}
+
+type NasLog = {
+  id: number
+  level: string
+  source: string
+  message: string
+  data: Record<string, any> | null
+  created_at: string
+}
+
+/** role · backend · ms · tokens · $, from what the brain package logs with each call. */
+function brainDetail(d: Record<string, any> | null) {
+  if (!d) return ''
+  const tokens = d.tokens ?? (d.prompt_tokens != null || d.output_tokens != null
+    ? (d.prompt_tokens ?? 0) + (d.output_tokens ?? 0)
+    : null)
+  const usd = d.usd ?? d.cost_usd
+  return [
+    d.role,
+    d.backend,
+    d.ms != null && ms(d.ms),
+    tokens != null && `${tokens} tok`,
+    usd != null && `$${Number(usd).toFixed(4)}`
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** Rows for the Brain tab, laid out like the system log's. A brain row opens to show what came back. */
+const BrainLog = ({ list, error }: { list: NasLog[] | null; error: string | null }) => {
+  const [open, setOpen] = useState<number | null>(null)
+  if (error) return <li className="px-3.5 py-1 text-muted">{error}</li>
+  if (list?.length === 0) return <li className="px-3.5 py-1 text-muted">Nothing logged.</li>
+  return (
+    <>
+      {(list ?? []).map((l) => (
+        <BrainRow
+          key={l.id}
+          l={l}
+          open={open === l.id}
+          onToggle={() => setOpen(open === l.id ? null : l.id)}
+        />
+      ))}
+    </>
+  )
+}
+
+const BrainRow = ({ l, open, onToggle }: { l: NasLog; open: boolean; onToggle: () => void }) => {
+  const detail = l.source === 'brain' ? brainDetail(l.data) : ''
+  const preview = l.data?.preview
+  return (
+    <li
+      title={preview}
+      onClick={() => preview && onToggle()}
+      className={`grid grid-cols-[52px_54px_minmax(0,1fr)] gap-2.5 px-3.5 py-1 ${preview ? 'cursor-pointer hover:bg-[#17181a]' : ''}`}
+    >
+      <span className="text-muted">{fmtTime(l.created_at)}</span>
+      <span className={`text-[10.5px] uppercase ${SOURCE_COLOR[l.source] ?? 'text-muted'}`}>
+        {l.source}
+      </span>
+      <span className="min-w-0">
+        <span className={`break-all ${l.level === 'error' ? 'text-bad' : 'text-[#c9cbd1]'}`}>
+          {l.message}
+        </span>
+        {detail && <span className="block text-[10.5px] text-muted">{detail}</span>}
+        {open && <span className="mt-1 block whitespace-pre-wrap text-soft">{preview}</span>}
+      </span>
+    </li>
   )
 }
 

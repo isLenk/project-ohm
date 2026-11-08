@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { LuBookA, LuCheck, LuGlobe, LuPencil, LuPlus, LuTrash2, LuUser, LuX } from 'react-icons/lu'
+import { LuBookA, LuCheck, LuGlobe, LuLightbulb, LuPencil, LuPlus, LuSparkles, LuTrash2, LuUser, LuX } from 'react-icons/lu'
 import { Avatar } from '../curator/Avatar'
+import Reflection from './Reflection'
 import { fmtDay, fmtTime, message, nas, personColor, useCharacters, usePoll } from '../lib/ohm'
 
 /* Everything the memory service knows, in three scopes:
@@ -10,6 +11,9 @@ import { fmtDay, fmtTime, message, nas, personColor, useCharacters, usePoll } fr
      here: each Curator project replaces its set whenever its terms change, so edits belong there
    - People: what was remembered about each person (memories involving them, and user_facts), and every name
      they go by (users.aliases). A message naming them gets these in the prompt (controller/memory.py people_in)
+   - Learned: memories reflection wrote about the group (topics, jokes, opinions, questions, things about
+     itself), listed by kind so the odd ones can be forgotten before the character says them
+   - Reflection: the reflection jobs, traits and relationships (components/Reflection.tsx)
    All of it but the terminology is recalled into prompts by /memories/search; terms that come up in a message
   are added by controller/memory.py glossary_for. */
 
@@ -17,7 +21,17 @@ type Scope =
   | { kind: 'character' }
   | { kind: 'knowledge' }
   | { kind: 'glossary' }
+  | { kind: 'learned' }
+  | { kind: 'reflection' }
   | { kind: 'person'; id: string; name: string }
+// The memory kinds reflection writes, as the Learned chips show them
+const LEARNED = [
+  ['topic', 'Topics'],
+  ['joke', 'Jokes'],
+  ['opinion', 'Opinions'],
+  ['question', 'Questions'],
+  ['self', 'Self']
+] as const
 type Item = { id: number; text: string; meta: string; when: string }
 type GlossaryRow = { term: string; definition: string | null; relation: 'typo' | 'same' | null; related_term: string | null; source: string; updated_at: string }
 
@@ -43,6 +57,7 @@ const Memories = () => {
   const [tab, setTab] = useState<'memories' | 'facts'>('memories')
   const [filter, setFilter] = useState('')
   const [termFilter, setTermFilter] = useState('')
+  const [learned, setLearned] = useState<string>('topic')
   const [tick, setTick] = useState(0)
   const [error, setError] = useState('')
   const character = characters?.find((c) => c.id === pick) ?? active
@@ -69,7 +84,7 @@ const Memories = () => {
 
   const items = usePoll<Item[]>(
     async () => {
-      if (!slug || scope.kind === 'glossary') return []
+      if (!slug || scope.kind === 'glossary' || scope.kind === 'reflection') return []
       if (scope.kind === 'character') {
         return (await nas.get(`/lore?character=${slug}`)).map((r) => ({
           id: r.id,
@@ -83,6 +98,14 @@ const Memories = () => {
           id: r.id,
           text: r.content,
           meta: r.title || 'knowledge',
+          when: r.created_at
+        }))
+      }
+      if (scope.kind === 'learned') {
+        return (await nas.get(`/memories?character=${slug}&kind=${learned}`)).map((r) => ({
+          id: r.id,
+          text: r.content,
+          meta: r.kind,
           when: r.created_at
         }))
       }
@@ -102,7 +125,7 @@ const Memories = () => {
       }))
     },
     30000,
-    [slug, scope, tab, tick]
+    [slug, scope, tab, learned, tick]
   )
 
   // Where adding, editing and forgetting go for the scope that's showing
@@ -119,6 +142,7 @@ const Memories = () => {
         one: (id) => `/knowledge/${id}`,
         body: (t) => ({ content: t })
       }
+    if (scope.kind === 'learned') return { add: null, one: (id) => `/memories/${id}`, body: (t) => ({ content: t }) }
     if (tab === 'facts') {
       return {
         add: [`/users/${scope.id}/facts`, (t) => ({ character: slug, fact: t })],
@@ -180,6 +204,18 @@ const Memories = () => {
             'Shared by every character',
             'Facts about the server, games and the world that aren’t about one person.'
           ]
+        : scope.kind === 'learned'
+          ? [
+              'Learned',
+              character?.name ?? 'Character',
+              'What reflection picked up from the group: running topics, in-jokes, opinions, questions to ask and things about itself. They can come up in what it says, so forget any that are off.'
+            ]
+        : scope.kind === 'reflection'
+          ? [
+              'Reflection',
+              character?.name ?? 'Character',
+              'After a conversation, the character looks back over it and updates its traits, how it feels about each person, and what it learned.'
+            ]
         : scope.kind === 'glossary'
           ? [
               'Terminology',
@@ -191,6 +227,8 @@ const Memories = () => {
               'Person',
               'What was remembered about this person. When a message uses any of their names, this goes into the prompt.'
             ]
+  // Scopes that show the editable list of rows (the others have their own views)
+  const listed = scope.kind !== 'glossary' && scope.kind !== 'reflection'
   const scopeBtn = (on: boolean) =>
     `flex h-11 w-full cursor-pointer items-center gap-3 px-5 text-left text-[13.5px] ${on ? 'bg-raised text-gray-100 shadow-[inset_2px_0_0_#ececee]' : 'text-[#c9cbd1] hover:bg-[#17181a] hover:text-gray-100'}`
 
@@ -231,6 +269,20 @@ const Memories = () => {
           <LuUser className="size-4 text-clay" />
           <span className="flex-1">Character</span>
           <span className="font-mono text-[11.5px] text-muted">{lore.length}</span>
+        </button>
+        <button
+          className={scopeBtn(scope.kind === 'learned')}
+          onClick={() => setScope({ kind: 'learned' })}
+        >
+          <LuLightbulb className="size-4 text-soft" />
+          <span className="flex-1">Learned</span>
+        </button>
+        <button
+          className={scopeBtn(scope.kind === 'reflection')}
+          onClick={() => setScope({ kind: 'reflection' })}
+        >
+          <LuSparkles className="size-4 text-soft" />
+          <span className="flex-1">Reflection</span>
         </button>
         <button
           className={scopeBtn(scope.kind === 'knowledge')}
@@ -335,10 +387,26 @@ const Memories = () => {
                   </p>
                 )}
               </>
+            ) : scope.kind === 'reflection' ? (
+              <Reflection slug={slug} people={people.data ?? []} />
+            ) : scope.kind === 'learned' ? (
+              <div className="mt-5 flex flex-wrap gap-2 border-b border-line pb-4" role="tablist" aria-label="Kind">
+                {LEARNED.map(([kind, label]) => (
+                  <button
+                    key={kind}
+                    role="tab"
+                    aria-selected={learned === kind}
+                    onClick={() => setLearned(kind)}
+                    className="h-7 cursor-pointer rounded border border-edge px-2.5 text-[12.5px] text-muted hover:text-gray-100 aria-selected:border-soft aria-selected:bg-raised aria-selected:text-gray-100"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             ) : (
               <AddRow onAdd={add} disabled={!slug} />
             )}
-            {scope.kind !== 'glossary' && (items.data ?? []).map((m) => (
+            {listed && (items.data ?? []).map((m) => (
               <Row
                 key={m.id}
                 item={m}
@@ -346,7 +414,7 @@ const Memories = () => {
                 onForget={() => forget(m.id)}
               />
             ))}
-            {scope.kind !== 'glossary' && items.data?.length === 0 && (
+            {listed && items.data?.length === 0 && (
               <p className="py-4 text-[13px] text-muted">Nothing here yet.</p>
             )}
           </div>
