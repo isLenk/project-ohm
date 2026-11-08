@@ -7,6 +7,7 @@ items, and run_packed() does both and re-asks anything missing once, in smaller 
 
 import json
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,6 +17,8 @@ from .task import Task
 RETRY_DIVISOR = 3       # missing answers are asked again in batches this many times smaller
 TOKENS_PER_ITEM = 60    # max_tokens a packed Task gets per item, on top of PACK_TOKENS
 PACK_TOKENS = 100
+
+_local = threading.local()  # which backend answered this thread's last run(), see last_backend()
 
 TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number": (int, float),
          "boolean": bool, "null": type(None)}
@@ -39,6 +42,7 @@ def skip_reason(name: str, local_only: bool = False):
 def run(task: Task):
     """The answer to `task`: text, or the parsed JSON when it has a schema. None if every backend failed."""
     started = time.perf_counter()
+    _local.backend = None
     for name in config.chain(task.role):
         why = skip_reason(name, task.local_only)
         if why:
@@ -59,9 +63,15 @@ def run(task: Task):
         usd = config.cost(name, usage)
         config.add_spend(usd)
         log.report(task, name, round((time.perf_counter() - t) * 1000), True, text, usage, usd)
+        _local.backend = name
         return answer
     log.report(task, None, round((time.perf_counter() - started) * 1000), False)
     return None
+
+
+def last_backend():
+    """The backend that answered this thread's last run(), or None when nothing did."""
+    return getattr(_local, "backend", None)
 
 
 def run_many(tasks: list, workers: int = 4) -> list:

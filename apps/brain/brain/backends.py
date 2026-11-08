@@ -4,7 +4,9 @@ Both have complete(task) -> text, which raises on any failure so the router can 
 token counts of this thread's last call in last_usage.
 """
 
+import base64
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -19,6 +21,8 @@ CLI_TIMEOUT = 240         # seconds; a packed judge batch of 30 can take a coupl
 CLI_PARALLEL = 3          # at most this many calls at once per CLI, so a subscription isn't rate limited
 ADAPTERS_TTL_S = 15       # how long llama-server's adapter list is trusted
 CLAUDE_SYSTEM_MAX = 8000  # a longer system prompt goes on stdin; Windows command lines are capped at 32k
+
+IMAGE_EXTENSIONS = {"image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}  # anything else is a .jpg
 
 TOKENS_USED = re.compile(r"tokens used\s*:?\s*([\d,]+)", re.IGNORECASE)
 
@@ -59,7 +63,8 @@ class OpenAIBackend:
         return [{"id": i, "scale": 0.0} for i in ids] if ids else None
 
     def complete(self, task) -> str:
-        body = {"messages": [{"role": "system", "content": task.system}, {"role": "user", "content": task.user}],
+        body = {"messages": [{"role": "system", "content": task.system},
+                             {"role": "user", "content": self.content(task)}],
                 "max_tokens": task.max_tokens, "temperature": task.temperature}
         if self.model:
             body["model"] = self.model
@@ -81,6 +86,16 @@ class OpenAIBackend:
         usage = data.get("usage") or {}
         self._local.usage = {"prompt_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens")}
         return (data["choices"][0]["message"].get("content") or "").strip()
+
+    def content(self, task):
+        """The user message: just the text, or the text and an image_url part per picture (what llama-server
+        with --mmproj and OpenRouter's vision models take)."""
+        if not task.images:
+            return task.user
+        if self.name == "deepseek":
+            raise RuntimeError("deepseek doesn't take images")
+        return [{"type": "text", "text": task.user}] + [
+            {"type": "image_url", "image_url": {"url": as_data_url(image)}} for image in task.images]
 
 
 class CliBackend:
@@ -132,8 +147,12 @@ class CliBackend:
     def _codex_args(self, task, folder):
         # ? MCP servers and the user's hooks start with every session; switching them off saves ~1-2 s a call.
         # (A -p profile would do the same, but Codex 0.163 wants it as a separate ~/.codex/<name>.config.toml.)
-        args = ["exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only",
-                "-c", "mcp_servers={}", "-c", "features.hooks=false"]
+        args = ["exec"]
+        for i, image in enumerate(task.images):
+            # ? Right after "exec": -i takes one or more files, so the "-" (prompt on stdin) can't come after it
+            args += ["-i", as_file(image, folder, f"image{i}")]
+        args += ["--ephemeral", "--skip-git-repo-check", "-s", "read-only",
+                 "-c", "mcp_servers={}", "-c", "features.hooks=false"]
         if self.model:
             args += ["-m", self.model]
         effort = task.reasoning or self.reasoning
@@ -146,6 +165,8 @@ class CliBackend:
         return args + ["-"], f"{task.system}\n\n{task.user}"
 
     def _claude_args(self, task, folder):
+        if task.images:
+            raise RuntimeError("claude backend doesn't take images")
         args = ["-p", "--output-format", "json", "--tools", "", "--no-session-persistence", "--strict-mcp-config"]
         if self.model:
             args += ["--model", self.model]
@@ -154,6 +175,27 @@ class CliBackend:
         if len(task.system) <= CLAUDE_SYSTEM_MAX:
             return args + ["--system-prompt", task.system], task.user
         return args, f"{task.system}\n\n{task.user}"
+
+
+def as_file(image: str, folder, name: str) -> str:
+    """A picture as a file path: a data URL is written into `folder` (the call's temp folder) as <name>.jpg/.png."""
+    if not image.startswith("data:"):
+        return image
+    header, _, data = image.partition(",")
+    kind = header[len("data:"):].split(";")[0]
+    path = os.path.join(folder, name + IMAGE_EXTENSIONS.get(kind, ".jpg"))
+    with open(path, "wb") as f:
+        f.write(base64.b64decode(data))
+    return path
+
+
+def as_data_url(image: str) -> str:
+    """A picture as a data URL: a file path is read and encoded, a data URL is kept as it is."""
+    if image.startswith("data:"):
+        return image
+    kind = mimetypes.guess_type(image)[0] or "image/jpeg"
+    with open(image, "rb") as f:
+        return f"data:{kind};base64,{base64.b64encode(f.read()).decode()}"
 
 
 def parse_codex(stdout: str, stderr: str = "", out_file=None):

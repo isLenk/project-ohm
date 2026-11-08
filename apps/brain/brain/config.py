@@ -25,6 +25,7 @@ DEFAULT_ROLES = {
     "judge": "codex,qwen",        # qwen needs Ohm's llama-server stopped, so it's the fallback
     "reflect": "codex,deepseek",
     "label": "codex",
+    "screen": "codex",            # the engine's opt-in screen description; no local fallback, live replies use it
 }
 LOCAL = ("local", "qwen")          # everything else sends the prompt off the PC
 PAID = ("deepseek", "openrouter")  # billed per token, so they count against BRAIN_DAILY_USD

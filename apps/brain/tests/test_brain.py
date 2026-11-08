@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from brain import Task, needs_gpu_swap, pack, run, run_many, run_packed, unpack
+from brain import Task, last_backend, needs_gpu_swap, pack, run, run_many, run_packed, unpack
 from brain import config
 from brain.backends import parse_claude, parse_codex, strict
 from brain.router import parse
@@ -190,3 +190,56 @@ def test_strict_schema_for_codex():
     item = s["properties"]["a"]["items"]
     assert s["additionalProperties"] is False and s["required"] == ["a"]
     assert item["required"] == ["n", "x"] and item["additionalProperties"] is False
+
+
+# ── Images ───────────────────────────────────────────────────────────────────
+PNG_URL = "data:image/png;base64,iVBORw0KGgo="
+
+
+def test_codex_args_with_an_image(tmp_path):
+    from brain.backends import CliBackend
+    args, stdin = CliBackend("codex")._codex_args(Task("screen", "One line.", "What's on it?", images=[PNG_URL]),
+                                                   str(tmp_path))
+    image = tmp_path / "image0.png"
+    assert args[:3] == ["exec", "-i", str(image)]  # before the other options, so "-" isn't taken as an image
+    assert image.read_bytes() == b"\x89PNG\r\n\x1a\n"
+    assert args[-1] == "-" and stdin == "One line.\n\nWhat's on it?"
+    assert "-i" not in CliBackend("codex")._codex_args(Task("screen", "s", "u"), str(tmp_path))[0]
+
+
+def test_claude_refuses_images(tmp_path):
+    from brain.backends import CliBackend
+    with pytest.raises(RuntimeError):
+        CliBackend("claude")._claude_args(Task("screen", "s", "u", images=[PNG_URL]), str(tmp_path))
+
+
+def test_openai_content_parts(tmp_path):
+    from brain.backends import OpenAIBackend
+    picture = tmp_path / "shot.jpg"
+    picture.write_bytes(b"\xff\xd8\xff")
+    local = OpenAIBackend("local", "http://127.0.0.1:5000/v1")
+    assert local.content(Task("screen", "s", "just text")) == "just text"
+    assert local.content(Task("screen", "s", "look", images=[PNG_URL, str(picture)])) == [
+        {"type": "text", "text": "look"},
+        {"type": "image_url", "image_url": {"url": PNG_URL}},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/"}},
+    ]
+    with pytest.raises(RuntimeError):
+        OpenAIBackend("deepseek", "https://api.deepseek.com/v1", key_env="X").content(
+            Task("screen", "s", "u", images=[PNG_URL]))
+
+
+def test_screen_role_and_last_backend(fakes, monkeypatch):
+    monkeypatch.delenv("BRAIN_ROLE_SCREEN", raising=False)
+    assert config.roles()["screen"] == ["codex"]
+    monkeypatch.setenv("BRAIN_ROLE_SCREEN", "local")
+    assert config.chain("screen") == ["local"]
+    fakes["codex"] = Fake("codex", [RuntimeError("down")])
+    fakes["local"] = Fake("local", ["a menu"])
+    monkeypatch.setenv("BRAIN_ROLE_SCREEN", "codex,local")
+    assert run(Task("screen", "s", "u", images=[PNG_URL])) == "a menu" and last_backend() == "local"
+    # A screenshot marked local_only never reaches a cloud backend
+    assert run(Task("screen", "s", "u", images=[PNG_URL], local_only=True)) == "a menu"
+    assert len(fakes["codex"].calls) == 1
+    monkeypatch.setenv("BRAIN_ROLE_SCREEN", "codex")
+    assert run(Task("screen", "s", "u")) is None and last_backend() is None

@@ -6,8 +6,8 @@
 See README.md for the env vars, backends and the batching pattern.
 """
 
-from .router import needs_gpu_swap, pack, run, run_many, run_packed, unpack
+from .router import last_backend, needs_gpu_swap, pack, run, run_many, run_packed, unpack
 from .status import status
 from .task import Task
 
-__all__ = ["Task", "run", "run_many", "run_packed", "pack", "unpack", "needs_gpu_swap", "status"]
+__all__ = ["Task", "run", "run_many", "run_packed", "pack", "unpack", "needs_gpu_swap", "status", "last_backend"]

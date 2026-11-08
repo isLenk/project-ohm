@@ -34,7 +34,7 @@ Everything is an env var (the app writes them to the root `.env`); the defaults 
 | `CURATOR_LLM_URL`, `CURATOR_JUDGE_PORT` | `:5000/v1`, `5055` | Where `local` and `qwen` are |
 
 Default roles: classify `local`, extract `local`, brief `codex,local`, curate `codex,local`,
-judge `codex,qwen`, reflect `codex,deepseek`, label `codex`.
+judge `codex,qwen`, reflect `codex,deepseek`, label `codex`, screen `codex`.
 
 ## Backends
 
@@ -76,10 +76,21 @@ verdicts = brain.run_packed(texts, JUDGE_SYSTEM, "For each item, does the reply 
 then asks for the missing ones once more in packs of `size // 3`. Use `pack`/`unpack` yourself if you need to
 handle the retry differently.
 
+## Images
+
+`Task(..., images=[...])` shows pictures with the prompt, as file paths or data URLs. `codex` gets each one as
+`-i <file>` (a data URL is written into the call's temp folder first), and `local` and `openrouter` get them as
+`image_url` parts of the user message (llama-server needs `--mmproj`, OpenRouter a vision model). `claude` and
+`deepseek` raise, so the router moves on to the next backend. The `screen` role is the engine's opt-in screen
+description (`OHM_SCREEN_CLOUD=1`, `modules/vision/describe.py`); it has no local fallback because live replies
+already look at the screen through the local model. `brain.last_backend()` says which backend answered this
+thread's last `run()`.
+
 ## Privacy
 
 Anything with a screenshot, or text that shouldn't leave the PC, gets `Task(..., local_only=True)`, which skips
-every cloud backend for that call. `BRAIN_LOCAL_ONLY=1` does the same for everything.
+every cloud backend for that call. The one exception is the `screen` role, which only runs when the owner turned
+it on. `BRAIN_LOCAL_ONLY=1` skips every cloud backend for everything, that one included.
 
 ## Logs
 
