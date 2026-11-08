@@ -1,0 +1,19 @@
+[project]
+name = "ohm-brain"
+version = "0.1.0"
+description = "Routes Ohm's one-shot LLM tasks (classify, extract, judge...) to local or cloud backends"
+requires-python = "==3.12.*"
+dependencies = [
+    "requests",
+    "python-dotenv",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["brain"]

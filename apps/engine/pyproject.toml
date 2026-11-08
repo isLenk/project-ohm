@@ -23,8 +23,12 @@ dependencies = [
     "watchfiles", # dev.py
     "torch==2.5.1",
     "torchaudio==2.5.1",
+    "ohm-brain", # routes one-shot LLM tasks (apps/brain)
 ]
 
 [tool.uv]
 # Runs from this folder (python main.py), not installed as a package
 package = false
+
+[tool.uv.sources]
+ohm-brain = { workspace = true }

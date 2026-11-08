@@ -16,6 +16,7 @@ dependencies = [
     "sentence-transformers",
     # "From Hugging Face…" in the model menu
     "huggingface_hub",
+    "ohm-brain", # routes one-shot LLM tasks (apps/brain)
 ]
 
 [dependency-groups]
@@ -25,3 +26,6 @@ dev = ["pytest", "httpx"]
 # Runs from this folder (python -m uvicorn curator_service.app.main:app), not installed as a package.
 # Training needs its own venv, see requirements-train.txt.
 package = false
+
+[tool.uv.sources]
+ohm-brain = { workspace = true }

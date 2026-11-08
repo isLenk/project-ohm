@@ -5,7 +5,7 @@
 # on the NAS, so neither is a member.
 
 [tool.uv.workspace]
-members = ["apps/engine", "apps/curator"]
+members = ["apps/engine", "apps/curator", "apps/brain"]
 
 [tool.uv]
 # Everything runs on the Windows PC with the GPU
