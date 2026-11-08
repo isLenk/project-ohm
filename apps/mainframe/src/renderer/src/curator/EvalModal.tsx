@@ -152,12 +152,12 @@ export default function EvalModal({ adapterId, onClose, onError }: Props) {
               {!res.trained_here ? (
                 <p className="text-[#E0B25C]">Only adapters trained here can be scored: it uses the conversations the run held out.</p>
               ) : !res.judge_ready ? (
-                <p className="text-[#E0B25C]">The judge model ({res.judge}) isn’t in llama.cpp’s models folder.</p>
+                <p className="text-[#E0B25C]">No judge available: sign in to Codex in Settings › Integrations, or put the Qwen judge model ({res.judge}) in llama.cpp’s models folder.</p>
               ) : (
                 <p>
                   Ohm answers each held-out chat three ways (no LoRA, the LoRA, and the LoRA at 60%), plus a few test messages. Then {res.judge} judges whether
-                  each reply answers the last message, and whether it can tell each one from the person’s real reply. Ohm’s llama-server stops for a few minutes while the judge
-                  runs, and comes back on its own.
+                  each reply answers the last message, and whether it can tell each one from the person’s real reply. With a cloud judge Ohm stays online; with the local Qwen
+                  judge his llama-server stops for a few minutes and comes back on its own.
                 </p>
               )}
             </div>
