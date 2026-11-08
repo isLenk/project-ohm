@@ -1,5 +1,7 @@
 from discord.ext import voice_recv
 from concurrent.futures import ThreadPoolExecutor
+import atexit
+import threading
 import numpy as np
 import soundfile as sf
 import soxr
@@ -37,6 +39,33 @@ def open_recording(path):
             pass # Unreadable/old format, start a new one
     return sf.SoundFile(path, "w", STT_RATE, 1)
 
+
+# ? One recording for the whole process, written under a lock and closed only at exit. Every restart of
+# listening makes a new sink, and the old one is cleaned up from another thread while packets may still
+# be arriving: a handle per sink got closed mid-write, and two sinks had the same file open at once.
+# libsndfile runs without the GIL, so either of those corrupts native memory (main.py exits 0xC0000374).
+_recording = None
+_recording_lock = threading.Lock()
+
+
+def record(pcm):
+    global _recording
+    with _recording_lock:
+        try:
+            if _recording is None:
+                _recording = open_recording("stt_debug.wav")
+                atexit.register(_close_recording)
+            _recording.write(pcm)
+            _recording.flush()  # keeps the header right if the process dies
+        except Exception as e:
+            print(f"[stt] couldn't write the debug recording: {e!r}")
+
+
+def _close_recording():
+    with _recording_lock:
+        if _recording is not None:
+            _recording.close()
+
 class UserStream:
     """Audio buffer + speaking state for a single user"""
     def __init__(self):
@@ -65,8 +94,13 @@ class CustomSpeechRecognitionSink(voice_recv.AudioSink):
         # ? Transcribe off the voice thread so we don't drop incoming packets
         self.pool = ThreadPoolExecutor(max_workers=1)
         self.frames = 0
-        # ? Saves everything the sink hears so it can be replayed offline
-        self.recording = open_recording("stt_debug.wav") if DEBUG else None
+        # ? Saves everything the sink hears to stt_debug.wav so it can be replayed offline
+        self.recording = DEBUG
+        # ? write() is called from two threads: voice_recv's packet router (real audio) and the
+        # SilenceGeneratorSink's thread (silence for whoever went quiet), which doesn't hold any lock while it
+        # calls us. The resamplers and per-user state are native/unsynchronized, so one write at a time.
+        self._lock = threading.Lock()
+        self._closed = False
 
     def wants_opus(self):
         return False
@@ -74,7 +108,9 @@ class CustomSpeechRecognitionSink(voice_recv.AudioSink):
     def write(self, user, data):
         # ? An exception escaping write() makes voice_recv stop listening for good, so never let one out
         try:
-            self._write(user, data)
+            with self._lock:
+                if not self._closed:
+                    self._write(user, data)
         except Exception:
             print(f"[stt] error handling audio from {user}, skipped:\n{traceback.format_exc()}")
 
@@ -97,8 +133,7 @@ class CustomSpeechRecognitionSink(voice_recv.AudioSink):
         pcm = np.frombuffer(data.pcm, dtype=np.int16).reshape(-1, 2).mean(axis=1).astype(np.float32) / 32768.0
         pcm = stream.resampler.resample_chunk(pcm)
         if self.recording:
-            self.recording.write(pcm)
-            self.recording.flush()
+            record(pcm)
         stream.pending = np.concatenate([stream.pending, pcm])
 
         # ? Discord frames are 20ms but Silero wants 32ms, so run every full chunk we have
@@ -185,6 +220,8 @@ class CustomSpeechRecognitionSink(voice_recv.AudioSink):
         return any(s.speaking for s in list(self.streams.values()))
 
     def cleanup(self) -> None:
-        self.streams = {}
+        # ? Runs on voice_recv's stopper thread, which doesn't wait for the packet router to finish its write
+        with self._lock:
+            self._closed = True
+            self.streams = {}
         self.pool.shutdown(wait=False)
-        if self.recording: self.recording.close()

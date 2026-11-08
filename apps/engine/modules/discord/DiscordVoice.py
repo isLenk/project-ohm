@@ -63,11 +63,10 @@ class DiscordVoice:
     def __init__(self, client, discord_client):
         self.client = client
         self.discord_client = discord_client
-        self.tts = TTSModule()
         self.text_queue = asyncio.Queue()
         self.audio_out_queue = asyncio.Queue()
-        
-        self.tts_module = TTSModule()
+
+        self.tts_module = TTSModule(client.model)
     
 
     async def _poll_for_more_text(self, pause_max, participants):
@@ -190,7 +189,9 @@ class DiscordVoice:
             self.current_source = None
         self.cancel_barge_watch()
         if self.talking():
-            self.vc.stop()
+            # ? Not vc.stop(): on a VoiceRecvClient that stops listening too, so every interruption made him
+            # deaf until ensure_listening noticed, and dropped what people were saying in the meantime
+            self.vc.stop_playing()
 
     async def output_worker(self):
         """Worker that plays audio files from the audio_out_queue"""
@@ -368,9 +369,13 @@ class DiscordVoice:
         try:
             # ? Memory lookups + the LLM request are blocking HTTP calls, keep them off the event loop.
             # Connect to TTS at the same time instead of after
+            async def connect_tts():
+                # In the character's voice (ws_url may ask the NAS for it, so off the event loop)
+                return await websockets.connect(await asyncio.to_thread(self.tts_module.ws_url))
+
             turn, websocket = await asyncio.gather(
                 asyncio.to_thread(make),
-                websockets.connect(WS_URL),
+                connect_tts(),
             )
             self.current_turn = turn
             latency.mark("llm_stream_open")

@@ -11,6 +11,7 @@ import requests
 from controller import modules
 from controller.memory import memory
 from modules.tts.tts_module import TTS_URL, TTSModule
+from modules.vision import screen
 
 interface_api = "http://localhost:3001"
 INTERFACE_TIMEOUT = 3
@@ -54,13 +55,13 @@ def send_modules_to_interface():
     return modules
 
 
-def send_input_to_interface(user_input: str):
+def send_input_to_interface(user_input: str, character: str = "ohm"):
     """
     Send user input to the interface.
     """
     try:
         response = requests.post(f"{interface_api}/api/send", json={
-            "character": "ohm",
+            "character": character,
             "input": str(user_input),
         }, timeout=INTERFACE_TIMEOUT)
     except requests.RequestException:
@@ -103,6 +104,7 @@ def module_health(client) -> dict:
         "tts": lambda: (_reachable(TTS_URL), f"TTS server at {TTS_URL}") if _reachable(TTS_URL) else (False, f"Can't reach the TTS server at {TTS_URL}"),
         # Out of a call there's nothing to hear, which isn't a failure
         "stt": lambda: (vc.is_listening(), f"Listening in {vc.channel}") if in_call else (True, "Ready, not in a voice call"),
+        "vision": screen.health,
     }
     health = {}
     for name, check in checks.items():
@@ -123,8 +125,10 @@ def restart_module(client, name: str):
     if name == "memory":
         memory.reset()
     elif name == "tts":
-        client.voice.tts = TTSModule()
-        client.voice.tts_module = TTSModule()
+        client.voice.tts_module = TTSModule(client.model)
+        # The server came back without the character's voice loaded
+        if client.is_ready():
+            asyncio.run_coroutine_threadsafe(client.voice.tts_module.preload_voice(), client.loop)
     elif name in ("stt", "discord") and client.is_ready():
         # Rejoining the call gets a new speech-to-text sink and new voice workers
         asyncio.run_coroutine_threadsafe(client.voice.rejoin(), client.loop)

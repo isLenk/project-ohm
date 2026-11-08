@@ -3,7 +3,6 @@
 
 
 import asyncio
-import re
 import threading
 import time
 from collections import deque
@@ -11,10 +10,14 @@ from collections import deque
 import discord
 from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
+from modules.vision import screen
 from controller import modules
 from controller.memory import memory, HISTORY_LIMIT, HISTORY_MINUTES
 from config.constants import strip_voice_tags
+from utils.Vision import message_images, picture_note
 from utils.VoiceTags import VoiceTagFilter
+from utils.ReplyCleanup import (AtFilter, clean_reply, cut_transcript, outgoing_mentions, readable_mentions,
+                                speaker_labels, stop_sequences, strip_leading_label)
 testing_channel = 1335351030308802630
 VOICE_MAX_TOKENS = 120  # ~20s of speech at most per voice reply
 voice_channel = 1335374964445941812
@@ -57,13 +60,16 @@ class DiscordClient(discord.Client):
         if off:
             print(f"[voice] Not joining voice: {', '.join(off)} turned off in the controller.")
             return
+        # Get the TTS speaking as this character before anyone talks to them
+        self.add_task(self.voice.tts_module.preload_voice)
         await self.join_testing_channel(vc=True)
     
     async def name_unnamed_people(self):
-        """Send names for people the NAS only knows by id (logged before names were sent along)."""
+        """Send names, Discord handles and avatars for people the NAS only knows by id, or is missing one of
+        those for (logged before they were sent along)."""
         people = await asyncio.to_thread(memory.people, self.character)
         for p in people:
-            if p["name"] != p["user_id"] or not p["user_id"].isdigit():
+            if (p["name"] != p["user_id"] and p.get("username") and p.get("avatar_url")) or not p["user_id"].isdigit():
                 continue
             uid = int(p["user_id"])
             # A server member's display name is what everyone sees in chat, so prefer it
@@ -73,15 +79,22 @@ class DiscordClient(discord.Client):
                     user = await self.fetch_user(uid)
                 except discord.HTTPException:
                     continue
-            await asyncio.to_thread(memory.set_name, uid, self.speaker_name(user))
+            await asyncio.to_thread(memory.set_name, uid, self.speaker_name(user), getattr(user, "name", None),
+                                    self.avatar_url(user))
 
     @property
     def character(self) -> str:
-        return self.model.name.lower()
+        return self.model.slug
 
     @staticmethod
     def speaker_name(user) -> str:
         return getattr(user, "display_name", None) or str(user)
+
+    @staticmethod
+    def avatar_url(user) -> str | None:
+        """What Discord shows for them: their server avatar if they set one, else theirs, else the default."""
+        avatar = getattr(user, "display_avatar", None)
+        return str(avatar.url) if avatar else None
 
     # ── Conversation ────────────────────────────────────────────────────────
     # Each channel's recent conversation is kept here so Ohm can follow along turn to turn.
@@ -97,30 +110,51 @@ class DiscordClient(discord.Client):
     def history(self, channel_id) -> list[dict]:
         """The last HISTORY_MINUTES of conversation in a channel, oldest first."""
         cutoff = time.time() - HISTORY_MINUTES * 60
-        return [
+        recent = [
             {"role": m["role"], "content": m["content"]}
             for m in self.conversation(channel_id)
             if m["content"] and m["time"] >= cutoff
         ]
+        # ? A reply saved as "Lenk: ..." (before that was cleaned up) teaches him to keep starting replies that way
+        labels = speaker_labels(recent, [self.model.name])
+        for m in recent:
+            if m["role"] == "assistant":
+                m["content"] = strip_leading_label(m["content"], labels)
+        return [m for m in recent if m["content"]]
 
     def make_stream_response(self, said_by, channel):
         """Start a voice reply to what people said. said_by: {discord user: what they said}."""
         turn = Turn(self, channel, "voice", said_by)
-        memories = memory.relevant_memories(self.character, " ".join(said_by.values()))
+        said = " ".join(said_by.values())
+        memories = memory.relevant_memories(self.character, said)
         if memories:
             print(f"[memory] recalled: {[m['content'] for m in memories]}")
-        turn.prompt(turn.line, memories)
+        people = self.people_in(said)
+        turn.prompt(turn.line, memories, people, screen=self.look_at_screen(said))
         return turn
+
+    def look_at_screen(self, said) -> str | None:
+        """A screenshot if the vision module is on and `said` is about the screen, else None."""
+        if not screen.on() or not said.strip() or not self.model.about_screen(said):
+            return None
+        shot = screen.capture()
+        if shot:
+            print("[vision] Looking at the screen")
+        return shot
 
     def make_idle_stream(self, channel):
         """Start something Ohm says on his own when the call has gone quiet."""
         turn = Turn(self, channel, "voice")
         present = [self.speaker_name(m) for m in getattr(channel, "members", []) if not m.bot]
+        shot = screen.capture()  # None unless the vision module is on
+        idea = ("comment on what's on the screen you can see, follow up on what you were just talking about, "
+                "or ask someone something" if shot else
+                "follow up on what you were just talking about, ask someone something, or bring up something random")
         turn.prompt(
-            "(Nobody has said anything for a bit. Say one short thing to keep the hangout going: "
-            "follow up on what you were just talking about, ask someone something, or bring up "
-            "something random. Just say the line, nothing else."
-            + (f" In the call right now: {', '.join(present)}." if present else "") + ")"
+            f"(Nobody has said anything for a bit. Say one short thing to keep the hangout going: {idea}. "
+            "Just say the line, nothing else."
+            + (f" In the call right now: {', '.join(present)}." if present else "") + ")",
+            screen=shot,
         )
         return turn
 
@@ -141,19 +175,47 @@ class DiscordClient(discord.Client):
     def get_channel(self, id):
         return super().get_channel(id)
 
-    def make_response(self, message):
-        turn = Turn(self, message.channel, "text", {message.author: message.content})
-        memories = memory.relevant_memories(self.character, message.content)
+    def incoming_text(self, message) -> str:
+        """What someone wrote, with mentions as "@Name" like the training data (and the bot as "@Ohm")."""
+        users = {u.id: self.speaker_name(u) for u in message.mentions}
+        if self.user is not None:
+            users[self.user.id] = self.model.name
+        roles = {r.id: r.name for r in message.role_mentions}
+        channels = {c.id: c.name for c in message.channel_mentions if getattr(c, "name", None)}
+        return readable_mentions(message.content, users, roles, channels)
+
+    def people_in(self, text, mentioned=()):
+        """People `text` names (or @mentions), with what's remembered about each; see memory.people_in."""
+        bot = getattr(self.user, "id", None)
+        mentioned = [u for u in mentioned if u.id != bot]
+        for u in mentioned:  # so someone who's only been talked about still has a name to be found by
+            memory.set_name_async(u.id, self.speaker_name(u), getattr(u, "name", None), self.avatar_url(u))
+        people = memory.people_in(self.character, text, {u.id: self.speaker_name(u) for u in mentioned})
+        if people:
+            print(f"[memory] people: {[(p['name'], len(p['notes'])) for p in people]}")
+        return people
+
+    def make_response(self, message, images=None):
+        """Text reply to `message`: (what to send to Discord, contains_intent). Empty if there's nothing to say.
+        images: the pictures attached to it, as data URLs (utils/Vision.message_images)."""
+        said = picture_note(self.incoming_text(message), len(images or []))
+        turn = Turn(self, message.channel, "text", {message.author: said})
+        memories = memory.relevant_memories(self.character, said)
+        people = self.people_in(said, message.mentions)
+        history = self.history(turn.channel_id)
         response, contains_intent = self.model.generate_text(
-            turn.line, related_memories=memories, history=self.history(turn.channel_id),
+            turn.line, related_memories=memories, history=history, stop=turn.labels(history), people=people,
+            images=images or None, screen=self.look_at_screen(self.incoming_text(message)),
         )
 
-        # Drop "Ohm:" labels at the start of any line (any case/spacing)
-        response = re.sub(rf"(?im)^\s*{re.escape(self.model.name)}\s*:\s*", "", response)
+        # One reply: no leading "Ohm:", and nothing past where he starts writing other people's lines
+        response = clean_reply(response, self.model.name, turn.speakers)
         # Voice replies in the history can teach him tags; they'd show up literally in text chat
         response = strip_voice_tags(response)
+        # "@Lenk" -> a real ping; the history keeps "@Lenk", the form the model knows
+        members = [m for m in getattr(message.guild, "members", None) or [] if m.id != getattr(self.user, "id", None)]
+        response, turn.reply = outgoing_mentions(response, members, reply_to=message.author)
 
-        turn.reply = response
         turn.commit()
         return response, contains_intent
     
@@ -167,8 +229,14 @@ class DiscordClient(discord.Client):
         elif source == "voice":
             return
         
-        response, contains_intent = self.make_response(message)
+        images = await message_images(message)
+        if images:
+            print(f"[vision] {len(images)} picture(s) attached")
+        response, contains_intent = self.make_response(message, images)
 
+        if not response:
+            print("[discord] Nothing left of the reply after cleanup; not sending it.")
+            return
         await message.reply(response)
         
     async def parse_intent(self, message, response, source):
@@ -220,6 +288,7 @@ class Turn:
         self.channel_id = getattr(channel, "id", None)
         self.guild_id = getattr(getattr(channel, "guild", None), "id", None)
         self.line = "\n".join(f"{client.speaker_name(u)}: {t}" for u, t in self.said_by.items())
+        self.speakers = [client.model.name]  # labels the reply is cut at, see labels()
         self.reply = ""
         self._stream = None
         self._chunks = iter(())
@@ -227,14 +296,27 @@ class Turn:
         self._lock = threading.Lock()
         # Voice only: keep stage directions to tags the TTS can perform (see utils/VoiceTags.py)
         self._tags = VoiceTagFilter(client.model.name) if source == "voice" else None
+        self._at = AtFilter() if source == "voice" else None  # "@lenk" would be read out as "at lenk"
         self._last = None  # last text chunk, used as the template for the filter's final flush
 
-    def prompt(self, text, memories=None):
-        """Open the LLM stream (with the conversation so far as context)."""
+    def labels(self, history) -> list[str]:
+        """Stop sequences for this turn's reply: everyone in the history and this turn, plus the bot.
+        Without them the model sometimes carries on and writes the next few lines of the chat too."""
+        names = [self.client.speaker_name(u) for u in self.said_by]
+        self.speakers = speaker_labels(history, names + [self.client.model.name])
+        if self._tags:
+            self._tags.set_speakers(self.speakers)  # so a leading "Lenk: ..." isn't read out either
+        return stop_sequences(self.speakers)
+
+    def prompt(self, text, memories=None, people=None, screen=None):
+        """Open the LLM stream (with the conversation so far as context). `people`: see DiscordClient.people_in.
+        screen: a screenshot to show him with it (DiscordClient.look_at_screen)."""
         # ? In voice, a hard cap so a "how do I..." question can't turn into a minute-long lecture
         limit = {"max_tokens": VOICE_MAX_TOKENS, "voice": True} if self.source == "voice" else {}
+        history = self.client.history(self.channel_id)
         self._stream = self.client.model.generate_stream_text(
-            text, related_memories=memories, history=self.client.history(self.channel_id), **limit,
+            text, related_memories=memories, history=history, stop=self.labels(history), people=people,
+            screen=screen, **limit,
         )
         self._chunks = iter(self._stream)
 
@@ -249,6 +331,7 @@ class Turn:
         except StopIteration:
             # Whatever the filter was still holding back (an unclosed *..)
             rest = self._tags.flush() if self._tags else ""
+            rest = self._at.feed(rest) if self._at else rest
             if not rest or self._last is None:
                 raise
             chunk, self._last = self._last.model_copy(deep=True), None
@@ -258,7 +341,7 @@ class Turn:
         if chunk.choices and chunk.choices[0].delta.content:
             if self._tags:
                 # ? Rewrite the chunk in place so the TTS and the saved reply both get the cleaned text
-                chunk.choices[0].delta.content = self._tags.feed(chunk.choices[0].delta.content)
+                chunk.choices[0].delta.content = self._at.feed(self._tags.feed(chunk.choices[0].delta.content))
                 self._last = chunk
             self.reply += chunk.choices[0].delta.content
         return chunk
@@ -292,6 +375,7 @@ class Turn:
             convo.append({"role": "user", "content": content, "time": now})
             memory.log_message_async(
                 client.character, "user", content, user_id=user_id, display_name=client.speaker_name(user),
+                username=getattr(user, "name", None), avatar_url=client.avatar_url(user),
                 source=self.source, guild_id=self.guild_id, channel_id=self.channel_id,
             )
             memory.remember_if_relevant_async(
@@ -299,7 +383,9 @@ class Turn:
                 user_ids=[user_id] if user_id else None,
             )
 
-        reply = self.reply.strip()
+        # ? Voice streams to the TTS as it comes, so the stop sequences are what keep a transcript out of
+        # the call; this keeps one out of the saved conversation either way
+        reply = clean_reply(self.reply, client.model.name, self.speakers)
         if reply:
             convo.append({"role": "assistant", "content": reply, "time": now})
             memory.log_message_async(

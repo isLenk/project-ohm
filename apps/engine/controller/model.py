@@ -13,6 +13,8 @@ DEFAULT_ENDPOINT = os.getenv("LLM_URL", "http://127.0.0.1:5000/v1")  # ? not loc
 class ModelObject:
     def __init__(self, model, api_key="None", endpoint=DEFAULT_ENDPOINT):
         self.name = model["name"]
+        self.slug = model.get("slug") or self.name.lower()  # the character's id on the NAS
+        self.voice = model.get("voice")  # clip in apps/tts/voices to speak as, None for the built-in voice
 
         self.api_key = api_key
         self.endpoint = endpoint
@@ -25,8 +27,8 @@ class ModelObject:
         
         self.model = OpenAIModel(model, self.api_key, self.endpoint)
 
-    def generate_text(self, prompt, related_memories=None, user="user", history=None) -> tuple[str, bool]:
-        return self.model.generate_text(prompt, related_memories, user, history=history)
+    def generate_text(self, prompt, related_memories=None, user="user", history=None, **kwargs) -> tuple[str, bool]:
+        return self.model.generate_text(prompt, related_memories, user, history=history, **kwargs)
 
     def extract_memory(self, speaker, text):
         return self.model.extract_memory(speaker, text)
@@ -34,5 +36,8 @@ class ModelObject:
     def generate_stream_text(self, prompt, user="user", related_memories=None, history=None, **kwargs):
         return self.model.generate_stream_text(prompt, user, related_memories, history=history, **kwargs)
     
+    def about_screen(self, prompt) -> bool:
+        return self.model.about_screen(prompt)
+
     def get_intent(self, prompt, responses) -> str:
         return self.model.get_intent(prompt, responses)

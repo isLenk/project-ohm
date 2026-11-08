@@ -1,0 +1,6 @@
+{
+    "name": "vision",
+    "description": "Lets Ohm look at this computer's screen when someone asks about it, and comment on it when the call goes quiet. Screenshots only go to the local LLM and are never saved.",
+    "required": false,
+    "default": false
+}

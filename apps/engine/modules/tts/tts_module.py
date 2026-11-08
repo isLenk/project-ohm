@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 from dotenv import load_dotenv
 from urllib.parse import urlencode
@@ -9,10 +10,12 @@ import io
 import websockets
 import modules.discord.utils.DiscordVoiceUtil as DC_Util
 import utils.latency as latency
+from controller.memory import memory, voice_file
 
 
-VOICE = "Morgan_Freeman CC3.wav"
 ENDPOINT = "http://localhost:7851/api/tts-generate-streaming"
+VOICE_TTL = 30          # seconds before the character's voice is re-read from the NAS
+PRELOAD_FOR = 180       # seconds to keep trying to reach a TTS server that's still loading its model
 
 load_dotenv()
 # tts_api/ (set TTS_URL in Settings when it runs somewhere else)
@@ -21,8 +24,52 @@ WS_URL = TTS_URL.replace("http", "ws", 1) + "/api/v1/tts/ws"
 
 class TTSModule:
 
-    def __init__(self):
-        self.voice = VOICE
+    def __init__(self, model=None):
+        """model: the character in play (ModelObject). Its voice is sent with every reply, so the TTS
+        server speaks as them even after it restarts or another character used it."""
+        self.slug = getattr(model, "slug", None)
+        self.name = getattr(model, "name", None) or self.slug
+        self._voice = getattr(model, "voice", None)  # file in apps/tts/voices, None = built-in voice
+        self._voice_at = time.monotonic()
+
+    def voice(self) -> str:
+        """The character's voice clip ("" for the built-in voice), re-read from the NAS every VOICE_TTL
+        so a new voice picked on the Characters page is used without restarting. Blocking."""
+        if self.slug and time.monotonic() - self._voice_at >= VOICE_TTL:
+            self._voice_at = time.monotonic()
+            row = memory.get_character(self.slug)
+            if row:  # NAS down or character gone: keep what we had
+                voice = voice_file(row)
+                if voice != self._voice:
+                    print(f"[tts] {self.name}'s voice changed on the Characters page: {voice or 'built-in'}")
+                self._voice = voice
+        return self._voice or ""
+
+    def ws_url(self) -> str:
+        """The TTS websocket for one reply, in the character's voice. Blocking (see voice())."""
+        return f"{WS_URL}?{urlencode({'voice': self.voice()})}"
+
+    async def preload_voice(self):
+        """Have the TTS server encode the character's voice now (~1s), so their first reply doesn't
+        wait on it. The app starts the TTS server alongside the engine, so keep trying while it loads."""
+        voice = await asyncio.to_thread(self.voice)
+        deadline = time.monotonic() + PRELOAD_FOR
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+            while True:
+                try:
+                    async with session.post(f"{TTS_URL}/api/v1/tts/voice", params={"file": voice}) as r:
+                        if r.ok:
+                            print(f"[tts] Speaking as {self.name} ({voice or 'built-in voice'})")
+                        else:
+                            detail = (await r.json(content_type=None) or {}).get("detail", r.reason)
+                            print(f"[tts] Couldn't load {self.name}'s voice {voice}: {detail}. "
+                                  "Replies use the built-in voice.")
+                        return
+                except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                    if time.monotonic() >= deadline:
+                        print(f"[tts] TTS server isn't up at {TTS_URL}; {self.name}'s voice loads with their first reply.")
+                        return
+                await asyncio.sleep(3)
 
     async def get_request_stream(self, text):
         url = f"{TTS_URL}/api/v1/tts/feed_input"
