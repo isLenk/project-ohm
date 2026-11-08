@@ -10,6 +10,10 @@ A passion project that combines speech-to-text, text-to-speech and generative AI
 - **Speech-to-text**: real-time transcription of voice chat
 - **Memory**: remembers users, past conversations and lore
 - **Web search**: looks things up before answering when a message needs it
+- **Mood**: gets bored in a quiet call, hyped when people laugh, annoyed when talked over. No LLM, just a few numbers that fade
+- **Reflection**: once a conversation is over, a cloud model turns it into things to bring up, inside jokes, opinions, questions, how he gets on with each person, and slowly moving personality traits
+- **Brains**: background thinking goes to whichever model you pick per role (Codex or Claude subscription, DeepSeek, or the local model); live replies stay local. See [apps/brain](apps/brain/README.md)
+- **Vision** (opt-in): pictures in chat, and the host's screen when asked or when something new shows up in a quiet call. Screenshots never leave the PC
 - **Custom characters**: personalities, voices and fine-tuned LoRAs per character
 - **Modular**: toggleable abilities
 
@@ -76,7 +80,7 @@ Customize and swap between character cards. Pick each character's base model and
 ### Curator
 Import a Discord channel dump and link messages (manually or with predictive linking) to work out who's talking to whom in group chat, then train a LoRA. You can also extract memories of users and define group terminology. See [Documentation/Curator](Documentation/Curator/README.md).
 
-> Data stays local. It's up to you to get consent from the people whose messages you use for training.
+> Training stays local. Chat text only leaves the PC for the roles you point at a cloud backend in Settings › Integrations (by default: the chat brief, Curator imports, LoRA judging and reflection go to Codex). Live replies, voice audio and screenshots never do. It's up to you to get consent from the people whose messages you use, and to tell them where the text goes.
 
 ![Curator](assets/preview/Curator.png)
 ![Curator Memory](assets/preview/Curator-Memory.png)
