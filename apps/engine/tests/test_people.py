@@ -56,3 +56,35 @@ def test_prompt_block_names_everyone_and_says_when_nothing_is_known():
     ])
     assert block == ("Lenk (also called Kyle):\n- Kyle plays Hell Let Loose.\n\n"
                      "May:\n- Nothing remembered about them yet.")
+
+
+def test_how_he_gets_on_with_someone_is_one_line():
+    block = format_people([
+        {"name": "Lenk", "also": [], "notes": ["Lenk plays Hell Let Loose."], "affinity": 0.6,
+         "relationship_notes": "calls him grandpa,\n still owes him 5 bucks"},
+        {"name": "May", "also": [], "notes": [], "affinity": -0.5, "relationship_notes": None},
+        {"name": "Sam", "also": [], "notes": [], "affinity": 0.1, "relationship_notes": ""},
+        {"name": "Jo", "also": [], "notes": [], "affinity": 0, "relationship_notes": "beat him at chess once"},
+    ])
+    assert block == ("Lenk:\n- Lenk plays Hell Let Loose.\n"
+                     "- You get on well with them. Running jokes and grudges: calls him grandpa, still owes him 5 bucks\n\n"
+                     "May:\n- You're not their biggest fan.\n\n"
+                     "Sam:\n- Nothing remembered about them yet.\n\n"
+                     "Jo:\n- Running jokes and grudges: beat him at chess once")
+
+
+def test_relationships_fail_soft_and_are_cached(monkeypatch):
+    from controller.memory import MemoryClient
+    client = MemoryClient(url="http://nas.invalid")
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(path)
+        return None if len(calls) == 1 else [{"user_id": 1, "name": "Lenk", "affinity": 0.7, "notes": "x"}]
+
+    monkeypatch.setattr(client, "_request", request)
+    assert client.relationships("ohm") == {}
+    assert client.relationships("ohm") == {}  # a failed fetch waits a full TTL before trying again
+    assert calls == ["/relationships"]
+    client._relationships.clear()
+    assert client.relationships("ohm") == {"1": {"affinity": 0.7, "notes": "x"}}

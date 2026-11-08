@@ -38,6 +38,9 @@ PEOPLE_TTL = 300        # seconds before everyone's names are fetched again (so 
 PEOPLE_LIMIT = 3        # at most this many named people get their notes in one prompt
 PERSON_NOTES = 5        # notes per named person
 MIN_NAME = 3            # shorter Discord names aren't matched in text ("Al", "j"); an alias set in the app can be 2
+RELATIONSHIPS_TTL = 300 # seconds before how he gets on with everyone is fetched again
+GET_ON_WELL = 0.4       # affinity (-1..1) at or above this: "you get on well with them"
+NOT_A_FAN = -0.4        # at or below this: "you're not their biggest fan"; in between says nothing
 
 
 def person_names(user: dict) -> list[str]:
@@ -84,12 +87,25 @@ def find_people(text: str, users: list[dict], mentioned: Optional[dict] = None) 
     return out
 
 
+def relationship_line(person: dict) -> str:
+    """One sentence on how he gets on with `person` (from people_in), or "" when there's nothing to say."""
+    try:
+        affinity = float(person.get("affinity"))
+    except (TypeError, ValueError):
+        affinity = 0.0
+    feeling = ("You get on well with them." if affinity >= GET_ON_WELL else
+               "You're not their biggest fan." if affinity <= NOT_A_FAN else "")
+    notes = " ".join((person.get("relationship_notes") or "").split())  # kept to one line
+    return " ".join(s for s in (feeling, f"Running jokes and grudges: {notes}" if notes else "") if s)
+
+
 def format_people(people: list[dict]) -> str:
     """The prompt block for people who came up: who they are and what's remembered about them."""
     blocks = []
     for p in people:
         head = p["name"] + (f" (also called {', '.join(p['also'])})" if p.get("also") else "")
-        notes = "\n".join(f"- {n}" for n in p.get("notes") or []) or "- Nothing remembered about them yet."
+        lines = [*(p.get("notes") or []), *([rel] if (rel := relationship_line(p)) else [])]
+        notes = "\n".join(f"- {n}" for n in lines) or "- Nothing remembered about them yet."
         blocks.append(f"{head}:\n{notes}")
     return "\n\n".join(blocks)
 
@@ -105,6 +121,7 @@ class MemoryClient:
         self._glossary_at = 0.0
         self._users = None  # everyone's names, see users()
         self._users_at = 0.0
+        self._relationships = {}  # character -> (fetched at, {user id: {affinity, notes}}), see relationships()
         # With the memory module off, the NAS is still used for characters and the message log
         # (the dashboard reads it); nothing is recalled into prompts or stored as a memory.
         self.recall = modules.enabled("memory")
@@ -182,14 +199,30 @@ class MemoryClient:
             self._users_at = now
         return self._users
 
+    def relationships(self, character: str) -> dict:
+        """How `character` gets on with each person: {user id: {affinity, notes}}. Cached; refetched every
+        RELATIONSHIPS_TTL. A failed fetch keeps the old ones (or {}) and waits a full TTL before retrying."""
+        now = time.monotonic()
+        at, known = self._relationships.get(character, (0.0, None))
+        if known is None or now - at >= RELATIONSHIPS_TTL:
+            rows = self._request("GET", "/relationships", params={"character": character})
+            if isinstance(rows, list):
+                known = {str(r["user_id"]): {"affinity": r.get("affinity"), "notes": r.get("notes")}
+                         for r in rows if isinstance(r, dict) and r.get("user_id")}
+            self._relationships[character] = (now, known or {})
+        return self._relationships[character][1]
+
     def people_in(self, character: str, text: str, mentioned: Optional[dict] = None) -> list[dict]:
         """People `text` names (by any name they go by), plus `mentioned` ({user id: name}, Discord @mentions),
         each with what's remembered about them, most relevant to `text` first. See find_people."""
         if not self.recall or not text:
             return []
         people = find_people(text, self.users(), mentioned)
+        feelings = self.relationships(character) if people else {}
         for p in people[:PEOPLE_LIMIT]:
             p["notes"] = [m["content"] for m in self.search(character, text, PERSON_NOTES, user_id=p["user_id"])]
+            r = feelings.get(p["user_id"]) or {}
+            p["affinity"], p["relationship_notes"] = r.get("affinity"), r.get("notes")
         return people[:PEOPLE_LIMIT]
 
     def glossary(self) -> list[dict]:
