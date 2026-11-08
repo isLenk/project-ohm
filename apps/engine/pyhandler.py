@@ -12,6 +12,7 @@ from controller import modules
 from controller.memory import memory
 from modules.tts.tts_module import TTS_URL, TTSModule
 from modules.vision import screen
+from modules.mood.mood import mood
 
 interface_api = "http://localhost:3001"
 INTERFACE_TIMEOUT = 3
@@ -105,6 +106,7 @@ def module_health(client) -> dict:
         # Out of a call there's nothing to hear, which isn't a failure
         "stt": lambda: (vc.is_listening(), f"Listening in {vc.channel}") if in_call else (True, "Ready, not in a voice call"),
         "vision": screen.health,
+        "mood": mood.health,
     }
     health = {}
     for name, check in checks.items():

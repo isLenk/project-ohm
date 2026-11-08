@@ -142,12 +142,14 @@ class DiscordClient(discord.Client):
             print("[vision] Looking at the screen")
         return shot
 
-    def make_idle_stream(self, channel):
-        """Start something Ohm says on his own when the call has gone quiet."""
+    def make_idle_stream(self, channel, about_screen=False):
+        """Start something Ohm says on his own when the call has gone quiet.
+        about_screen: something new came up on the screen (modules/vision/watch.py), so talk about that."""
         turn = Turn(self, channel, "voice")
         present = [self.speaker_name(m) for m in getattr(channel, "members", []) if not m.bot]
         shot = screen.capture()  # None unless the vision module is on
-        idea = ("comment on what's on the screen you can see, follow up on what you were just talking about, "
+        idea = ("comment on what's on the screen you can see" if shot and about_screen else
+                "comment on what's on the screen you can see, follow up on what you were just talking about, "
                 "or ask someone something" if shot else
                 "follow up on what you were just talking about, ask someone something, or bring up something random")
         turn.prompt(

@@ -11,6 +11,8 @@ from modules.discord.utils.RTTSSink import CustomSpeechRecognitionSink
 from modules.discord.utils.StreamingPCMSource import StreamingPCMSource
 import utils.latency as latency
 import logging
+from modules.mood.mood import mood
+from modules.vision import watch
 
 DISCORD_SAMPLE_RATE = 44100
 IDLE_SECONDS = 10   # how long the call has to be quiet before Ohm might talk on his own
@@ -67,6 +69,7 @@ class DiscordVoice:
         self.audio_out_queue = asyncio.Queue()
 
         self.tts_module = TTSModule(client.model)
+        mood.name = client.model.name
     
 
     async def _poll_for_more_text(self, pause_max, participants):
@@ -125,6 +128,7 @@ class DiscordVoice:
                         if self.vc.is_paused(): self.vc.resume()
                         continue
                     if action == "stop":
+                        mood.shushed()
                         await self.interrupt()
                         print("[voice] Told to stop")
                         continue
@@ -135,6 +139,7 @@ class DiscordVoice:
                 await self.interrupt()
                 if was_talking:
                     # Talking over her shuts her up, then she answers what they said
+                    mood.interrupted()
                     print("[voice] Interrupted, answering that instead")
                 else:
                     # She hadn't started talking yet, so they were still mid-thought: answer it all together
@@ -242,6 +247,7 @@ class DiscordVoice:
             self.listener_worker.cancel()
             self.output_worker.cancel()
             self.idle_task.cancel()
+            self.watch_task.cancel()
         except Exception as e:
             print(e)
         finally:
@@ -253,7 +259,7 @@ class DiscordVoice:
             return
         channel = self.vc.channel
         await self.interrupt()
-        for task in (self.listener_worker, self.output_worker, self.idle_task):
+        for task in (self.listener_worker, self.output_worker, self.idle_task, self.watch_task):
             task.cancel()
         await self.vc.disconnect()
         self.vc = None
@@ -271,6 +277,7 @@ class DiscordVoice:
         print(text, end=" | ")
         self.last_heard = time.monotonic()
         self.spoke_unprompted = False
+        mood.heard(text, mentioned=self.discord_client.model.name.lower() in text.lower())
         self.text_queue.put_nowait((user, text))
 
     async def listen(self):
@@ -280,6 +287,7 @@ class DiscordVoice:
         self.output_worker = self.discord_client.add_task(self.output_worker)
         self.last_heard = time.monotonic()
         self.idle_task = self.discord_client.add_task(self.idle_worker)
+        self.watch_task = self.discord_client.add_task(watch.watch_worker, self)  # returns at once if vision is off
         self.start_listening()
 
     def start_listening(self):
@@ -310,10 +318,10 @@ class DiscordVoice:
             return
         await self._speak(self.discord_client.make_stream_response, said_by, self.vc.channel)
 
-    async def speak_unprompted(self):
-        """Say something on his own because the call has gone quiet"""
+    async def speak_unprompted(self, about_screen=False):
+        """Say something on his own because the call has gone quiet (about_screen: about something new on the screen)"""
         print("\n", "-" * 20, "\n[voice] Quiet for a while, saying something")
-        await self._speak(self.discord_client.make_idle_stream, self.vc.channel)
+        await self._speak(self.discord_client.make_idle_stream, self.vc.channel, about_screen)
 
     async def idle_worker(self):
         """Every so often, if nobody has said anything for IDLE_SECONDS, maybe start talking.
@@ -326,11 +334,12 @@ class DiscordVoice:
             if self.is_busy() or self.sink.anyone_speaking():
                 self.last_heard = time.monotonic()
                 continue
+            mood.quiet(time.monotonic() - self.last_heard)
             if self.spoke_unprompted or time.monotonic() - self.last_heard < IDLE_SECONDS:
                 continue
 
             self.last_heard = time.monotonic()  # Not this time? Try again after another stretch of silence
-            if not any(not m.bot for m in self.vc.channel.members) or random.random() > IDLE_CHANCE:
+            if not any(not m.bot for m in self.vc.channel.members) or random.random() > mood.idle_chance(IDLE_CHANCE):
                 continue
             self.spoke_unprompted = True
             self.current_prompt = {}
@@ -388,6 +397,8 @@ class DiscordVoice:
             # this keeps what he'd said so far.
             if turn is not None:
                 turn.commit()
+                if turn.reply:
+                    mood.spoke()
             else:
                 pending["cancelled"] = True
                 if pending["turn"] is not None:

@@ -8,6 +8,7 @@ import openai
 from config.constants import VOICE_PROMPT
 from controller.adapters import Adapters
 from controller.memory import format_people, memory
+from modules.mood.mood import mood
 from utils import WebSearch
 
 GLOSSARY_HISTORY = 6  # recent messages also checked for terms, so a reply to earlier slang still gets it
@@ -94,6 +95,10 @@ class OpenAIModel:
             system = self.system.strip()
             if voice:
                 system += "\n\n" + VOICE_PROMPT.format(name=self.name).strip()
+            # How he feels right now (modules/mood), one line at most; the tag hint only means something out loud
+            feeling = " ".join(s for s in (mood.line(), mood.tag_hint() if voice else "") if s)
+            if feeling:
+                system += "\n\n" + feeling
         if glossary:
             # Slang, game names and typos from the Curator's General terminology that come up here.
             recent = " ".join(m["content"] for m in (history or [])[-GLOSSARY_HISTORY:])

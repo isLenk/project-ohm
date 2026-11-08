@@ -1,0 +1,5 @@
+{
+    "name": "mood",
+    "description": "Gives Ohm a mood (bored, hyped, annoyed) from how the call is going. It changes how often he talks on his own and adds one line about how he feels to his prompt.",
+    "required": false
+}
