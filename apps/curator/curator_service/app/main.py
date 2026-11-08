@@ -19,7 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import conversations, embeddings, export, feed, gpu, importer, jobs, llm, memories, model_links, search, terms, threads
+from . import (conversations, embeddings, export, feed, gpu, importer, jobs, llm, memories, model_links, reflect, search,
+               terms, threads)
 from .config import MODELS_DIR, PORT, TRAIN_SIMULATE
 from .errors import ApiError
 from .project import Project, require_project, state
@@ -54,6 +55,7 @@ async def api_error(_: Request, e: ApiError):
 @app.on_event("startup")
 def startup() -> None:
     runs.resume(get_registry())
+    reflect.start()  # polls the NAS for reflections to run; does nothing without MEMORY_API_URL
 
 
 def dirty(body: Any) -> Any:
@@ -986,17 +988,37 @@ def eval_get(adapter_id: str):
     adapter = reg.adapter(adapter_id)
     row = reg.one("SELECT run_dir FROM train_runs WHERE id = ?", (adapter.get("run_id"),)) if adapter.get("run_id") else None
     saved = evaluate.load(Path(row["run_dir"])) if row else None
+    # ? judge_ready doesn't check the Codex sign-in (that runs the CLI); POST /eval does, and says so with no_judge
     return {"exists": True, **saved} if saved else {"exists": False, "trained_here": bool(row),
-                                                     "judge": evaluate.JUDGE_MODEL.stem,
-                                                     "judge_ready": evaluate.JUDGE_MODEL.is_file()}
+                                                     "judge": evaluate.judge_name() or evaluate.JUDGE_MODEL.stem,
+                                                     "judge_ready": evaluate.judge_problem(check_sign_in=False) is None}
 
 
 @app.post("/eval/{adapter_id}")
 def eval_start(adapter_id: str):
-    """Score an adapter with the judge model, as a job (train/evaluate.py). Stops and restarts llama-server."""
+    """Score an adapter with the brain's judge, as a job (train/evaluate.py). Only stops and restarts llama-server
+    when the judge is the local Qwen model."""
     reg = get_registry()
     prep = evaluate.prepare(reg, adapter_id)
     return jobs.start("eval", lambda job: evaluate.run(reg, prep, job))
+
+
+# ── reflection ──────────────────────────────────────────────────────────────
+@app.get("/reflect/status")
+def reflect_status():
+    """{polling, last_poll_at, running: reflection id or null, last_result} (reflect.py)."""
+    return reflect.status()
+
+
+@app.post("/reflect/run-now")
+def reflect_run_now():
+    """Look for a queued reflection now instead of waiting for the next poll. Runs in the background."""
+    if not reflect.MEMORY_API_URL:
+        raise ApiError(503, "memory_service_off", "Set MEMORY_API_URL in the root .env to run reflections.")
+    if reflect.status()["running"] is not None:
+        raise ApiError(409, "reflect_running", "A reflection is already running.")
+    reflect.poll_soon()
+    return reflect.status()
 
 
 if __name__ == "__main__":

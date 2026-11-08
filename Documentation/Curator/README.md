@@ -16,7 +16,8 @@ https://claude.ai/artifact/A8tf4deQ2rFQhWcrPCKKqb (ask Lance for access; it is p
 | [search.md](search.md) | Ctrl+K query grammar and how to run it |
 | [memories.md](memories.md) | Memory extraction, review, sync to `memory_service` |
 | [terminology.md](terminology.md) | General terminology: unfamiliar words, definitions, typos, Ctrl+click |
-| [training.md](training.md) | Export to JSONL, LoRA training, adapter conversion, progress events |
+| [training.md](training.md) | Export to JSONL, LoRA training, adapter conversion, progress events, scoring and checking replies with the judge |
+| [reflection.md](reflection.md) | The worker that turns a finished conversation into memories, relationship notes and trait nudges on the NAS |
 
 ## Vocabulary
 
@@ -63,7 +64,7 @@ curator_service  (apps/curator, Python FastAPI, runs on the PC with the GPU)
   ├── registry.sqlite    → base models + adapters, app-wide
   ├── training worker    → subprocess, PEFT/TRL on HF weights
   ├── llama-server :5000 → used for memory extraction + suggestions (optional)
-  └── memory service (apps/memory, NAS :8100) → kept memories pushed as user_facts
+  └── memory service (apps/memory, NAS :8100) → kept memories pushed as user_facts; reflections polled and written back
 ```
 
 Why a new Python service instead of the Express server in `apps/mainframe/src/main/api.js`:
@@ -93,8 +94,10 @@ apps/curator/curator_service/
   app/terms.py         general terminology: unfamiliar words, definitions (terminology.md)
   app/export.py        examples, context chains, dedupe, author cap (training.md)
   app/gpu.py           VRAM check, pause/restart llama-server, live adapter switching
+  app/reflect.py       polls the NAS for reflections and runs them through the brain (reflection.md)
   app/train/runs.py    run manager, progress over SSE
   app/train/worker.py  training subprocess (Unsloth + TRL; simulate mode for UI work)
+  app/train/evaluate.py, checks.py  scoring an adapter and checking replies with the brain's judge
   app/registry.py      models + adapters, app-wide
   tests/               pytest, plus seed.py demo data
   tools/jsonl_to_dce.py  write a messages.jsonl dump out as DiscordChatExporter files (optional; import reads JSONL directly)

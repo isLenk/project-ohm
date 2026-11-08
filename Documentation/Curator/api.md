@@ -206,9 +206,18 @@ See terminology.md.
 | GET | `/train/runs/{id}` | — | run row, plus the last progress event |
 | GET | `/train/runs/{id}/events` | — | SSE stream (`training.md`); reconnect any time |
 | POST | `/train/runs/{id}/cancel` | — | |
-| POST | `/train/check-replies` | — | job `check_replies`: the judge reads every reply the export would train on that it hasn't yet (`training.md` section 7). Stops and restarts llama-server. 409 `no_judge`, `run_active`. `/train/preflight` counts them in `export.checked` |
-| GET | `/eval/{adapter_id}` | — | the adapter's last score (`eval.json`), or `{exists: false, trained_here, judge, judge_ready}` |
-| POST | `/eval/{adapter_id}` | — | job `eval`: score it with the judge model (`training.md` section 6). Stops and restarts llama-server. 409 `not_trained_here`, `no_judge`, `run_active`, `nothing_held_out` |
+| POST | `/train/check-replies` | — | job `check_replies`: the judge reads every reply the export would train on that it hasn't yet (`training.md` section 7). Only stops and restarts llama-server when the judge is the local Qwen model. 409 `no_judge`, `run_active`. `/train/preflight` counts them in `export.checked` |
+| GET | `/eval/{adapter_id}` | — | the adapter's last score (`eval.json`), or `{exists: false, trained_here, judge, judge_ready}`. `judge` is what would judge now (`codex`, or the Qwen model's name); `judge_ready` doesn't check the Codex sign-in, the POST does |
+| POST | `/eval/{adapter_id}` | — | job `eval`: score it with the judge (`training.md` section 6). Ohm's llama-server is used for the replies; it only stops for the judge when that's the local Qwen model. 409 `not_trained_here`, `no_judge`, `run_active`, `nothing_held_out` |
+
+## Reflection
+
+See reflection.md. The poller starts with the service when `MEMORY_API_URL` is set.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/reflect/status` | — | `{ polling, last_poll_at, running: reflection id \| null, last_result: { id, character, at, result, error } \| null }` |
+| POST | `/reflect/run-now` | — | look for a queued reflection now, in the background; returns the status. 503 `memory_service_off`, 409 `reflect_running` |
 
 ## Health
 
