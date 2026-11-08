@@ -1,17 +1,25 @@
 # Text Generation Web UI Handler
 # Implements the OpenAI API for LlamaChat 
+import re
 import time
 from datetime import date
 
 import openai
 
+import brain
+
 from config.constants import VOICE_PROMPT
 from controller.adapters import Adapters
 from controller.memory import format_people, memory
 from modules.mood.mood import mood
+from modules.vision import screen as screen_module
 from utils import WebSearch
 
 GLOSSARY_HISTORY = 6  # recent messages also checked for terms, so a reply to earlier slang still gets it
+CHECK_MIN_WORDS = 3   # "lol", "ok sure" never need a search or a look at the screen, so they skip the check
+# Only a message with one of these words is asked about the screen ("look at this", "which one", "what's that")
+SCREEN_CUES = re.compile(r"(?<!\w)(?:this|that|look|see|screen|watch|playing|what'?s|which|check)(?!\w)", re.IGNORECASE)
+NO_CHECKS = {"search": None, "screen": False}
 
 
 class OpenAIModel:
@@ -57,18 +65,11 @@ class OpenAIModel:
         # Get the intent from the user's response
         intents = ", ".join(responses)
         print("Possible Intents:", intents)
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "Classify the user's intent (and only respond with the intent) as one of the following (or None if there is no intent): " + intents},
-                {"role": "user", "content": prompt}
-            ],
-            **{**self._get_configs(), "temperature": 0.1},  # Make deterministic
-            extra_body=self._extra_body(base=True),
-        )
-
-        # Get the intent from the response
-        intent = response.choices[0].message.content
+        intent = brain.run(brain.Task(
+            "classify",
+            "Classify the user's intent (and only respond with the intent) as one of the following (or None if there is no intent): " + intents,
+            prompt, max_tokens=10, temperature=0.1,  # Make deterministic
+        ))
         print("Raw Intent Reading:", intent)
         # If the intent is not in the list of possible intents, return None
         if intent not in responses:
@@ -87,10 +88,17 @@ class OpenAIModel:
         return configs
 
     def create(self, prompt, system=None, assistant="aight lol", related_memories=None, history=None, voice=False,
-               web_results=None, glossary=True, base=False, people=None, images=None, screen=None, **kwargs):
+               web_results=None, glossary=True, base=False, people=None, images=None, screen=None, summary=None,
+               **kwargs):
         """One chat request. Replies run with the character's adapter; base=True (utility calls) without.
         images: data URLs (utils/Vision.py) of pictures sent with `prompt`.
-        screen: a screenshot data URL (modules/vision/screen.py) of the screen being shared with him."""
+        screen: a screenshot data URL (modules/vision/screen.py) of the screen being shared with him.
+        summary: what's been going on in the chat lately (controller/brief.py).
+
+        The system prompt is only the personality (and the voice prompt), the way the LoRA was trained, and the
+        history comes right after it. Everything that changes turn to turn goes in a note at the end of the
+        newest user message, so llama-server can reuse its cache of the system prompt and history."""
+        context = []  # per-turn notes, see context_note()
         if system is None:
             system = self.system.strip()
             if voice:
@@ -98,40 +106,42 @@ class OpenAIModel:
             # How he feels right now (modules/mood), one line at most; the tag hint only means something out loud
             feeling = " ".join(s for s in (mood.line(), mood.tag_hint() if voice else "") if s)
             if feeling:
-                system += "\n\n" + feeling
+                context.append(feeling)
         if glossary:
             # Slang, game names and typos from the Curator's General terminology that come up here.
             recent = " ".join(m["content"] for m in (history or [])[-GLOSSARY_HISTORY:])
             terms = memory.glossary_for(recent + "\n" + prompt)
             if terms:
-                system += "\n\nWords people here use, so you know what they mean:\n" + "\n".join(terms)
+                context.append("Words people here use, so you know what they mean:\n" + "\n".join(terms))
+        if summary:
+            context.append(f"What's been going on in this chat: {summary}")
         if people:
             # Who the message is about: every name they go by and what's remembered about each (memory.people_in)
-            system += ("\n\nPeople who came up, and what you know about them (only bring it up if it fits; "
-                       "the names in brackets are the same person):\n" + format_people(people))
+            context.append("People who came up, and what you know about them (only bring it up if it fits; "
+                           "the names in brackets are the same person):\n" + format_people(people))
             known = {n for p in people for n in p.get("notes") or []}
             related_memories = [m for m in related_memories or [] if m["content"] not in known]
         if related_memories:
             notes = "\n".join(f"- {m['content']}" for m in related_memories)
-            system += "\n\nThings you remember (only bring them up if they fit the conversation):\n" + notes
+            context.append("Things you remember (only bring them up if they fit the conversation):\n" + notes)
         if web_results:
-            system += ("\n\nYou just looked this up online. Use it to answer, in your own words. "
-                       "Don't read out links or say \"according to\":\n" + web_results)
+            context.append("You just looked this up online. Use it to answer, in your own words. "
+                           "Don't read out links or say \"according to\":\n" + web_results)
         if images:
-            system += ("\n\nThey just sent you a picture, and you can see it. React to what's actually in it "
-                       "the way a friend would: a quick comment, a joke, or an answer if they asked something. "
-                       "Don't describe it back to them piece by piece.")
+            context.append("They just sent you a picture, and you can see it. React to what's actually in it "
+                           "the way a friend would: a quick comment, a joke, or an answer if they asked something. "
+                           "Don't describe it back to them piece by piece.")
         if screen:
-            system += ("\n\nYou can see the screen someone here is sharing with you right now (the last picture). "
-                       "Use it when it's relevant: answer what they ask about it, or react to what's on it like "
-                       "a friend looking over their shoulder. Keep it short and don't describe the whole screen.")
+            context.append("You can see the screen someone here is sharing with you right now (the last picture). "
+                           "Use it when it's relevant: answer what they ask about it, or react to what's on it like "
+                           "a friend looking over their shoulder. Keep it short and don't describe the whole screen.")
 
         messages = [{"role": "system", "content": system}]
         if history:
             messages += [{"role": m["role"], "content": m["content"]} for m in history]
         elif assistant:
             messages.append({"role": "assistant", "content": assistant})
-        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": prompt + context_note(context)})
         messages = _merge_same_role(messages)
         pictures = [*(images or []), *([screen] if screen else [])]
         if pictures:
@@ -148,42 +158,61 @@ class OpenAIModel:
             **params,
         )
 
-    def search_query(self, prompt):
-        """Return a web search query if answering `prompt` needs one, else None. Quick and cheap (~0.1s)."""
+    def pre_checks(self, prompt) -> dict:
+        """What to do before replying to `prompt`, in one quick call: {"search": a web search query or None,
+        "screen": whether it wants him to look at the shared screen}. Short messages skip the call, and the
+        screen is only asked about when vision is on and the message has a word like "this" or "look" in it.
+        Both are off when llama-server doesn't answer."""
+        text = (prompt or "").strip()
+        if len(text.split()) < CHECK_MIN_WORDS or not re.search(r"[^\W\d_]", text):
+            return dict(NO_CHECKS)
+        ask_screen = screen_module.on() and bool(SCREEN_CUES.search(text))
         system = (
             f"Today is {date.today():%B %d, %Y}.\n"
-            "You decide whether a chat message needs a web search to answer well.\n"
+            "You decide what a chat bot should do before it answers a chat message.\n\n"
+            "\"search\": whether the message needs a web search to answer well.\n"
             "Search for: news, sports results, weather, prices, release dates, game updates, recent events, "
             "or specific facts (people, places, numbers) that could have changed or that you might get wrong.\n"
             "Don't search for: greetings, small talk, jokes, opinions, feelings, advice, "
             "or anything about the people in the chat.\n"
-            "If it needs a search, reply with only a short search query. Otherwise reply with exactly: NONE"
+            "If it needs a search, give a short search query. Otherwise null.\n\n"
         )
-        response = self.create(prompt, system=system, assistant="", base=True, temperature=0, max_tokens=24)
-        query = (response.choices[0].message.content or "").strip()
-        query = query.removeprefix("Search for:").strip().strip('"').strip()
-        if not query or query.upper().startswith("NONE"):
-            return None
-        return query
+        properties = {"search": {"type": ["string", "null"]}}
+        if ask_screen:
+            system += (
+                "\"screen\": whether the message wants the bot to look at someone's computer screen.\n"
+                "true: asking it to look or watch (\"look at this\", \"see this?\", \"check this out\"), asking about "
+                "something on screen (\"what do you think of this\", \"which one should i pick\", \"what does this "
+                "say\", \"how do i beat this\"), or about what they're doing, playing or watching right now.\n"
+                "false: anything else, including small talk and questions that don't need to see anything.\n\n"
+            )
+            properties["screen"] = {"type": "boolean"}
+        system += "Reply with only the JSON: " + (
+            '{"search": "query" or null, "screen": true or false}' if ask_screen else '{"search": "query" or null}')
+        answer = brain.run(brain.Task("classify", system, text, local_only=True, max_tokens=40, temperature=0,
+                                      schema={"type": "object", "properties": properties,
+                                              "required": list(properties)}))
+        if not isinstance(answer, dict):
+            return dict(NO_CHECKS)
+        query = answer.get("search") if isinstance(answer.get("search"), str) else ""
+        query = query.strip().removeprefix("Search for:").strip().strip('"').strip()
+        if not query or query.upper().startswith(("NONE", "NULL")):
+            query = None
+        return {"search": query, "screen": ask_screen and answer.get("screen") is True}
+
+    def search_query(self, prompt):
+        """Return a web search query if answering `prompt` needs one, else None (see pre_checks)."""
+        return self.pre_checks(prompt)["search"]
 
     def about_screen(self, prompt):
-        """Whether `prompt` wants him to look at the shared screen. Quick and cheap, like search_query."""
-        system = (
-            "You decide whether a chat message wants the bot to look at someone's computer screen.\n"
-            "YES: asking it to look or watch (\"look at this\", \"see this?\", \"check this out\"), asking about "
-            "something on screen (\"what do you think of this\", \"which one should i pick\", \"what does this "
-            "say\", \"how do i beat this\"), or about what they're doing, playing or watching right now.\n"
-            "NO: anything else, including small talk and questions that don't need to see anything.\n"
-            "Reply with exactly YES or NO."
-        )
-        response = self.create(prompt, system=system, assistant="", base=True, glossary=False,
-                               temperature=0, max_tokens=2)
-        return (response.choices[0].message.content or "").strip().upper().startswith("YES")
+        """Whether `prompt` wants him to look at the shared screen (see pre_checks)."""
+        return self.pre_checks(prompt)["screen"]
 
-    def look_up(self, prompt):
+    def look_up(self, prompt, checks=None):
         """Search the web if `prompt` needs it. Returns the results as text, or None.
+        checks: pre_checks() already done for this reply, so it isn't asked twice.
         Each search also shows up in the dashboard's Web search tab."""
-        query = self.search_query(prompt)
+        query = (checks or self.pre_checks(prompt))["search"]
         if not query:
             return None
         started = time.perf_counter()
@@ -191,13 +220,14 @@ class OpenAIModel:
         WebSearch.report(self.slug, prompt, query, results, error, round((time.perf_counter() - started) * 1000))
         return WebSearch.as_text(results)
 
-    def generate_stream_text(self, prompt, user="user", related_memories=None, history=None, **kwargs):
+    def generate_stream_text(self, prompt, user="user", related_memories=None, history=None, checks=None,
+                             **kwargs):
         return self.create(prompt, related_memories=related_memories, history=history, stream=True,
-                           web_results=self.look_up(prompt), **kwargs)
+                           web_results=self.look_up(prompt, checks), **kwargs)
 
-    def generate_text(self, prompt, related_memories=None, user="user", history=None, **kwargs):
+    def generate_text(self, prompt, related_memories=None, user="user", history=None, checks=None, **kwargs):
         response = self.create(prompt, related_memories=related_memories, history=history,
-                               web_results=self.look_up(prompt), **kwargs)
+                               web_results=self.look_up(prompt, checks), **kwargs)
         text = response.choices[0].message.content or ""
         return (text, "[INTENT]" in text)
 
@@ -217,14 +247,16 @@ class OpenAIModel:
             f"\"Kyle just started a new job.\" (\"I\", \"me\" and \"my\" are {speaker}.)\n"
             "Otherwise reply with exactly: NONE"
         )
-        response = self.create(
-            f"{speaker}: {text}", system=system, assistant="", base=True,
-            temperature=0.1, max_tokens=40,
-        )
-        note = (response.choices[0].message.content or "").strip().strip('"').strip()
+        note = brain.run(brain.Task("extract", system, f"{speaker}: {text}", max_tokens=40, temperature=0.1))
+        note = (note or "").strip().strip('"').strip()
         if not note or note.upper().startswith("NONE") or len(note) > 200:
             return None
         return note
+
+
+def context_note(context: list) -> str:
+    """create()'s per-turn notes as one bracketed note after what was just said ("" when there are none)."""
+    return "\n\n(" + "\n\n".join(context) + ")" if context else ""
 
 
 def _merge_same_role(messages):

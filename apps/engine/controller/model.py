@@ -39,5 +39,8 @@ class ModelObject:
     def about_screen(self, prompt) -> bool:
         return self.model.about_screen(prompt)
 
+    def pre_checks(self, prompt) -> dict:
+        return self.model.pre_checks(prompt)
+
     def get_intent(self, prompt, responses) -> str:
         return self.model.get_intent(prompt, responses)
