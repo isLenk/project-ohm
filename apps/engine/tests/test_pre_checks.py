@@ -38,28 +38,28 @@ def test_short_or_wordless_messages_skip_the_call(model, asked):
 
 def test_screen_only_asked_with_a_cue_word(model, asked):
     asked.answer = {"search": None}
-    assert model.pre_checks("who won the game last night") == {"search": None, "screen": False}
+    assert model.pre_checks("who won the game last night") == {"search": None, "screen": False, "to": None}
     task = asked.tasks[-1]
     assert "screen" not in task.schema["properties"] and "screen" not in task.system.split("JSON")[-1]
     assert task.role == "classify" and task.local_only and task.temperature == 0
 
-    asked.answer = {"search": None, "screen": True}
-    assert model.pre_checks("yo look at this boss") == {"search": None, "screen": True}
+    asked.answer = {"search": None, "screen": True, "to": None}
+    assert model.pre_checks("yo look at this boss") == {"search": None, "screen": True, "to": None}
     assert asked.tasks[-1].schema["required"] == ["search", "screen"]
 
 
 def test_screen_not_asked_with_vision_off(model, asked, monkeypatch):
     monkeypatch.setattr(openai_module.screen_module, "on", lambda: False)
-    asked.answer = {"search": None, "screen": True}  # even if the model says so
-    assert model.pre_checks("what do you think of this") == {"search": None, "screen": False}
+    asked.answer = {"search": None, "screen": True, "to": None}  # even if the model says so
+    assert model.pre_checks("what do you think of this") == {"search": None, "screen": False, "to": None}
     assert "screen" not in asked.tasks[-1].schema["properties"]
 
 
 def test_parses_the_answer(model, asked):
-    asked.answer = {"search": ' "weather in Manila today" ', "screen": False}
-    assert model.pre_checks("what's the weather like here") == {"search": "weather in Manila today", "screen": False}
+    asked.answer = {"search": ' "weather in Manila today" ', "screen": False, "to": None}
+    assert model.pre_checks("what's the weather like here") == {"search": "weather in Manila today", "screen": False, "to": None}
     asked.answer = {"search": "NONE", "screen": "yes"}  # not a real boolean, so no
-    assert model.pre_checks("which one should i pick") == {"search": None, "screen": False}
+    assert model.pre_checks("which one should i pick") == {"search": None, "screen": False, "to": None}
     asked.answer = {"search": 5}
     assert model.pre_checks("how are you doing today")["search"] is None
 
@@ -142,3 +142,40 @@ def test_repeat_penalty_goes_to_llama_server():
     assert m._extra_body() == {"lora": [{"id": 0, "scale": 1.0}], "repeat_penalty": 1.1}
     m.adapters = type("A", (), {"lora": lambda self, base=False: None})()
     assert m._extra_body() == {"repeat_penalty": 1.1}
+
+
+def test_who_a_you_is_for_is_asked_with_the_recent_chat(monkeypatch):
+    model = OpenAIModel.__new__(OpenAIModel)
+    model.name = "Ohm"
+    seen = {}
+
+    def run(task):
+        seen["task"] = task
+        return {"search": None, "to": "Zhing"}
+
+    monkeypatch.setattr(openai_module.brain, "run", run)
+    recent = "Zhing: my manager made me redo the whole inventory count\nKaptainDoosh: thats brutal"
+    got = model.pre_checks("did u at least get paid for it", recent, "Lenk", ["Zhing", "KaptainDoosh", "Lenk", "Ohm"])
+    assert got["to"] == "Zhing"
+    assert "inventory count" in seen["task"].user and '"Zhing", "KaptainDoosh"' in seen["task"].system
+    assert '"Lenk"' not in seen["task"].system.split('"to"')[1].split("\n")[0]
+    # no "you": not asked
+    seen.clear()
+    assert model.pre_checks("that inventory thing was crazy", recent, "Lenk", ["Zhing"])["to"] is None
+    assert '"to"' not in seen["task"].system
+
+
+def test_the_people_it_knows_are_never_searched_for(model, asked):
+    asked.answer = {"search": None}
+    model.name = "Ohm"
+    model.pre_checks("what do you know about kaptain doosh", "Lenk: yo", "Lenk", ["Zhing"], ["Zhing", "KaptainDoosh", "Alton"])
+    system = asked.tasks[-1].system
+    assert "People in the chat and friends of theirs: Lenk, Zhing, KaptainDoosh, Alton. Never search for them" in system
+
+    many = [f"P{i}" for i in range(100)]
+    model.pre_checks("what do you know about those guys", known=many)
+    listed = asked.tasks[-1].system.split("friends of theirs: ")[1].split(". Never")[0].split(", ")
+    assert listed == many[:openai_module.KNOWN_NAMES]
+
+    model.pre_checks("who won the game last night")  # no names: no list
+    assert "friends of theirs" not in asked.tasks[-1].system and "speech-to-text" in asked.tasks[-1].system

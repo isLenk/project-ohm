@@ -9,6 +9,7 @@ import openai
 import brain
 
 from config.constants import VOICE_PROMPT, VOICE_PROMPT_PLAIN
+from controller import addressee
 from controller.adapters import Adapters
 from controller.memory import format_people, memory
 from modules.mood.mood import mood
@@ -19,7 +20,8 @@ GLOSSARY_HISTORY = 6  # recent messages also checked for terms, so a reply to ea
 CHECK_MIN_WORDS = 3   # "lol", "ok sure" never need a search or a look at the screen, so they skip the check
 # Only a message with one of these words is asked about the screen ("look at this", "which one", "what's that")
 SCREEN_CUES = re.compile(r"(?<!\w)(?:this|that|look|see|screen|watch|playing|what'?s|which|check)(?!\w)", re.IGNORECASE)
-NO_CHECKS = {"search": None, "screen": False}
+NO_CHECKS = {"search": None, "screen": False, "to": None}
+KNOWN_NAMES = 40      # max names the check is told never to search for
 
 
 class OpenAIModel:
@@ -95,19 +97,20 @@ class OpenAIModel:
 
     def create(self, prompt, system=None, assistant="aight lol", related_memories=None, history=None, voice=False,
                web_results=None, glossary=True, base=False, people=None, images=None, screen=None, summary=None,
-               seen=None, tags=True, **kwargs):
+               seen=None, aside=None, tags=True, **kwargs):
         """One chat request. Replies run with the character's adapter; base=True (utility calls) without.
         images: data URLs (utils/Vision.py) of pictures sent with `prompt`.
         screen: a screenshot data URL (modules/vision/screen.py) of the screen being shared with him.
         seen: the line that goes with the screenshot, the window in front and the text on it (screen.look).
         summary: what's been going on in the chat lately (controller/brief.py).
+        aside: note when the line isn't for him (controller/addressee.py).
         tags: (voice) the TTS can do [sigh] etc. (tts_module.TAGS).
         A cloud description of the screen (modules/vision/describe.py, opt-in) goes in while it's fresh.
 
         The system prompt is only the personality (and the voice prompt), the way the LoRA was trained, and the
         history comes right after it. Everything that changes turn to turn goes in a note at the end of the
         newest user message, so llama-server can reuse its cache of the system prompt and history."""
-        context = []  # per-turn notes, see context_note()
+        context = [aside] if aside else []  # per-turn notes, see context_note()
         happening = ""  # ? only in his own replies, not in utility calls that bring their own system prompt
         if system is None:
             happening = describe_module.current()
@@ -174,23 +177,33 @@ class OpenAIModel:
             **params,
         )
 
-    def pre_checks(self, prompt) -> dict:
+    def pre_checks(self, prompt, recent: str = "", speaker: str = "", names=(), known=()) -> dict:
         """What to do before replying to `prompt`, in one quick call: {"search": a web search query or None,
-        "screen": whether it wants him to look at the shared screen}. Short messages skip the call, and the
-        screen is only asked about when vision is on and the message has a word like "this" or "look" in it.
-        Both are off when llama-server doesn't answer."""
+        "screen": whether it wants him to look at the shared screen, "to": who it's talking to or None}.
+        Short messages skip the call, "screen" needs vision on and a cue word, "to" needs a "you" and `recent`.
+        known: names never to search for. All off when llama-server doesn't answer."""
         text = (prompt or "").strip()
         if len(text.split()) < CHECK_MIN_WORDS or not re.search(r"[^\W\d_]", text):
             return dict(NO_CHECKS)
         ask_screen = screen_module.on() and bool(SCREEN_CUES.search(text))
+        names = [n for n in dict.fromkeys(names) if n and n != speaker and n.lower() != self.name.lower()]
+        ask_to = bool(recent and names and addressee.YOU.search(text))
+        people = [n for n in dict.fromkeys([speaker, *names, *known]) if n][:KNOWN_NAMES]
+        # ? Without the names and the STT rule it searched for friends and misheard words
         system = (
             f"Today is {date.today():%B %d, %Y}.\n"
             "You decide what a chat bot should do before it answers a chat message.\n\n"
             "\"search\": whether the message needs a web search to answer well.\n"
             "Search for: news, sports results, weather, prices, release dates, game updates, recent events, "
             "or specific facts (people, places, numbers) that could have changed or that you might get wrong.\n"
-            "Don't search for: greetings, small talk, jokes, opinions, feelings, advice, "
-            "or anything about the people in the chat.\n"
+            "Don't search for: greetings, small talk, jokes, opinions, feelings, advice, general knowledge "
+            "(where a well-known place is, how everyday things work), or anything about the people in the chat.\n"
+            + (f"People in the chat and friends of theirs: {', '.join(people)}. Never search for them, or for a name "
+               "that sounds like one of them.\n" if people else "")
+            + "A first name or nickname on its own (\"who is Jess?\", \"what do you know about Marco?\", \"tell me "
+            "about Big Mike\") is someone they know, not someone to look up.\n"
+            "Messages can come from speech-to-text, so words get misheard. If a name or place doesn't look like a "
+            "real one, or the message doesn't make sense, don't search.\n"
             "If it needs a search, give a short search query. Otherwise null.\n\n"
         )
         properties = {"search": {"type": ["string", "null"]}}
@@ -203,9 +216,20 @@ class OpenAIModel:
                 "false: anything else, including small talk and questions that don't need to see anything.\n\n"
             )
             properties["screen"] = {"type": "boolean"}
-        system += "Reply with only the JSON: " + (
-            '{"search": "query" or null, "screen": true or false}' if ask_screen else '{"search": "query" or null}')
-        answer = brain.run(brain.Task("classify", system, text, local_only=True, max_tokens=40, temperature=0,
+        if ask_to:
+            options = ", ".join(f'"{n}"' for n in names)
+            system += (
+                f"\"to\": who {speaker or 'the speaker'}'s last message is talking to: one of {options}, "
+                f"\"{self.name}\" (the bot), or \"everyone\". Read the chat before it: \"you\" usually means "
+                f"the person whose story or question it follows up on, even if someone else reacted in between. "
+                f"\"{self.name}\" only if it follows up on something the bot said or names the bot.\n\n")
+            properties["to"] = {"type": "string"}
+        shape = ['"search": "query" or null'] + (['"screen": true or false'] if ask_screen else []) + \
+                (['"to": "a name"'] if ask_to else [])
+        system += "Reply with only the JSON: {" + ", ".join(shape) + "}"
+        user = (f"The chat so far:\n{recent}\n\nThe message to decide about, from {speaker}:\n{text}" if ask_to
+                else text)
+        answer = brain.run(brain.Task("classify", system, user, local_only=True, max_tokens=60, temperature=0,
                                       schema={"type": "object", "properties": properties,
                                               "required": list(properties)}))
         if not isinstance(answer, dict):
@@ -214,7 +238,8 @@ class OpenAIModel:
         query = query.strip().removeprefix("Search for:").strip().strip('"').strip()
         if not query or query.upper().startswith(("NONE", "NULL")):
             query = None
-        return {"search": query, "screen": ask_screen and answer.get("screen") is True}
+        to = answer.get("to") if ask_to and isinstance(answer.get("to"), str) else None
+        return {"search": query, "screen": ask_screen and answer.get("screen") is True, "to": to}
 
     def search_query(self, prompt):
         """Return a web search query if answering `prompt` needs one, else None (see pre_checks)."""

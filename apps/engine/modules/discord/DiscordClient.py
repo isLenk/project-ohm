@@ -11,8 +11,8 @@ import discord
 from controller.model import ModelObject
 from modules.discord.DiscordVoice import DiscordVoice
 from modules.vision import screen
-from controller import brief, modules
-from controller.memory import memory, HISTORY_LIMIT, HISTORY_MINUTES
+from controller import addressee, brief, modules
+from controller.memory import memory, person_names, HISTORY_LIMIT, HISTORY_MINUTES
 from controller.wrappers.openai import NO_CHECKS
 from utils import latency
 from config.constants import strip_voice_tags
@@ -132,7 +132,8 @@ class DiscordClient(discord.Client):
         if memories:
             print(f"[memory] recalled: {[m['content'] for m in memories]}")
         people = self.people_in(said)
-        checks = self.model.pre_checks(said)  # one call for "search the web?" and "look at the screen?"
+        # One call: search? screen? who for?
+        checks = self.checks_for(turn.line, self.history(turn.channel_id))
         latency.mark("pre_checks")
         shot, seen = self.look_at_screen(said, checks)
         turn.prompt(turn.line, memories, people, screen=shot, seen=seen, checks=checks)
@@ -193,6 +194,38 @@ class DiscordClient(discord.Client):
         channels = {c.id: c.name for c in message.channel_mentions if getattr(c, "name", None)}
         return readable_mentions(message.content, users, roles, channels)
 
+    RECENT_LINES = 8  # history pre_checks reads for "to"
+
+    def known_people(self, history) -> dict:
+        """{display name: every name they go by} from the NAS and the history"""
+        people = {}
+        for u in memory.users():
+            names = person_names(u)
+            if names:
+                people[u.get("display_name") or names[0]] = names
+        for label in speaker_labels(history, []):
+            people.setdefault(label, [label])
+        return people
+
+    def checks_for(self, line, history) -> dict:
+        """pre_checks() with the recent chat"""
+        parsed = addressee.split(line)
+        if not parsed:
+            return self.model.pre_checks("")
+        speaker = parsed[-1][0]
+        text = " ".join(t for s, t in parsed if s == speaker)
+        recent = []
+        for m in history[-self.RECENT_LINES:]:
+            recent.append(m["content"] if m["role"] == "user" else f"{self.model.name}: {m['content']}")
+        recent += [f"{s}: {t}" for s, t in parsed if s != speaker]
+        names = [s for s, _ in addressee._lines(history[-self.RECENT_LINES:], self.model.name)] + [s for s, _ in parsed]
+        known = [n for all_names in self.known_people(history).values() for n in all_names]
+        return self.model.pre_checks(text, "\n".join(recent)[-1500:], speaker, names, known)
+
+    def aside(self, line, history, checks=None) -> str:
+        """The "not for you" note for this turn, or "" (controller/addressee.py)"""
+        return addressee.aside(line, history, self.model.name, self.known_people(history), (checks or {}).get("to"))
+
     def people_in(self, text, mentioned=()):
         """People `text` names (or @mentions), with what's remembered about each; see memory.people_in."""
         bot = getattr(self.user, "id", None)
@@ -212,11 +245,12 @@ class DiscordClient(discord.Client):
         memories = memory.relevant_memories(self.character, said)
         people = self.people_in(said, message.mentions)
         history = self.history(turn.channel_id)
-        checks = self.model.pre_checks(self.incoming_text(message))
+        checks = self.checks_for(turn.line, history)
         shot, seen = self.look_at_screen(self.incoming_text(message), checks)
         response, contains_intent = self.model.generate_text(
             turn.line, related_memories=memories, history=history, stop=turn.labels(history), people=people,
             images=images or None, screen=shot, seen=seen, checks=checks, summary=brief.current(turn.channel_id),
+            aside=self.aside(turn.line, history, checks),
         )
 
         # One reply: no leading "Ohm:", and nothing past where he starts writing other people's lines
@@ -331,6 +365,7 @@ class Turn:
         self._stream = self.client.model.generate_stream_text(
             text, related_memories=memories, history=history, stop=self.labels(history), people=people,
             screen=screen, seen=seen, checks=checks, summary=brief.current(self.channel_id), **limit,
+            aside=self.client.aside(self.line, history, checks) if self.said_by else None,
         )
         self._chunks = iter(self._stream)
 
