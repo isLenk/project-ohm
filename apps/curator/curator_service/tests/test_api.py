@@ -130,6 +130,52 @@ def test_llm_controls_without_llama(tmp_path, monkeypatch):
     assert c.post("/llm/restart").json()["error"] == "llm_not_running"
 
 
+def _touch(*paths):
+    for p in paths:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"GGUF")
+    return paths
+
+
+def test_companions_by_name_and_by_folder(tmp_path):
+    models = tmp_path / "models"
+    e4b, e4b_proj, _ = _touch(models / "Gemma-4-E4B-Aggressive-Q5_K_M.gguf", models / "mmproj-Gemma-4-E4B-Aggressive-f16.gguf",
+                              models / "Qwen3.6-27B-Q4_K_M.gguf")
+    big, big_proj, big_mtp = _touch(models / "gemma-4-12b" / "gemma-4-12b-it-Q5_K_M.gguf",
+                                    models / "gemma-4-12b" / "mmproj-F16.gguf", models / "gemma-4-12b" / "mtp-gemma-4-12b-it.gguf")
+    # named after the model, in a shared folder
+    assert main.gpu.companions(str(e4b)) == {"mmproj": str(e4b_proj), "mtp": None}
+    # nothing named after Qwen
+    assert main.gpu.companions(str(models / "Qwen3.6-27B-Q4_K_M.gguf")) == {"mmproj": None, "mtp": None}
+    # a folder to itself
+    assert main.gpu.companions(str(big)) == {"mmproj": str(big_proj), "mtp": str(big_mtp)}
+
+
+def test_llama_command_swaps_companions_with_the_model(tmp_path):
+    models = tmp_path / "models"
+    e4b, e4b_proj = _touch(models / "Gemma-4-E4B-Q5_K_M.gguf", models / "mmproj-Gemma-4-E4B-f16.gguf")
+    big, big_proj, big_mtp = _touch(models / "g12" / "gemma-4-12b-it-Q5_K_M.gguf", models / "g12" / "mmproj-F16.gguf",
+                                    models / "g12" / "mtp-gemma-4-12b-it.gguf")
+    e4b_cmd = ["llama-server", "-m", r"models\Gemma-4-E4B-Q5_K_M.gguf", "--mmproj", "my-own-proj.gguf", "--jinja", "-c", "32768"]
+
+    # E4B -> 12B: companions swapped, other flags kept
+    cmd = main.gpu.llama_command(e4b_cmd, str(big), [])
+    assert cmd[cmd.index("-m") + 1] == str(big)
+    assert cmd[cmd.index("--mmproj") + 1] == str(big_proj) and cmd.count("--mmproj") == 1
+    assert cmd[cmd.index("-md") + 1] == str(big_mtp) and cmd[cmd.index("--spec-type") + 1] == "draft-mtp"
+    assert "--jinja" in cmd and cmd[cmd.index("-c") + 1] == "32768"
+
+    # 12B -> E4B: the MTP flags go too
+    back = main.gpu.llama_command(cmd, str(e4b), ["a.gguf"])
+    assert back[back.index("--mmproj") + 1] == str(e4b_proj)
+    assert "-md" not in back and "--spec-type" not in back and "-ngld" not in back
+    assert back[-3:] == ["--lora", "a.gguf", "--lora-init-without-apply"]
+
+    # same model: a projector picked by hand is kept
+    same = main.gpu.llama_command(e4b_cmd, str(e4b), [])
+    assert same[same.index("--mmproj") + 1] == "my-own-proj.gguf"
+
+
 def test_default_llama_command(tmp_path):
     snap = main.gpu.default_llama(str(tmp_path / "m.gguf"), [str(tmp_path / "a.gguf")])
     cmd = snap["cmdline"]

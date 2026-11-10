@@ -89,6 +89,8 @@ class Registry:
             raise ApiError(422, "not_gguf", f"{gguf_path} is not a .gguf file.")
         if path.name.lower().startswith("mmproj"):
             raise ApiError(422, "not_a_model", "That is a vision projector, not a model.")
+        if path.name.lower().startswith("mtp"):
+            raise ApiError(422, "not_a_model", "That is an MTP draft head, not a model. It loads with its model.")
         fp = fingerprint(path)
         existing = self.one("SELECT * FROM base_models WHERE fingerprint = ?", (fp,))
         if existing:
@@ -128,7 +130,7 @@ class Registry:
         if self.get("seeded") or not MODELS_DIR.is_dir():
             return
         for p in sorted(MODELS_DIR.glob("*.gguf")):
-            if not p.name.lower().startswith("mmproj"):
+            if not p.name.lower().startswith(("mmproj", "mtp")):
                 try:
                     self.add_base(str(p))
                 except (ApiError, OSError):

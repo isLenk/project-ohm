@@ -5,15 +5,18 @@ restarted afterwards with the same command line plus every adapter for its model
 Other stopped processes (TTS, the bot) are reported so the user starts them again.
 """
 
+import re
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 import requests
 
 from .config import JUDGE_PORT, LLAMA_CPP_DIR, LLM_SERVER_URL
+from .registry import QUANT_RE
 
 try:
     import psutil
@@ -104,14 +107,55 @@ def stop(pids: list[int]) -> list[dict]:
     return stopped
 
 
+# Per-model flags (projector, MTP draft head), swapped with the model
+COMPANION_FLAGS = {"--mmproj", "--spec-type", "-md", "--model-draft", "--spec-draft-model",
+                   "-ngld", "--gpu-layers-draft", "--n-gpu-layers-draft", "--spec-draft-ngl"}
+
+
+def _plain(name: str) -> str:
+    """Lowercase letters and digits only"""
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def companions(model_path: str) -> dict:
+    """The model's mmproj and mtp files: named after it, or alone in its folder with it"""
+    path = Path(model_path)
+    try:
+        files = [p for p in path.parent.iterdir() if p.suffix.lower() == ".gguf"]
+    except OSError:
+        return {"mmproj": None, "mtp": None}
+    quant = QUANT_RE.search(path.name)
+    stem = _plain(path.name[: quant.start()] if quant else path.stem)
+    found = {}
+    for kind in ("mmproj", "mtp"):
+        candidates = [p for p in files if p.name.lower().startswith(kind)]
+        models = [p for p in files if not p.name.lower().startswith(("mmproj", "mtp"))]
+        named = [p for p in candidates if stem and stem in _plain(p.name)]
+        alone = len(models) == 1 and len(candidates) == 1
+        found[kind] = str(named[0]) if len(named) == 1 else str(candidates[0]) if alone else None
+    return found
+
+
+def _companion_args(model_path: str) -> list[str]:
+    c = companions(model_path)
+    out = ["--mmproj", c["mmproj"]] if c["mmproj"] else []
+    if c["mtp"]:
+        out += ["--spec-type", "draft-mtp", "-md", c["mtp"], "-ngld", "99"]
+    return out
+
+
 def llama_command(cmdline: list[str], model_path: Optional[str], adapters: list[str]) -> list[str]:
-    """Same command, with -m pointed at `model_path` and the adapters loaded at scale 0."""
+    """Same command, with -m pointed at `model_path` and the adapters loaded at scale 0.
+    A new model also gets its own projector and MTP flags."""
+    old = next((cmdline[i + 1] for i, a in enumerate(cmdline[:-1]) if a in ("-m", "--model")), None)
+    same = not model_path or (old is not None and Path(old).name.lower() == Path(model_path).name.lower())
+    swap = not same or "--mmproj" not in cmdline
     out, skip = [], False
     for i, arg in enumerate(cmdline):
         if skip:
             skip = False
             continue
-        if arg in ("--lora", "--lora-scaled"):
+        if arg in ("--lora", "--lora-scaled") or (swap and arg in COMPANION_FLAGS):
             skip = True
             continue
         if arg == "--lora-init-without-apply":
@@ -121,17 +165,15 @@ def llama_command(cmdline: list[str], model_path: Optional[str], adapters: list[
             skip = True
             continue
         out.append(arg)
+    if swap and model_path:
+        out += _companion_args(model_path)
     if adapters:
         out += ["--lora", ",".join(adapters), "--lora-init-without-apply"]
     return out
 
 
 def default_llama(model_path: str, adapters: list[str]) -> dict:
-    """What tools/_run_llama.cmd runs, for when llama-server has never been seen running.
-
-    The vision projector (--mmproj) isn't added: there's no way to tell which one goes with a model.
-    Start llama-server once by hand with it and that command line is remembered instead.
-    """
+    """What tools/_run_llama.cmd runs, for when llama-server has never been seen running"""
     exe = LLAMA_CPP_DIR / "bin" / ("llama-server.exe" if sys.platform == "win32" else "llama-server")
     cmd = [str(exe), "-m", model_path, "--jinja", "--reasoning", "off", "-ngl", "99", "-c", "32768",
            "--port", LLM_SERVER_URL.rsplit(":", 1)[-1]]

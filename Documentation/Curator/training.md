@@ -187,6 +187,8 @@ So `PUT /models/active` works like this:
 
 Update `executables/_run_llama.cmd`, or better, have the controller build the command from the registry.
 
+**Switching base models** (E4B and Gemma 4 12B, say) restarts llama-server on the other model with that model's own vision projector and MTP draft head (`gpu.companions`). A file goes with a model if its name contains the model's name without the quant (`mmproj-Gemma-4-E4B-…-f16.gguf`), or if the model has a folder to itself (`models/gemma-4-12b/` holding `mmproj-F16.gguf` and `mtp-gemma-4-12b-it.gguf`). With an MTP head, `--spec-type draft-mtp -md <mtp> -ngld 99` is added: on a 3090 it took the 12B from ~40 to 66–110 tokens/s.
+
 ## 6. Scoring an adapter
 
 The held-out loss says how well an adapter predicts the group's wording. It can't tell whether Ohm answers what was said: the first adapter had a fine loss and still replied "so they are gonna have a blue one now" to "Can you actually hear me?". So a finished adapter can be scored by a bigger model acting as the judge (`train/evaluate.py`). Open it with **Score it** at the end of a run, or **Score this LoRA…** in the model menu.

@@ -783,7 +783,7 @@ def models_from_hf(b: HfBody):
         from huggingface_hub import HfApi, hf_hub_download
     except ImportError:
         raise ApiError(503, "no_hf", "Install huggingface_hub to download models.")
-    files = [f for f in HfApi().list_repo_files(b.repo_id) if f.endswith(".gguf") and not Path(f).name.lower().startswith("mmproj")]
+    files = [f for f in HfApi().list_repo_files(b.repo_id) if f.endswith(".gguf") and not Path(f).name.lower().startswith(("mmproj", "mtp"))]
     if not files:
         raise ApiError(422, "no_gguf", f"{b.repo_id} has no .gguf files.")
     filename = b.filename
