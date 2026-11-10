@@ -249,3 +249,57 @@ def test_screen_role_and_last_backend(fakes, monkeypatch):
     assert len(fakes["codex"].calls) == 1
     monkeypatch.setenv("BRAIN_ROLE_SCREEN", "codex")
     assert run(Task("screen", "s", "u")) is None and last_backend() is None
+
+
+# ── Timeouts ─────────────────────────────────────────────────────────────────
+def test_cli_timeout_comes_from_the_task(monkeypatch, tmp_path):
+    import subprocess
+    from brain import backends
+    from brain.backends import CliBackend
+    seen = {}
+
+    def slow(cmd, **kw):
+        seen["timeout"] = kw["timeout"]
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setattr(backends.subprocess, "run", slow)
+    monkeypatch.setattr(CliBackend, "path", property(lambda self: "codex"))
+    with pytest.raises(RuntimeError, match="took longer than 900 s"):
+        CliBackend("codex").complete(Task("reflect", "s", "u", timeout=900))
+    assert seen["timeout"] == 900
+    with pytest.raises(RuntimeError, match=f"took longer than {backends.CLI_TIMEOUT} s"):
+        CliBackend("codex").complete(Task("reflect", "s", "u"))
+    assert seen["timeout"] == backends.CLI_TIMEOUT
+
+
+def test_http_read_timeout_comes_from_the_task(monkeypatch):
+    from brain import backends
+    from brain.backends import OpenAIBackend
+    seen = {}
+
+    class R:
+        ok = True
+
+        @staticmethod
+        def json():
+            return {"choices": [{"message": {"content": "fine"}}], "usage": {}}
+
+    def post(url, **kw):
+        seen["timeout"] = kw["timeout"]
+        return R()
+
+    monkeypatch.setattr(backends.requests, "post", post)
+    local = OpenAIBackend("local", "http://127.0.0.1:5000/v1", timeout=(2, 30))
+    assert local.complete(Task("reflect", "s", "u", timeout=600)) == "fine"
+    assert seen["timeout"] == (2, 600)
+    local.complete(Task("reflect", "s", "u"))
+    assert seen["timeout"] == (2, 30)
+
+
+def test_failure_says_why_each_backend_failed(fakes, monkeypatch, capsys):
+    monkeypatch.setenv("BRAIN_ROLE_REFLECT", "codex,deepseek")
+    fakes["codex"] = Fake("codex", [RuntimeError("codex took longer than 900 s")])
+    fakes["deepseek"] = Fake("deepseek", ["x"], ready=False)
+    assert run(Task("reflect", "s", "u", timeout=900)) is None
+    out = capsys.readouterr().out
+    assert "reflect failed everywhere" in out and "codex: codex took longer than 900 s" in out

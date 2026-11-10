@@ -17,3 +17,4 @@ class Task:
     images: list[str] = ()       # pictures to show with `user`: file paths or data URLs (codex, local, openrouter)
     private: bool = True         # mask names for cloud backends (privacy.py)
     people: list = ()            # extra people for this task, on top of privacy.people()
+    timeout: float | None = None # seconds per call; None = the backend's own

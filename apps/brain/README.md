@@ -86,6 +86,13 @@ description (`OHM_SCREEN_CLOUD=1`, `modules/vision/describe.py`); it has no loca
 already look at the screen through the local model. `brain.last_backend()` says which backend answered this
 thread's last `run()`.
 
+## Time
+
+A CLI call may take `CLI_TIMEOUT` (240 s) and an HTTP call the backend's read timeout; past that the backend
+fails and the router moves on. A long call asks for more with `Task(..., timeout=900)`, as the Curator's
+reflection does for a whole evening's chat at high reasoning. When nothing answers, the `[brain] <role> failed
+everywhere` line and its log row on the NAS (`errors`) say why each backend didn't.
+
 ## Privacy
 
 Anything with a screenshot, or text that shouldn't leave the PC, gets `Task(..., local_only=True)`, which skips

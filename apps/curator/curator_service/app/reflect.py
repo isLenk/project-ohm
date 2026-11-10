@@ -25,6 +25,7 @@ GAP_MINUTES = 30            # a pause longer than this gets a time marker in the
 MAX_TRANSCRIPT = 60000      # characters of chat sent; a longer stretch keeps its latest part
 PERSONALITY_CHARS = 600     # of the character's personality, for who he is
 REPLY_TOKENS = 2500
+BRAIN_TIMEOUT = 900         # seconds; Codex at high reasoning ran past the 240 s default
 MAX_PER_KIND = 5            # memories of one kind written per run, so one long night doesn't flood them
 DEFAULT_IMPORTANCE = 0.6
 DUPLICATE = 0.9             # a note this similar to a memory of the same kind isn't stored again (as the engine)
@@ -332,9 +333,9 @@ def reflect(job: dict) -> dict:
     user = (f'The conversation. Lines are "Name: text", {bot}\'s own are "{bot}: text", and the time is shown '
             f"after a pause.\n\n{transcript(rows, bot)}")
     answer = brain.run(brain.Task(role="reflect", system=system_prompt(who, traits, relationships), user=user,
-                                  schema=SCHEMA, max_tokens=REPLY_TOKENS, reasoning="high"))
+                                  schema=SCHEMA, max_tokens=REPLY_TOKENS, reasoning="high", timeout=BRAIN_TIMEOUT))
     if answer is None:
-        raise RuntimeError("No brain backend answered the reflection (see [brain] in the Curator log).")
+        raise RuntimeError("No brain backend answered the reflection (the brain log says why each one failed).")
 
     index = name_index(users, rows)
     index.pop(bot.lower(), None)  # notes about himself aren't about a person

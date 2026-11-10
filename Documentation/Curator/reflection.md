@@ -14,7 +14,7 @@ A job:
 
 1. Reads the messages in the claimed range (`GET /messages`, 2,000 at a time), the people (`GET /users`), how Ohm gets on with them (`GET /relationships`), his traits with 30 days of history (`GET /traits`), and who he is (`GET /characters/{slug}`, the first 600 characters of the personality).
 2. Writes the chat out as `Name: text` lines, his own as `Ohm: text`, grouped by channel, with the date and time at the start of each channel and after any pause over 30 minutes. A stretch over 60,000 characters keeps its latest part.
-3. Makes one brain call, role `reflect` (Codex, then DeepSeek: `BRAIN_ROLE_REFLECT`), reasoning `high`, up to 2,500 tokens, with a JSON schema. The system prompt has who he is, his current traits and the people he knows, and asks for:
+3. Makes one brain call, role `reflect` (Codex, then DeepSeek: `BRAIN_ROLE_REFLECT`), reasoning `high`, up to 2,500 tokens, allowed `BRAIN_TIMEOUT` (15 minutes; a whole evening at high reasoning takes Codex longer than the brain's usual 4), with a JSON schema. The system prompt has who he is, his current traits and the people he knows, and asks for:
 
    ```json
    {"topics":    [{"text": "ask Kyle how the job interview went", "people": ["Kyle"], "importance": 0.7}],
@@ -64,6 +64,7 @@ All constants at the top of `reflect.py`:
 | `MAX_TRANSCRIPT` | 60000 | Characters of chat sent; the latest part is kept |
 | `PERSONALITY_CHARS` | 600 | Of the character's personality, in the prompt |
 | `REPLY_TOKENS` | 2500 | `max_tokens` for the call |
+| `BRAIN_TIMEOUT` | 900 | Seconds the call may take before the backend gives up and the next is tried |
 | `MAX_PER_KIND` | 5 | Memories of one kind per run |
 | `DEFAULT_IMPORTANCE` | 0.6 | For a note without one |
 | `DUPLICATE` | 0.9 | Similarity at which a note counts as already stored |

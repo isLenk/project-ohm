@@ -79,7 +79,8 @@ class OpenAIBackend:
             if off:
                 body["lora"] = off
         headers = {"Authorization": f"Bearer {os.getenv(self.key_env)}"} if self.key_env else {}
-        r = requests.post(f"{self.url}/chat/completions", json=body, headers=headers, timeout=self.timeout)
+        timeout = (self.timeout[0], task.timeout) if task.timeout else self.timeout
+        r = requests.post(f"{self.url}/chat/completions", json=body, headers=headers, timeout=timeout)
         if not r.ok:
             raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
         data = r.json()
@@ -130,9 +131,14 @@ class CliBackend:
         folder = tempfile.mkdtemp(prefix="ohm-brain-")
         try:
             args, stdin = (self._codex_args if self.name == "codex" else self._claude_args)(task, folder)
+            timeout = task.timeout or self.timeout
             with self._slots:
-                r = subprocess.run([exe, *args], input=stdin, capture_output=True, encoding="utf-8", errors="replace",
-                                   cwd=folder, timeout=self.timeout, shell=False)
+                try:
+                    r = subprocess.run([exe, *args], input=stdin, capture_output=True, encoding="utf-8",
+                                       errors="replace", cwd=folder, timeout=timeout, shell=False)
+                except subprocess.TimeoutExpired:
+                    # ? Its own message is the whole command line
+                    raise RuntimeError(f"{self.name} took longer than {timeout:g} s (Task.timeout raises it)")
             if r.returncode != 0:
                 raise RuntimeError(f"exit {r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
             if self.name == "codex":

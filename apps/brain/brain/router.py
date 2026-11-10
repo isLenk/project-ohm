@@ -46,6 +46,7 @@ def run(task: Task):
     """The answer to `task`: text, or the parsed JSON when it has a schema. None if every backend failed."""
     started = time.perf_counter()
     _local.backend = None
+    errors = []  # why each backend failed
     for name in config.chain(task.role):
         why = skip_reason(name, task.local_only, task.private, task.people)
         if why:
@@ -68,6 +69,7 @@ def run(task: Task):
                 text, answer = mask.reveal(text), mask.reveal_value(answer)
         except Exception as e:
             print(f"[brain] {name} failed for {task.role}: {e}")
+            errors.append(f"{name}: {e}")
             continue
         usage = getattr(b, "last_usage", None) or {}
         usd = config.cost(name, usage)
@@ -75,7 +77,7 @@ def run(task: Task):
         log.report(task, name, round((time.perf_counter() - t) * 1000), True, text, usage, usd)
         _local.backend = name
         return answer
-    log.report(task, None, round((time.perf_counter() - started) * 1000), False)
+    log.report(task, None, round((time.perf_counter() - started) * 1000), False, errors=errors)
     return None
 
 
