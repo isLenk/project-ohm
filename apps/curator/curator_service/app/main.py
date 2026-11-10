@@ -418,6 +418,19 @@ def conversations_curate(b: CurateBody):
     return jobs.start("curate", lambda job: curate.run(p, job, b.criteria, b.approve))
 
 
+class ReguessBody(BaseModel):
+    conversation_ids: list[int]
+
+
+@app.post("/links/reguess")
+def link_reguess(b: ReguessBody):
+    """Background job: guess the model's unaccepted arrows again with the current model"""
+    p = require_project()
+    if not llm.up():
+        raise ApiError(503, "llm_down", "Start llama-server (Ohm's LLM on :5000) to have the model guess replies.")
+    return jobs.start("link_reguess", lambda job: model_links.reguess(p, job, b.conversation_ids))
+
+
 @app.post("/conversations/unapprove-bulk")
 def conversations_unapprove_bulk(b: BulkUndoBody):
     """Undo approve-bulk: {ids: what it approved, accepted: the arrows it accepted}."""

@@ -75,6 +75,7 @@ One endpoint serves both the Threads and the Raw view. Raw just ignores the link
 | POST | `/links/{unit_kind}/{unit_id}/accept` | — | ✓ on a suggestion |
 | POST | `/links/{unit_kind}/{unit_id}/reject` | — | ✕ on a suggestion; may return a new suggestion |
 | POST | `/links/guess` | `{ conversation_id? }` | job: the local LLM guesses parents for unattached blocks. `503 llm_down` if llama-server is off. Result `{ blocks, suggested, no_reply, failed, stopped, units }` |
+| POST | `/links/reguess` | `{ conversation_ids: [...] }` | job: drops the model's unaccepted arrows (and its marks) in these conversations and has the model running now guess them again, 4 at a time. Accepted arrows stay. For after switching to a better model. Result `{ conversations, blocks, cleared, asked, suggested, none, skipped, failed }` |
 
 Every link route returns:
 

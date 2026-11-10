@@ -77,6 +77,88 @@ def _mark(conn, block_id: int) -> None:
     conn.execute("INSERT OR REPLACE INTO model_link_scans (block_id, scanned_at) VALUES (?, ?)", (block_id, now_ms()))
 
 
+def _apply(project, bid: int, scored, choices, answer) -> str:
+    """Save the model's pick: "suggested", "none", or "skipped" if linked by hand meanwhile"""
+    n = pick(answer, len(choices))
+    with project.tx() as conn:
+        _mark(conn, bid)
+        if n is None:
+            return "none"
+        if threads.link_row(conn, "block", str(bid)):
+            return "skipped"
+        parent = choices[n]
+        try:
+            threads.validate(conn, "block", str(bid), parent["id"])
+        except ApiError:
+            return "none"
+        score = next(s for s, c in scored if c["id"] == parent["id"])
+        threads._write(conn, "block", bid, parent["id"], "suggested", "model", round(score, 3))
+        return "suggested"
+
+
+WORKERS = 4  # llama-server's slots
+
+
+def reguess(project, job, conversation_ids: list[int]) -> dict:
+    """Redo the model's unaccepted guesses in these conversations; accepted arrows stay"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    convs = []
+    for i in range(0, len(conversation_ids), 500):
+        part = conversation_ids[i:i + 500]
+        convs += project.all(f"SELECT * FROM conversations WHERE id IN ({','.join('?' * len(part))})", part)
+    blocks, cleared = [], 0
+    with project.tx() as conn:
+        for c in convs:
+            blocks += [r[0] for r in conn.execute(
+                "SELECT id FROM blocks WHERE channel_id = ? AND first_ts BETWEEN ? AND ?",
+                (c["channel_id"], c["first_ts"], c["last_ts"]))]
+        for i in range(0, len(blocks), 500):
+            part = blocks[i:i + 500]
+            marks = ",".join("?" * len(part))
+            cleared += conn.execute(
+                f"DELETE FROM links WHERE unit_kind = 'block' AND origin = 'model' AND status = 'suggested' "
+                f"AND unit_id IN ({marks})", [str(b) for b in part]).rowcount
+            conn.execute(f"DELETE FROM model_link_scans WHERE block_id IN ({marks})", part)
+        todo = [b for b in blocks if not threads.link_row(conn, "block", str(b))]
+    names = {a["id"]: a["display_name"] or a["name"] for a in project.all("SELECT id, name, display_name FROM authors")}
+
+    def ask(bid):
+        with project.lock:
+            msgs = [m for m in threads.block_messages(project.conn, bid) if not m["excluded"]]
+            scored = threads.score_candidates(project.conn, bid)[:CHOICES]
+        if not msgs or not scored:
+            return bid, scored, [], None
+        choices = sorted((c for _, c in scored), key=threads.key)
+        text = "\n".join(m["content_text"] for m in msgs)
+        answer = llm.chat_json(SYSTEM, prompt(names, choices, names.get(msgs[0]["author_id"], "someone"), text),
+                               max_tokens=60)
+        return bid, scored, choices, answer
+
+    counts = {"suggested": 0, "none": 0, "skipped": 0, "failed": 0}
+    with ThreadPoolExecutor(WORKERS) as pool:
+        futures = [pool.submit(ask, b) for b in todo]
+        for i, f in enumerate(as_completed(futures)):
+            if job.cancelled:
+                for other in futures:
+                    other.cancel()
+                break
+            job.progress(i, len(todo), f"{counts['suggested']} guessed")
+            try:
+                bid, scored, choices, answer = f.result()
+            except requests.RequestException:
+                counts["failed"] += 1
+                continue
+            if not choices:
+                with project.tx() as conn:
+                    _mark(conn, bid)
+                counts["none"] += 1
+                continue
+            counts[_apply(project, bid, scored, choices, answer)] += 1
+    job.progress(len(todo), len(todo), f"{counts['suggested']} guessed")
+    return {"conversations": len(convs), "blocks": len(blocks), "cleared": cleared, "asked": len(todo), **counts}
+
+
 def guess(project, job, conversation_id: Optional[int] = None) -> dict:
     """Ask the model about every pending block (or one conversation's). Only the
     model's answers mark a block as looked at, so failed requests are retried next run."""
@@ -111,24 +193,12 @@ def guess(project, job, conversation_id: Optional[int] = None) -> dict:
                 break
             failed += 1
             continue
-        n = pick(answer, len(choices))
-        with project.tx() as conn:
-            _mark(conn, bid)
-            if n is None:
-                no_reply += 1
-                continue
-            if threads.link_row(conn, "block", str(bid)):
-                continue  # linked by hand while the model was thinking
-            parent = choices[n]
-            try:
-                threads.validate(conn, "block", str(bid), parent["id"])
-            except ApiError:
-                no_reply += 1
-                continue
-            score = next(s for s, c in scored if c["id"] == parent["id"])
-            threads._write(conn, "block", bid, parent["id"], "suggested", "model", round(score, 3))
+        result = _apply(project, bid, scored, choices, answer)
+        if result == "suggested":
             suggested += 1
             changed.append(bid)
+        elif result == "none":
+            no_reply += 1
     job.progress(len(blocks), len(blocks), f"{suggested} guessed")
 
     from .feed import block_item  # feed imports threads
