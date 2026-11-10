@@ -73,13 +73,19 @@ def grab_thumbnail():
 
 
 async def watch_worker(voice):
-    """Runs alongside DiscordVoice.idle_worker while he's in a call. voice: the DiscordVoice."""
-    if not screen.on() or ImageChops is None:
+    """Runs alongside DiscordVoice.idle_worker while he's in a call. voice: the DiscordVoice.
+    Keeps running while vision is off; turned back on, it starts from a fresh baseline."""
+    if ImageChops is None:
         return
-    baseline, last_comment = None, 0.0
+    baseline, last_comment, was_on = None, 0.0, None
     while True:
         await asyncio.sleep(WATCH_EVERY_S)
-        if voice.vc is None or not voice.vc.is_connected():
+        on = screen.on()
+        if on != was_on:
+            if was_on is not None:
+                print(f"[vision] Screen {'on: looking again' if on else 'off: not looking until it is turned back on'}")
+            was_on, baseline = on, None
+        if not on or voice.vc is None or not voice.vc.is_connected():
             continue
         thumb = await asyncio.to_thread(grab_thumbnail)
         if thumb is None:

@@ -11,7 +11,7 @@ import { createWriteStream, existsSync, renameSync, statSync } from 'fs'
 import { join } from 'path'
 import { addEvent, addLog } from './db.js'
 import { appDir, python } from './python.js'
-import { childEnv } from './settings.js'
+import { childEnv, settingsFile } from './settings.js'
 
 const HEARTBEAT_TIMEOUT = 20000 // ms of silence before a main.py we didn't start counts as gone
 const OUTPUT_LINES = 300
@@ -98,7 +98,7 @@ export function startEngine() {
   stopping = false
   child = spawn(py, ['main.py'], {
     cwd: appDir('engine'),
-    env: childEnv({ PYTHONUNBUFFERED: '1' }),
+    env: childEnv({ PYTHONUNBUFFERED: '1', OHM_SETTINGS_FILE: settingsFile() }),
     windowsHide: true
   })
   pid = child.pid

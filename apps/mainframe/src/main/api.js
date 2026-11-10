@@ -31,9 +31,11 @@ function loadModules() {
         name = folder,
         description = '',
         required = false,
-        default: on = true
+        default: on = true,
+        live = false
       } = JSON.parse(readFileSync(body, 'utf8'))
-      modules[name] = { name, description, required, optIn: !on, ok: null, detail: '', since: null }
+      // live: toggles without a restart (vision)
+      modules[name] = { name, description, required, optIn: !on, live, ok: null, detail: '', since: null }
     } catch (e) {
       console.error(`Could not read ${body}:`, e.message)
     }
@@ -64,7 +66,7 @@ export function listModules() {
   }))
 }
 
-/** Saved now; main.py reads it when it starts, so a running engine needs a restart to apply it. */
+/** Saved now; applies on engine restart, or within a second for a live module. */
 export function setModuleEnabled(name, on) {
   const m = modules[name]
   if (!m) throw new Error(`No module called ${name}`)

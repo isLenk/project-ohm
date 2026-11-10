@@ -62,6 +62,8 @@ export const KEYS = [
 export const SECRETS = ['DISCORD_TOKEN', 'MEMORY_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY']
 
 const file = () => join(app.getPath('userData'), 'settings.json')
+// The engine polls it for live modules (controller/modules.py)
+export const settingsFile = file
 let saved = null
 
 function load() {

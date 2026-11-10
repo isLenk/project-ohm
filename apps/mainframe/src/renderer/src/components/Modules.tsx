@@ -40,7 +40,7 @@ const Modules = () => {
   const toggle = (m: Module) =>
     act(async () => {
       await window.api.setModuleEnabled(m.name, !m.enabled)
-      if (running) setChanged(true)
+      if (running && !m.live) setChanged(true) // live ones need no restart
     })
 
   const status = (m: Module) => {

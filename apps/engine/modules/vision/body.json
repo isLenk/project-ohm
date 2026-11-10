@@ -1,6 +1,7 @@
 {
     "name": "vision",
-    "description": "Lets Ohm look at this computer's screen when someone asks about it, and comment on it when the call goes quiet. Screenshots stay on this PC and are never saved. With OHM_SCREEN_CLOUD=1 (Settings › Integrations) only the screen-description job sends a cropped screenshot to the screen role's backend (Codex by default); live replies still use the local model.",
+    "description": "Lets Ohm look at this computer's screen when someone asks about it, and comment on it when the call goes quiet. Screenshots stay on this PC and are never saved. With OHM_SCREEN_CLOUD=1 (Settings › Integrations) only the screen-description job sends a cropped screenshot to the screen role's backend (Codex by default); live replies still use the local model. Turning it off or on applies straight away, no restart.",
     "required": false,
-    "default": false
+    "default": false,
+    "live": true
 }

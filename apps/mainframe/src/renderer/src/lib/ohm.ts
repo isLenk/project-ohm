@@ -16,6 +16,7 @@ export type Module = {
   description: string
   required: boolean
   enabled: boolean
+  live?: boolean // toggles without a restart (vision)
   ok: boolean | null // null: off, or the engine isn't running
   detail: string
   since: string | null
