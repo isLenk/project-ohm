@@ -305,8 +305,10 @@ class Turn:
         self._chunks = iter(())
         self._finished = False
         self._lock = threading.Lock()
-        # Voice only: keep stage directions to tags the TTS can perform (see utils/VoiceTags.py)
-        self._tags = VoiceTagFilter(client.model.name) if source == "voice" else None
+        # Voice only: keep stage directions to tags the TTS can perform (see utils/VoiceTags.py), none for Kokoro
+        voice = getattr(client, "voice", None)
+        self.voice_tags = voice.tts_module.tags() if voice is not None else True
+        self._tags = VoiceTagFilter(client.model.name, max_tags=1 if self.voice_tags else 0) if source == "voice" else None
         self._at = AtFilter() if source == "voice" else None  # "@lenk" would be read out as "at lenk"
         self._last = None  # last text chunk, used as the template for the filter's final flush
 
@@ -324,7 +326,7 @@ class Turn:
         screen, seen: a screenshot to show him with it and the line on what's in it (DiscordClient.look_at_screen).
         checks: the reply's pre_checks() (OpenAIModel.pre_checks), None to have them done here."""
         # ? In voice, a hard cap so a "how do I..." question can't turn into a minute-long lecture
-        limit = {"max_tokens": VOICE_MAX_TOKENS, "voice": True} if self.source == "voice" else {}
+        limit = {"max_tokens": VOICE_MAX_TOKENS, "voice": True, "tags": self.voice_tags} if self.source == "voice" else {}
         history = self.client.history(self.channel_id)
         self._stream = self.client.model.generate_stream_text(
             text, related_memories=memories, history=history, stop=self.labels(history), people=people,

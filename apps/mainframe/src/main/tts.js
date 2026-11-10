@@ -126,15 +126,17 @@ export async function importVoice(name, bytes) {
   return file
 }
 
-/** Has the TTS server speak as `file` ('' for the built-in voice) from now on.
+/** Has the TTS server speak as `voice` ({ engine, file }, or a Chatterbox clip name) from now on.
     { loaded: false } when the server isn't up: the engine loads it once it is. Throws when the
-    server can't use the clip (missing, under 5 seconds). */
-export async function loadVoice(file) {
+    server can't use it. */
+export async function loadVoice(voice) {
+  const { engine = 'chatterbox', file = '' } =
+    typeof voice === 'string' ? { file: voice } : voice || {}
   await starting
   try {
     await axios.post(new URL('/api/v1/tts/voice', url()).href, null, {
-      params: { file: file || '' },
-      timeout: 60000 // waits for a reply in progress, then encodes the clip
+      params: { file: file || '', engine },
+      timeout: 60000 // waits for a reply in progress, then encodes the clip or loads Kokoro
     })
     return { loaded: true }
   } catch (e) {

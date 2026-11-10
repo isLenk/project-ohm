@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     # engine.engine_stream.play()
     yield
     # Call shutdown
-    engine.engine.shutdown()
+    engine.unload_engine()  # every loaded engine
     cprint("blue", "API stopped.")
 
 app = FastAPI(lifespan=lifespan)

@@ -25,6 +25,10 @@ def voice_path(name: str) -> Path:
     return path
 
 
+# Engines a card can pick. Both give the 24 kHz mono 16-bit PCM the player expects
+ENGINES = ("chatterbox", "kokoro")
+
+
 class TTSEngine:
     stream: str
     engine_stream: TextToAudioStream
@@ -32,29 +36,48 @@ class TTSEngine:
     chunks_received: int
     pending_feed: Queue
 
-    voice_name: str = ""  # the clip in voices/ being spoken as, "" for the built-in voice
+    engine_name: str = "chatterbox"
+    voice_name: str = ""  # clip in voices/ ("" = built-in), or a Kokoro voice
 
     # ? voice=None uses Chatterbox Turbo's built-in (female) voice. Pass a .wav path (5s+) to clone one instead, e.g. "voices/lance.wav"
     # (characters pick theirs with set_voice)
     def load_engine(self, model_name="chatterbox", voice=None, overwrite=False, *args, **kwargs):
-        if hasattr(self, "engine") and overwrite == False and self.engine.engine_name == model_name: 
+        """Load `model_name` and speak with it. Loaded engines stay loaded, so switching back is instant"""
+        if model_name not in ENGINES:
+            raise ValueError(f"No TTS engine called {model_name!r}")
+        loaded = self.__dict__.setdefault("_loaded", {})  # name -> (engine, stream)
+        if model_name in loaded and not overwrite:
+            self._use(model_name)
             cprint("red", "Model already loaded.")
             return "Model already loaded."
-        self.unload_engine()
+        if model_name in loaded:
+            self._shutdown(*loaded.pop(model_name))
         self.audio_queue = Queue()
         self.chunks_received = 0
-        # ? Streams audio mid-sentence (~0.3s to first audio instead of waiting for the whole sentence)
-        self.engine = StreamingChatterboxEngine(voice=voice, *args, **kwargs)
-        self.voice_name = Path(voice).name if voice else ""
+        if model_name == "kokoro":
+            from kokoro_engine import OhmKokoroEngine, kokoro_voice  # ? heavy, only when a card wants it
+            self.engine = OhmKokoroEngine(voice=kokoro_voice(voice or ""))
+            name = kokoro_voice(voice or "")
+        else:
+            # ? Streams audio mid-sentence (~0.3s to first audio instead of waiting for the whole sentence)
+            self.engine = StreamingChatterboxEngine(voice=voice, *args, **kwargs)
+            name = Path(voice).name if voice else ""
         self.warm_up()
-        self.engine_stream = TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop)
-        self.pending_feed = Queue() 
+        loaded[model_name] = (self.engine, TextToAudioStream(self.engine, on_audio_stream_stop=self.on_audio_stream_stop))
+        self._use(model_name)
+        self.voice_name = name
+        self.pending_feed = Queue()
 
         formatting, channel, sample_rate = self.engine.get_stream_info()
         cprint("blue", f"Model: {model_name}, Voice: {voice}")
         cprint("blue", f"Format: {formatting}, Channels: {channel}, Sample Rate: {sample_rate}")
-        # Read the 
+        # Read the
         cprint("blue", "Model Loaded")
+
+    def _use(self, model_name):
+        """Switch to a loaded engine. Between replies only"""
+        self.engine, self.engine_stream = self._loaded[model_name]
+        self.engine_name = model_name
 
     def warm_up(self):
         """Synthesize a throwaway sentence so CUDA kernels and caches are set up before the first real reply.
@@ -71,25 +94,47 @@ class TTSEngine:
         cprint("blue", f"Warmed up in {time.perf_counter() - start:.1f}s")
 
     def unload_engine(self):
-        if not hasattr(self, "engine"):
+        loaded = self.__dict__.pop("_loaded", {})
+        if not loaded:
             cprint("red", "No engine to unload.")
             return
+        for engine, stream in loaded.values():
+            self._shutdown(engine, stream)
+        del self.engine, self.engine_stream
+
+    @staticmethod
+    def _shutdown(engine, stream):
         try:
-            self.engine_stream.stop()
-            self.engine.shutdown()
+            stream.stop()
+            engine.shutdown()
         except Exception:
             pass
-    
-    def set_voice(self, name: str = ""):
-        """Speak as voices/<name> from now on, or the built-in voice for "". Blocks while a new clip is
-        encoded (~1s, once per clip). Only call it between replies (under the session lock).
-        Raises ValueError/FileNotFoundError for a bad name and AssertionError for a clip under 5 seconds."""
+
+    def set_voice(self, name: str = "", engine_name: str = "chatterbox"):
+        """Speak with `engine_name` as `name` ("" = its default). Blocks while a new clip encodes or Kokoro loads.
+        Between replies only (under the session lock). Raises ValueError/FileNotFoundError for a bad engine or name,
+        AssertionError for a clip under 5 seconds."""
         if not hasattr(self, "engine"):
             raise RuntimeError("No engine loaded.")
-        self.engine.use_voice(str(voice_path(name)) if name else None)
-        if name != self.voice_name:
-            cprint("blue", f"Voice: {name or 'built-in'}")
+        if engine_name not in ENGINES:
+            raise ValueError(f"No TTS engine called {engine_name!r}")
+        before = (self.engine_name, self.voice_name)
+        if engine_name == "kokoro":
+            from kokoro_engine import kokoro_voice
+            name = kokoro_voice(name)  # validate before switching
+            if "kokoro" not in self._loaded:
+                self.load_engine("kokoro", voice=name)
+            self._use("kokoro")
+            self.engine.set_voice(name)
+        else:
+            path = str(voice_path(name)) if name else None
+            if "chatterbox" not in self._loaded:
+                self.load_engine("chatterbox")
+            self._use("chatterbox")
+            self.engine.use_voice(path)
         self.voice_name = name
+        if (engine_name, name) != before:
+            cprint("blue", f"Voice: {engine_name}, {name or 'built-in'}")
 
     def _ensure_engine(func):
         """Decorator to ensure engine is loaded before running a function"""

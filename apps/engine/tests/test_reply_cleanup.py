@@ -210,3 +210,8 @@ def test_no_lora_field_when_server_has_none(tmp_path, monkeypatch):
     assert picker.lora() is None
     fake_server(picker, [])
     assert picker.lora(base=True) is None
+
+
+def test_no_tags_at_all_for_a_voice_that_cant_do_them():
+    f = VoiceTagFilter("Ohm", max_tags=0)
+    assert f.feed("[sigh] again? *laughs* what'd you hit") + f.flush() == " again?  what'd you hit"

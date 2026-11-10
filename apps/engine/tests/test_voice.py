@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 
 import controller.memory as memory_module
 import modules.tts.tts_module as tts_module
-from controller.memory import load_character, voice_file
+from controller.memory import load_character, voice_engine, voice_file
 from modules.tts.tts_module import TTSModule
 
 ROW = {"slug": "ohm", "name": "Ohm", "personality": "You are Ohm.", "configs": {}, "voice": {"file": "lance.wav"}}
@@ -58,3 +58,30 @@ def test_a_new_voice_on_the_card_is_picked_up_after_the_ttl(monkeypatch):
     rows.clear()  # NAS down: keep the voice we had
     now[0] += tts_module.VOICE_TTL
     assert tts.voice() == "lance.wav"
+
+
+# TTS engine per card
+
+KOKORO = {**ROW, "voice": {"engine": "kokoro", "preset": "am_michael"}}
+
+
+def test_the_card_says_which_engine_and_old_cards_are_chatterbox():
+    assert (voice_engine(KOKORO), voice_file(KOKORO)) == ("kokoro", "am_michael")
+    assert (voice_engine(ROW), voice_file(ROW)) == ("chatterbox", "lance.wav")  # older card
+    assert voice_engine({"voice": {"engine": "nonsense", "file": "x.wav"}}) == "chatterbox"
+    assert voice_file({"voice": {"engine": "kokoro"}}) is None  # Kokoro's default voice
+    assert voice_file({"voice": {"engine": "kokoro", "file": "lance.wav"}}) is None
+
+
+def test_load_character_brings_the_engine(monkeypatch):
+    monkeypatch.setattr(memory_module.memory, "get_character", lambda slug: KOKORO)
+    c = load_character("ohm")
+    assert (c["voice_engine"], c["voice"]) == ("kokoro", "am_michael")
+
+
+def test_every_reply_asks_for_the_engine_too_and_kokoro_has_no_tags(monkeypatch):
+    tts = TTSModule(SimpleNamespace(slug="ohm", name="Ohm", voice="am_michael", voice_engine="kokoro"))
+    url = parse_qs(urlparse(tts.ws_url()).query, keep_blank_values=True)
+    assert (url["engine"], url["voice"]) == (["kokoro"], ["am_michael"])
+    assert not tts.tags()
+    assert TTSModule(SimpleNamespace(slug="ohm", name="Ohm", voice=None)).tags()

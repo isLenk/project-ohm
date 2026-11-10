@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import APIRouter, Body, BackgroundTasks, HTTPException
+from fastapi import APIRouter, Body, BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from dependencies import cprint, session_lock
 from engine import engine
@@ -29,16 +29,16 @@ async def post_tts( model_name: str, voice: str):
 
 @router.get("/voice")
 async def get_voice():
-    """The clip in voices/ being spoken as, "" for the built-in voice."""
-    return {"file": engine.voice_name}
+    """The engine speaking and its voice"""
+    return {"engine": engine.engine_name, "file": engine.voice_name}
 
 @router.post("/voice")
-async def post_voice(file: str = ""):
-    """Speak as voices/<file> from now on ("" for the built-in voice). Encodes the clip now, so the
-    next reply doesn't wait on it. Waits for a reply in progress to finish first."""
+async def post_voice(file: str = "", engine_name: str = Query("chatterbox", alias="engine")):
+    """Speak as voices/<file> ("" for the built-in voice), or Kokoro's voice <file> with engine=kokoro.
+    Loads it now so the next reply doesn't wait. Waits for a reply in progress first."""
     async with session_lock:
         try:
-            await asyncio.to_thread(engine.set_voice, file)
+            await asyncio.to_thread(engine.set_voice, file, engine_name)
         except FileNotFoundError as e:
             raise HTTPException(404, str(e))
         except ValueError as e:
@@ -47,4 +47,4 @@ async def post_voice(file: str = ""):
             raise HTTPException(400, f"{file} is too short. A voice clip needs more than 5 seconds of speech.")
         except RuntimeError as e:
             raise HTTPException(503, str(e))
-    return {"file": engine.voice_name}
+    return {"engine": engine.engine_name, "file": engine.voice_name}

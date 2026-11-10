@@ -373,7 +373,7 @@ def load_character(slug: str, fallback: Optional[dict] = None, defaults: Optiona
     `defaults` fills in what a NAS character leaves out (model name, configs).
     Returns the same shape as constants.models[slug] plus its slug, the Curator model it runs on and
     its voice: slug, name, model, api_type, personality, configs, base_model_id, adapter_id,
-    voice (a clip in apps/tts/voices; None when unset, which is the TTS's built-in voice).
+    voice_engine and voice (see voice_file).
     """
     fallback = fallback or {}
     defaults = {**(defaults or {}), **fallback}
@@ -381,7 +381,8 @@ def load_character(slug: str, fallback: Optional[dict] = None, defaults: Optiona
     if not row:
         if fallback:
             print(f"[memory] Using character '{slug}' from config/constants.py.")
-            return {"slug": slug, "base_model_id": None, "adapter_id": None, "voice": None, **fallback}
+            return {"slug": slug, "base_model_id": None, "adapter_id": None, "voice": None, "voice_engine": "chatterbox",
+                    **fallback}
         raise RuntimeError(f"Character '{slug}' not found on the NAS and no local fallback exists.")
 
     configs = {k: v for k, v in (row.get("configs") or {}).items() if k != "ui"}  # ui = controller-only fields
@@ -396,12 +397,23 @@ def load_character(slug: str, fallback: Optional[dict] = None, defaults: Optiona
         # configs.ui.model: the Curator base model and LoRA adapter picked on the Characters page
         **ui_model(row),
         "voice": voice_file(row),
+        "voice_engine": voice_engine(row),
     }
 
 
+TTS_ENGINES = ("chatterbox", "kokoro")  # apps/tts/engine.ENGINES
+
+
+def voice_engine(row: Optional[dict]) -> str:
+    """characters.voice.engine; older cards are chatterbox"""
+    engine = ((row or {}).get("voice") or {}).get("engine")
+    return engine if engine in TTS_ENGINES else "chatterbox"
+
+
 def voice_file(row: Optional[dict]) -> Optional[str]:
-    """The reference clip a NAS character row speaks as (characters.voice.file), None for the built-in voice."""
-    return ((row or {}).get("voice") or {}).get("file") or None
+    """Chatterbox clip (voice.file) or Kokoro preset (voice.preset); None for the engine's default"""
+    voice = (row or {}).get("voice") or {}
+    return (voice.get("preset") if voice_engine(row) == "kokoro" else voice.get("file")) or None
 
 
 def format_memories(memories: list[dict]) -> str:

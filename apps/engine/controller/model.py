@@ -14,7 +14,8 @@ class ModelObject:
     def __init__(self, model, api_key="None", endpoint=DEFAULT_ENDPOINT):
         self.name = model["name"]
         self.slug = model.get("slug") or self.name.lower()  # the character's id on the NAS
-        self.voice = model.get("voice")  # clip in apps/tts/voices to speak as, None for the built-in voice
+        self.voice = model.get("voice")  # clip or Kokoro preset, None for the default
+        self.voice_engine = model.get("voice_engine") or "chatterbox"
 
         self.api_key = api_key
         self.endpoint = endpoint

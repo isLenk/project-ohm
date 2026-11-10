@@ -75,20 +75,23 @@ async def send_to_ws(websocket: fastapi.WebSocket):
         print("Send to ws task ended.")
 
 
-async def use_voice(name: str):
-    """Switch to the character's voice for this reply. A clip that can't be used falls back to the
-    built-in voice rather than leaving the last character's voice on."""
+async def use_voice(name: str, engine_name: str = "chatterbox"):
+    """Switch to the character's engine and voice. Falls back to the engine's default, then Chatterbox's"""
     try:
-        await asyncio.to_thread(engine.set_voice, name)
+        await asyncio.to_thread(engine.set_voice, name, engine_name)
     except Exception as e:
-        print(f"Can't use voice {name!r} ({e}), using the built-in voice.")
-        await asyncio.to_thread(engine.set_voice, "")
+        print(f"Can't use {engine_name} voice {name!r} ({e}), using its default voice.")
+        try:
+            await asyncio.to_thread(engine.set_voice, "", engine_name)
+        except Exception as e:
+            print(f"Can't use {engine_name} at all ({e}), using Chatterbox's built-in voice.")
+            await asyncio.to_thread(engine.set_voice, "", "chatterbox")
 
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: fastapi.WebSocket):
-    """?voice=<file in voices/> speaks the reply as that clip ("" for the built-in voice).
-    Without it, the voice set last is kept."""
+    """?voice=<file in voices/> speaks the reply as that clip ("" for the built-in voice), &engine=kokoro as that
+    Kokoro voice. Without ?voice=, the last engine and voice are kept."""
 
     await websocket.accept()
 
@@ -98,7 +101,8 @@ async def websocket_endpoint(websocket: fastapi.WebSocket):
         await asyncio.to_thread(engine.reset_stream)
         voice = websocket.query_params.get("voice")
         if voice is not None:
-            await use_voice(voice)  # instant unless the clip is new or was replaced
+            # instant unless the clip is new or Kokoro isn't loaded
+            await use_voice(voice, websocket.query_params.get("engine") or "chatterbox")
 
         send_to_ws_task = asyncio.create_task(send_to_ws(websocket))
         engine.feed_from_text_queue()

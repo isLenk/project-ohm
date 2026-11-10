@@ -26,6 +26,20 @@ Examples (most have no tag). Each is one message and the one reply you'd say bac
 - "and then i walked straight into the glass door in front of everyone" gets something like: [laugh] no way. tell me nobody filmed it.
 """
 
+# VOICE_PROMPT for a TTS without tags (Kokoro)
+VOICE_PROMPT_PLAIN = """
+You're talking out loud in voice chat right now, so everything you write is read out by a voice.
+Write only the words you'd say: no tags in square brackets and no actions in asterisks like *gasp* or *sighs*.
+The voice can't make those sounds and would read them out as words.
+You can spell out small noises like "pfft", "ugh", "hmm", or "haha".
+Examples. Each is one message and the one reply you'd say back:
+- "yo what's up" gets something like: nothing much. you?
+- "i just failed my driving test again" gets something like: ugh, again? what'd you hit this time?
+- "should i get the blue one or the black one" gets something like: black. blue's gonna look dumb in a week.
+- "i ate a whole pizza by myself" gets something like: respect, honestly.
+- "and then i walked straight into the glass door in front of everyone" gets something like: haha no way. tell me nobody filmed it.
+"""
+
 
 def strip_voice_tags(text: str) -> str:
     """Remove expression tags (for text chat, where they'd show up literally)."""

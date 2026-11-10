@@ -123,3 +123,12 @@ def test_nothing_extra_means_no_note(chat, monkeypatch):
     monkeypatch.setattr(openai_module.mood, "line", lambda: "")
     sent = chat.create("Lenk: hi", glossary=False)["messages"]
     assert sent[-1] == {"role": "user", "content": "Lenk: hi"}
+
+
+def test_a_voice_without_tags_isnt_told_about_them(chat, monkeypatch):
+    monkeypatch.setattr(openai_module.mood, "tag_hint", lambda: "If a sound fits, lean toward [sigh].")
+    tagged = chat.create("Lenk: ugh", voice=True, glossary=False)["messages"]
+    assert "[sigh]" in tagged[0]["content"] and "lean toward [sigh]" in tagged[-1]["content"]
+    plain = chat.create("Lenk: ugh", voice=True, glossary=False, tags=False)["messages"]
+    assert "no tags in square brackets" in plain[0]["content"]
+    assert "[sigh]" not in plain[0]["content"] and "lean toward" not in plain[-1]["content"]

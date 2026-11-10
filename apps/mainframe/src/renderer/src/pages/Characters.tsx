@@ -15,6 +15,14 @@ import CharacterCard, { ICONS, hasImage } from '../components/CharacterCard'
 import { dialog, followJob, get, post, put } from '../curator/api'
 import { message, useCharacters, usePoll } from '../lib/ohm'
 import { Loading, useBusy } from '../components/Loader'
+import {
+  ENGINES,
+  KOKORO_DEFAULT,
+  KOKORO_VOICES,
+  engineOf,
+  sameVoice,
+  voiceName
+} from '../lib/voices'
 
 // Crops an uploaded image to a 256px square so it fits in the character record.
 const toIcon = async (file: File) => {
@@ -127,16 +135,23 @@ const Characters = () => {
       : 'llama-server did not come back. Check its window.'
   }
 
-  /* Gets the TTS server speaking as c now, so their first voice reply doesn't wait on the clip
-     being encoded. Returns what to tell the user about it. */
+  /* Preloads c's voice so their first reply doesn't wait on it. Returns what to tell the user. */
   const switchVoice = async (c, relabel) => {
-    const file = c.voice?.file ?? ''
-    relabel(file ? `Loading ${c.name}'s voice…` : `Switching to the built-in voice…`)
+    const engine = engineOf(c.voice)
+    const file = voiceName(c.voice)
+    relabel(
+      engine === 'kokoro'
+        ? `Loading Kokoro for ${c.name}…`
+        : file
+          ? `Loading ${c.name}'s voice…`
+          : `Switching to the built-in voice…`
+    )
     try {
-      await window.api.loadVoice(file)
+      await window.api.loadVoice({ engine, file })
       return '' // or the TTS server isn't up: the engine loads it when it is
     } catch (e) {
-      return `Couldn't load ${c.name}'s voice: ${message(e)} They'll use the built-in voice.`
+      const fallback = engine === 'kokoro' ? "Kokoro's default voice" : 'the built-in voice'
+      return `Couldn't load ${c.name}'s voice: ${message(e)} They'll use ${fallback}.`
     }
   }
 
@@ -200,9 +215,9 @@ const Characters = () => {
       const inPlay = before?.status === 'Active'
       const switched = inPlay && ids(before) !== ids(saved) ? await switchModel(saved, relabel) : ''
       // The running engine re-reads the card's voice every 30 seconds; this checks the clip works
-      // and has it encoded by then
+      // and has it loaded by then
       const voiced =
-        inPlay && (before?.voice?.file ?? '') !== (saved.voice?.file ?? '')
+        inPlay && !sameVoice(before?.voice, saved.voice)
           ? (await switchVoice(saved, relabel)) ||
             `${saved.name}'s new voice is used from their next reply (within 30 seconds).`
           : ''
@@ -237,8 +252,20 @@ const Characters = () => {
 
   const pickVoice = (value) => {
     if (value === IMPORT) return voiceInput.current?.click()
-    edit({ voice: value ? { file: value } : {} })
+    const { file: _, ...rest } = draft.voice ?? {}
+    edit({ voice: value ? { ...rest, file: value } : rest })
   }
+
+  // Keeps the other engine's pick for switching back
+  const pickEngine = (engine) =>
+    edit({
+      voice: {
+        ...draft.voice,
+        engine,
+        ...(engine === 'kokoro' && !draft.voice?.preset ? { preset: KOKORO_DEFAULT } : {})
+      }
+    })
+  const pickPreset = (preset) => edit({ voice: { ...draft.voice, preset } })
 
   const importVoice = (file: File) =>
     run(`Adding ${file.name}…`, async () => {
@@ -250,7 +277,7 @@ const Characters = () => {
         )
       const saved = await window.api.importVoice(file.name, bytes)
       setVoices(await window.api.listVoices())
-      setDraft((d) => ({ ...d, voice: { file: saved } }))
+      setDraft((d) => ({ ...d, voice: { ...d.voice, file: saved } }))
     })
 
   const attachProject = async () => {
@@ -384,25 +411,52 @@ const Characters = () => {
                 <span className="text-xs text-muted">What they sound like in voice calls</span>
               </div>
               <label className="flex flex-col gap-1.5 text-[12.5px] text-soft">
-                Voice clip
-                <Select value={draft.voice?.file ?? ''} onChange={pickVoice} disabled={!voices}>
-                  <option value="">Built-in voice</option>
-                  {draft.voice?.file && voices && !voices.includes(draft.voice.file) && (
-                    <option value={draft.voice.file}>
-                      {draft.voice.file} (not in apps/tts/voices)
-                    </option>
-                  )}
-                  {(voices ?? []).map((v) => (
-                    <option key={v} value={v}>
-                      {v}
+                Voice engine
+                <Select value={engineOf(draft.voice)} onChange={pickEngine}>
+                  {ENGINES.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.label}
                     </option>
                   ))}
-                  <option value={IMPORT}>Import a voice clip…</option>
                 </Select>
                 <span className="text-xs text-muted">
-                  5 to 10 seconds of one person talking clearly, with no music or background noise.
+                  {ENGINES.find((e) => e.id === engineOf(draft.voice)).about}
                 </span>
               </label>
+              {engineOf(draft.voice) === 'kokoro' ? (
+                <label className="flex flex-col gap-1.5 text-[12.5px] text-soft">
+                  Kokoro voice
+                  <Select value={voiceName(draft.voice)} onChange={pickPreset}>
+                    {KOKORO_VOICES.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+              ) : (
+                <label className="flex flex-col gap-1.5 text-[12.5px] text-soft">
+                  Voice clip
+                  <Select value={draft.voice?.file ?? ''} onChange={pickVoice} disabled={!voices}>
+                    <option value="">Built-in voice</option>
+                    {draft.voice?.file && voices && !voices.includes(draft.voice.file) && (
+                      <option value={draft.voice.file}>
+                        {draft.voice.file} (not in apps/tts/voices)
+                      </option>
+                    )}
+                    {(voices ?? []).map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                    <option value={IMPORT}>Import a voice clip…</option>
+                  </Select>
+                  <span className="text-xs text-muted">
+                    5 to 10 seconds of one person talking clearly, with no music or background
+                    noise.
+                  </span>
+                </label>
+              )}
               <input
                 ref={voiceInput}
                 type="file"

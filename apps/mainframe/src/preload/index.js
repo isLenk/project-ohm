@@ -9,7 +9,7 @@ const api = {
   deleteCharacter: (characterId) => ipcRenderer.invoke('delete-character', characterId),
   listVoices: () => ipcRenderer.invoke('list-voices'),
   importVoice: (name, bytes) => ipcRenderer.invoke('import-voice', name, bytes),
-  loadVoice: (file) => ipcRenderer.invoke('load-voice', file),
+  loadVoice: (voice) => ipcRenderer.invoke('load-voice', voice),
   openDialog: (method, params) => {
     return ipcRenderer.invoke('dialog', method, params)
   },

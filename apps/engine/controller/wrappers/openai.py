@@ -8,7 +8,7 @@ import openai
 
 import brain
 
-from config.constants import VOICE_PROMPT
+from config.constants import VOICE_PROMPT, VOICE_PROMPT_PLAIN
 from controller.adapters import Adapters
 from controller.memory import format_people, memory
 from modules.mood.mood import mood
@@ -89,12 +89,13 @@ class OpenAIModel:
 
     def create(self, prompt, system=None, assistant="aight lol", related_memories=None, history=None, voice=False,
                web_results=None, glossary=True, base=False, people=None, images=None, screen=None, summary=None,
-               seen=None, **kwargs):
+               seen=None, tags=True, **kwargs):
         """One chat request. Replies run with the character's adapter; base=True (utility calls) without.
         images: data URLs (utils/Vision.py) of pictures sent with `prompt`.
         screen: a screenshot data URL (modules/vision/screen.py) of the screen being shared with him.
         seen: the line that goes with the screenshot, the window in front and the text on it (screen.look).
         summary: what's been going on in the chat lately (controller/brief.py).
+        tags: (voice) the TTS can do [sigh] etc. (tts_module.TAGS).
         A cloud description of the screen (modules/vision/describe.py, opt-in) goes in while it's fresh.
 
         The system prompt is only the personality (and the voice prompt), the way the LoRA was trained, and the
@@ -106,9 +107,9 @@ class OpenAIModel:
             happening = describe_module.current()
             system = self.system.strip()
             if voice:
-                system += "\n\n" + VOICE_PROMPT.format(name=self.name).strip()
+                system += "\n\n" + (VOICE_PROMPT if tags else VOICE_PROMPT_PLAIN).format(name=self.name).strip()
             # How he feels right now (modules/mood), one line at most; the tag hint only means something out loud
-            feeling = " ".join(s for s in (mood.line(), mood.tag_hint() if voice else "") if s)
+            feeling = " ".join(s for s in (mood.line(), mood.tag_hint() if voice and tags else "") if s)
             if feeling:
                 context.append(feeling)
         if glossary:

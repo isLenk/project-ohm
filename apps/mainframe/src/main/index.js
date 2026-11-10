@@ -140,10 +140,10 @@ app.whenReady().then(() => {
   ipcMain.handle('add-character', (event, character) => addCharacter(character))
   ipcMain.handle('update-character', (event, character) => updateCharacter(character))
   ipcMain.handle('delete-character', (event, characterId) => deleteCharacter(characterId))
-  // Voice clips characters speak as (see tts.js)
+  // Voices (see tts.js)
   ipcMain.handle('list-voices', () => listVoices())
   ipcMain.handle('import-voice', (event, name, bytes) => importVoice(name, bytes))
-  ipcMain.handle('load-voice', (event, file) => loadVoice(file))
+  ipcMain.handle('load-voice', (event, voice) => loadVoice(voice))
 
   ipcMain.handle('dialog', async (event, method, params) => {
     return dialog[method](params)

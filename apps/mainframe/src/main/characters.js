@@ -9,8 +9,7 @@
    `picture` is a data: URL when the user uploaded one; otherwise the card shows `icon`.
    `model` is { base_model_id, adapter_id, ohm_path }: the base and LoRA from the curator's
    model registry, and the curator project the LoRA is trained from. All optional.
-   `voice` is { file }: a reference clip in apps/tts/voices to speak as (see voices.js);
-   {} is the TTS's built-in voice.
+   `voice` is { engine, file, preset } (see renderer/src/lib/voices.ts).
    On the NAS, `id` is the character slug ('ohm'), `description` is the personality,
    `voice` is its own column (the engine reads it from there), and
    created/status/picture/icon/model live in configs.ui.
