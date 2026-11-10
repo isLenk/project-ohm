@@ -19,8 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import (conversations, embeddings, export, feed, gpu, importer, jobs, llm, memories, model_links, names, reflect,
-               search, terms, threads)
+from . import (conversations, curate, embeddings, export, feed, gpu, importer, jobs, llm, memories, model_links, names,
+               reflect, search, terms, threads)
 from .config import MODELS_DIR, PORT, TRAIN_SIMULATE
 from .errors import ApiError
 from .project import Project, require_project, state
@@ -404,6 +404,18 @@ def conversations_approve_bulk(b: BulkBody):
     with p.tx() as conn:
         out = conversations.approve_many(conn, b.ids)
     return dirty(out)  # after the commit, which is what marks the project dirty
+
+
+class CurateBody(BaseModel):
+    criteria: dict = {}
+    approve: bool = True  # False: only return the kept ids
+
+
+@app.post("/conversations/curate")
+def conversations_curate(b: CurateBody):
+    """Background job: approve the bulk candidates the brain's curate role keeps"""
+    p = require_project()
+    return jobs.start("curate", lambda job: curate.run(p, job, b.criteria, b.approve))
 
 
 @app.post("/conversations/unapprove-bulk")

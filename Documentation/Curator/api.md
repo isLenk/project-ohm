@@ -107,6 +107,7 @@ The UI pushes `inverse` onto its undo stack. Ctrl+Z replays it.
 | POST | `/conversations/split` | `{ before_message_id }` | "Split here" in the Raw view |
 | POST | `/conversations/{id}/merge-up` | — | "Merge with above" |
 | GET | `/conversations/candidates` | criteria as query params, see below | Unapproved, unarchived conversations good enough to approve in bulk |
+| POST | `/conversations/curate` | `{ criteria?, approve? }` | job (`curate.py`): of the conversations passing the bulk-approve `criteria`, the brain's `curate` role keeps the ones that show how the group talks (banter, opinions, jokes) and approves them; `approve: false` only decides. Names are masked on cloud backends. Result `{ read, approved, kept: [ids], left_out, unanswered, skipped_by_criteria, backend, left_out_why }` |
 | POST | `/conversations/approve-bulk` | `{ ids: [...] }` | Approve each like `approve` with `confirm: true`, in one transaction. Returns `{ approved: [ids], skipped: [ids], accepted: [restore...], dirty }`. Already approved, archived or missing ids are skipped |
 | POST | `/conversations/unapprove-bulk` | `{ ids, accepted }` | Undo approve-bulk: send back its `approved` and `accepted`. Approval comes off and accepted arrows go back to suggestions, except arrows changed since. Returns `{ unapproved: [ids], restored, dirty }` |
 
