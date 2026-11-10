@@ -176,6 +176,24 @@ def test_llama_command_swaps_companions_with_the_model(tmp_path):
     assert same[same.index("--mmproj") + 1] == "my-own-proj.gguf"
 
 
+def test_twelve_b_is_trainable_and_needs_more_vram(tmp_path):
+    from curator_service.app.registry import describe_gguf
+    from curator_service.app.train import runs
+    d = describe_gguf(tmp_path / "gemma-4-12b-it-Q5_K_M.gguf")
+    assert d["hf_path"] == "unsloth/gemma-4-12b-it" and not d["different_base"] and d["quant"] == "Q5_K_M"
+    # QAT build: Google's QAT weights, a different base
+    d = describe_gguf(tmp_path / "Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf")
+    assert d["hf_path"] == "google/gemma-4-12B-it-qat-q4_0-unquantized" and d["different_base"] and d["quant"] == "Q4_K_M"
+    assert describe_gguf(tmp_path / "Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q5_K_M.gguf")["hf_path"] == "unsloth/gemma-4-E4B-it"
+    def sized(name, gb):  # sparse
+        with open(tmp_path / name, "wb") as f:
+            f.truncate(int(gb * 1024**3))
+        return {"gguf_path": str(tmp_path / name)}
+    assert runs.need_vram(sized("e4b.gguf", 5.37)) == 11.4
+    assert runs.need_vram(sized("12b.gguf", 7.84)) == 13.8
+    assert runs.need_vram(None) == 11.0
+
+
 def test_default_llama_command(tmp_path):
     snap = main.gpu.default_llama(str(tmp_path / "m.gguf"), [str(tmp_path / "a.gguf")])
     cmd = snap["cmdline"]

@@ -91,9 +91,9 @@ const SECTIONS = [
       [
         'CURATOR_TRAIN_VRAM_GB',
         'Training VRAM budget (GB)',
-        'Free VRAM a training run needs',
+        'Free VRAM a training run needs. Empty: worked out from the model’s size (~11 for E4B, ~14 for 12B)',
         'text',
-        '11'
+        'auto'
       ],
       [
         'CURATOR_TRAIN_SIMULATE',

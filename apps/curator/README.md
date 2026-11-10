@@ -35,7 +35,7 @@ The constraint keeps pip from swapping CUDA torch for the CPU build.
 | `LLAMA_CPP_DIR` | `<repo>\..\llama.cpp` | Holds `convert_lora_to_gguf.py` and `models\` |
 | `CURATOR_LLM_URL` | `http://127.0.0.1:5000/v1` | llama-server, used to extract memories |
 | `MEMORY_API_URL`, `MEMORY_API_KEY` | | Kept memories are synced here |
-| `CURATOR_TRAIN_VRAM_GB` | 11 | VRAM a run needs before it starts. Measure it on the real card. |
+| `CURATOR_TRAIN_VRAM_GB` | 6 GB over the base model's GGUF size (~11 for E4B, ~14 for 12B) | VRAM a run needs before it starts. Measure it on the real card. |
 | `CURATOR_TRAIN_PYTHON` | `%APPDATA%\ohm-curator\train-venv` if it exists, else the service's Python | Python that runs training (needs `requirements-train.txt`) |
 | `CURATOR_TRAIN_SIMULATE` | | Set it to `1` to fake training runs, for working on the UI without a GPU |
 

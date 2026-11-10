@@ -27,6 +27,16 @@ DEFAULT_CONFIG = {
 _procs: dict[str, subprocess.Popen] = {}
 
 
+def need_vram(base: Optional[dict]) -> float:
+    """Rough VRAM for a QLoRA run: the GGUF's size plus 6 GB"""
+    if TRAIN_VRAM_GB:
+        return TRAIN_VRAM_GB
+    try:
+        return round(6 + Path(base["gguf_path"]).stat().st_size / 1024**3, 1)
+    except (OSError, TypeError, KeyError):
+        return 11.0
+
+
 def emit(run_dir: Path, event: str, **data) -> None:
     with open(run_dir / "events.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps({"event": event, "t": time.time(), **data}) + "\n")
@@ -67,7 +77,7 @@ def preflight(project, registry, config: dict) -> dict:
     prev = export.preview(project, speakers=config.get("speakers"),
                           max_len=config.get("max_len") or export.DEFAULT_MAX_LEN)
     status = gpu.status()
-    need = TRAIN_VRAM_GB
+    need = need_vram(base)
     return {
         "base_model": base, "trainable": bool(base and base["hf_path"]), "simulate": TRAIN_SIMULATE,
         "export": prev, "gpu": status, "need_gb": need,
@@ -92,9 +102,10 @@ def start(project, registry, config: Optional[dict], stop_pids: list[int]) -> di
         if status is None:
             raise ApiError(409, "no_gpu", "No NVIDIA GPU found (nvidia-smi isn't available).")
         freed = sum(p["used_gb"] for p in status["processes"] if p["pid"] in stop_pids)
-        if status["free_gb"] + freed < TRAIN_VRAM_GB:
+        need = need_vram(base)
+        if status["free_gb"] + freed < need:
             raise ApiError(409, "not_enough_vram", "Not enough free VRAM to train.",
-                           free_gb=status["free_gb"], need_gb=TRAIN_VRAM_GB, processes=status["processes"])
+                           free_gb=status["free_gb"], need_gb=need, processes=status["processes"])
 
     data = export.build(project, speakers=config.get("speakers"), max_len=config["max_len"])
     if not data["examples"]:

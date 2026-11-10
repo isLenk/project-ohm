@@ -21,8 +21,11 @@ CHUNK = 64 * 1024 * 1024
 QUANT_RE = re.compile(r"(?:^|[-_.])((?:I?Q\d[\w]*)|F16|BF16|F32)(?=\.gguf$)", re.IGNORECASE)
 
 # Known GGUF-only finetunes and the HF weights to train on instead. See training.md section 3.
+# The last match wins, so QAT overrides plain 12B. "-?": some names have no hyphen after Gemma.
 TRAINABLE_BASES = [
-    (re.compile(r"gemma-4-e4b", re.IGNORECASE), "unsloth/gemma-4-E4B-it"),
+    (re.compile(r"gemma-?4-e4b", re.IGNORECASE), "unsloth/gemma-4-E4B-it"),
+    (re.compile(r"gemma-?4-12b", re.IGNORECASE), "unsloth/gemma-4-12b-it"),
+    (re.compile(r"gemma-?4-12b.*qat", re.IGNORECASE), "google/gemma-4-12B-it-qat-q4_0-unquantized"),
 ]
 
 

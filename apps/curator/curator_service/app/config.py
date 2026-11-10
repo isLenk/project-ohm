@@ -45,8 +45,8 @@ PORT = int(os.getenv("CURATOR_PORT", "8200"))
 # Set CURATOR_TRAIN_SIMULATE=1 to fake a training run (for working on the UI without a GPU).
 TRAIN_SIMULATE = os.getenv("CURATOR_TRAIN_SIMULATE") == "1"
 
-# Rough VRAM a QLoRA run on Gemma 4 E4B needs. Measure on the real card and adjust.
-TRAIN_VRAM_GB = float(os.getenv("CURATOR_TRAIN_VRAM_GB", "11"))
+# VRAM a QLoRA run needs. Unset: estimated from the model size (runs.need_vram)
+TRAIN_VRAM_GB = float(os.environ["CURATOR_TRAIN_VRAM_GB"]) if os.getenv("CURATOR_TRAIN_VRAM_GB") else None
 
 # Training runs in its own venv, because Unsloth's torch/numpy/transformers break the main one.
 # Uses CURATOR_TRAIN_PYTHON, then <data dir>/train-venv if it exists, then this interpreter.

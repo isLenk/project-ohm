@@ -148,7 +148,7 @@ data: {"status":"failed","error":"CUDA out of memory at step 3","log_tail":"..."
 
 `POST /train/runs/{id}/cancel`: send SIGTERM (`CTRL_BREAK_EVENT` on Windows) to the subprocess. Wait 10 s, then kill it. Set `status='cancelled'`. Leave partial checkpoints in the run folder, but do not register an adapter.
 
-Only one run at a time. The GPU is also used by llama-server, TTS and STT, so with the bot live a 12–16 GB card won't fit a run. Before starting, the Train modal reads `nvidia-smi`. If free VRAM is under `CURATOR_TRAIN_VRAM_GB`, it lists the GPU processes and you tick which to pause.
+Only one run at a time. The GPU is also used by llama-server, TTS and STT, so with the bot live a 12–16 GB card won't fit a run. Before starting, the Train modal reads `nvidia-smi`. If free VRAM is under what the run needs (`CURATOR_TRAIN_VRAM_GB`, or when that's unset, 6 GB over the base model's GGUF size: ~11 GB for E4B, ~14 GB for Gemma 4 12B), it lists the GPU processes and you tick which to pause.
 
 - **llama-server:** its command line is saved, and it restarts after the run with every adapter for that model loaded. The new adapter is switched on through `/lora-adapters`.
 - **Other processes (TTS, the bot):** they are stopped and listed. You start them again yourself, because relaunching them headless would hide their consoles.
@@ -187,7 +187,7 @@ So `PUT /models/active` works like this:
 
 Update `executables/_run_llama.cmd`, or better, have the controller build the command from the registry.
 
-**Switching base models** (E4B and Gemma 4 12B, say) restarts llama-server on the other model with that model's own vision projector and MTP draft head (`gpu.companions`). A file goes with a model if its name contains the model's name without the quant (`mmproj-Gemma-4-E4B-…-f16.gguf`), or if the model has a folder to itself (`models/gemma-4-12b/` holding `mmproj-F16.gguf` and `mtp-gemma-4-12b-it.gguf`). With an MTP head, `--spec-type draft-mtp -md <mtp> -ngld 99` is added: on a 3090 it took the 12B from ~40 to 66–110 tokens/s.
+**Switching base models** (E4B and Gemma 4 12B, say) restarts llama-server on the other model with that model's own vision projector and MTP draft head (`gpu.companions`). A file goes with a model if its name contains the model's name without the quant (`mmproj-Gemma-4-E4B-…-f16.gguf`), or if the model has a folder to itself (`models/gemma-4-12b/` holding `mmproj-F16.gguf` and `mtp-gemma-4-12b-it.gguf`). With an MTP head, `--spec-type draft-mtp -md <mtp> -ngld 99` is added: on a 3090 it took the 12B from ~40 to 66–110 tokens/s. Each base has its own adapters, so a new base runs without one until it's trained. Training uses the selected base's Hugging Face weights (`TRAINABLE_BASES` in `registry.py`: `unsloth/gemma-4-E4B-it`, `unsloth/gemma-4-12b-it`, and for QAT builds such as `Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced`, which ships GGUF only, `google/gemma-4-12B-it-qat-q4_0-unquantized`, the weights it was made from).
 
 ## 6. Scoring an adapter
 
