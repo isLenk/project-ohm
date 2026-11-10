@@ -11,7 +11,7 @@ from . import textless
 
 APPLICATION_ID = 0x4F484D31  # 'OHM1'
 
-PROJECT_VERSION = 8
+PROJECT_VERSION = 9
 
 # The model's suggested meaning for a term (terms.py suggest), as JSON. Added in 6 -> 7.
 TERMS_SUGGESTION = "ALTER TABLE terms ADD COLUMN suggestion TEXT;\n"
@@ -29,10 +29,17 @@ REPLY_CHECKS_TABLE = """
 CREATE TABLE IF NOT EXISTS reply_checks (
   reply_ids   TEXT PRIMARY KEY,               -- the Ohm turn's message ids, comma-joined (export.reply_key)
   answers     INTEGER NOT NULL,               -- 1 if it answers the line before it
+  personal    INTEGER,                        -- 1 if about one person's own life; NULL = not asked (8 -> 9)
   judge       TEXT NOT NULL,                  -- what judged: the Qwen model's file name (no .gguf) or a brain backend (codex)
   checked_at  INTEGER NOT NULL
 );
 """
+
+def _add_personal(conn) -> None:
+    # New files' reply_checks may already have it
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(reply_checks)")}
+    if "personal" not in cols:
+        conn.execute("ALTER TABLE reply_checks ADD COLUMN personal INTEGER")
 
 # General terminology (terms.py). Shared by new projects and the 5 -> 6 migration.
 TERMS_TABLE = """
@@ -260,6 +267,8 @@ PROJECT_MIGRATIONS: list[Union[str, Callable]] = [
     _add_suggestion,
     # 7 -> 8: the judge's verdicts on trained replies.
     "BEGIN;" + REPLY_CHECKS_TABLE + "COMMIT;",
+    # 8 -> 9: the judge also says whether a reply only fits one real person.
+    _add_personal,
 ]
 
 DEFAULT_SETTINGS = {

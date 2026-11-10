@@ -126,7 +126,7 @@ def items(run_dir: Path, seed: int) -> list[dict]:
     return out
 
 
-def transcript(context: list[dict]) -> str:
+def transcript(context: list[dict], chars: int = CONTEXT_CHARS) -> str:
     """The chat as the judge reads it: user turns are already "Name: text", Ohm's are labeled here."""
     lines = []
     for m in context:
@@ -135,8 +135,8 @@ def transcript(context: list[dict]) -> str:
         elif m["role"] == "assistant":
             lines.append("\n".join(("Ohm: " if i == 0 else "") + t for i, t in enumerate(m["content"].split("\n"))))
     text = "\n".join(lines)
-    if len(text) > CONTEXT_CHARS:
-        text = text[-CONTEXT_CHARS:]
+    if len(text) > chars:
+        text = text[-chars:]
         text = text[text.find("\n") + 1:] if "\n" in text else text
     return text
 

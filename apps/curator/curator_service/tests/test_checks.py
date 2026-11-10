@@ -53,10 +53,10 @@ def test_judge_verdicts_leave_non_answers_out_of_training(project, judge, monkey
     late = next(it for it in todo if it["reply"].startswith("Mb I was out"))
     assert late["context"][-1]["content"].endswith("we running barotrauma this night? @Ohm")
 
-    calls = judge(lambda t: {"n": 1, "answers": not _reply(t).startswith("Mb I was out")})
+    calls = judge(lambda t: {"n": 1, "answers": not _reply(t).startswith("Mb I was out"), "personal": False})
     job = FakeJob()
     counts = checks.run(project, None, todo, job)
-    assert counts == {"answers": len(todo) - 1, "does_not": 1, "unreadable": 0}
+    assert counts == {"answers": len(todo) - 1, "does_not": 1, "personal": 0, "unreadable": 0}
     assert job.notes[-1][:2] == (len(todo), len(todo))
     assert calls[0]["role"] == "judge" and calls[0]["size"] == 30 and calls[0]["workers"] == 3
 
@@ -85,7 +85,8 @@ def test_qwen_judge_swaps_the_gpu(project, monkeypatch):
     todo = checks.pending(project)
     seen = []
     monkeypatch.setattr(brain, "needs_gpu_swap", lambda role: True)
-    monkeypatch.setattr(brain, "run_packed", lambda items, *a, **k: [{"answers": True} for _ in items])
+    monkeypatch.setattr(brain, "run_packed", lambda items, *a, **k: [{"answers": True, "personal": False}
+                                                                     for _ in items])
     monkeypatch.setattr(checks.gpu, "running_llama", lambda: {"pid": 1, "cmdline": ["llama-server"]})
     monkeypatch.setattr(checks.gpu, "stop", lambda pids: seen.append(("stop", pids)))
     monkeypatch.setattr(evaluate, "_start_judge", lambda: seen.append("judge") or 99)
@@ -96,7 +97,28 @@ def test_qwen_judge_swaps_the_gpu(project, monkeypatch):
 
 def test_nothing_to_check_doesnt_start_the_judge(project, monkeypatch):
     monkeypatch.setattr(evaluate, "_start_judge", lambda: (_ for _ in ()).throw(AssertionError("started")))
-    assert checks.run(project, None, [], FakeJob()) == {"answers": 0, "does_not": 0, "unreadable": 0}
+    assert checks.run(project, None, [], FakeJob()) == {"answers": 0, "does_not": 0, "personal": 0, "unreadable": 0}
+
+
+def test_personal_replies_are_left_out_and_old_checks_asked_again(project, judge):
+    with project.tx() as conn:
+        conversations.approve(conn, 1, confirm=True)
+    todo = checks.pending(project)
+    first = todo[0]["reply"]
+    # An old verdict without "personal" is asked again
+    with project.tx() as conn:
+        conn.execute("INSERT INTO reply_checks (reply_ids, answers, judge, checked_at) VALUES (?, 1, 'codex', 0)",
+                     (todo[0]["key"],))
+    assert len(checks.pending(project)) == len(todo)
+    judge(lambda t: {"n": 1, "answers": True, "personal": _reply(t) == first})
+    counts = checks.run(project, None, checks.pending(project), FakeJob())
+    assert counts["personal"] == 1 and counts["answers"] == len(todo)
+    after = export.build(project)
+    assert after["dropped"]["about their own life (judge)"] == 1
+    assert not any(m["content"] == first for e in after["examples"] for m in e["messages"] if m["role"] == "assistant")
+    assert checks.pending(project) == []
+    with project.lock:
+        assert project.conn.execute("SELECT COUNT(*) FROM reply_checks WHERE personal IS NULL").fetchone()[0] == 0
 
 
 def test_no_judge_is_a_409(monkeypatch):

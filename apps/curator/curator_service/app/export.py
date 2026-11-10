@@ -186,7 +186,8 @@ def _answered_last(heard: list[tuple[str, dict]], parent: str) -> list[tuple[str
 
 def _rotation(conv: dict, runs: list[dict], target: str, people: dict, attached: dict, system: str,
               budget: int, dropped: dict, parents: dict, labels: re.Pattern, segment: int = 0,
-              checks: Optional[dict] = None, repeats: Optional[dict] = None) -> list[dict]:
+              checks: Optional[dict] = None, repeats: Optional[dict] = None,
+              personal: Optional[set] = None) -> list[dict]:
     """One conversation replayed as `target`: their replies become Ohm's turns.
 
     parents: {message id: id of the message its reply arrow points to, None for a topic start}.
@@ -264,6 +265,9 @@ def _rotation(conv: dict, runs: list[dict], target: str, people: dict, attached:
         if (checks or {}).get(key) == 0:
             dropped["doesn't answer (judge)"] += 1
             continue
+        if key in (personal or ()):
+            dropped["about their own life (judge)"] += 1  # Ohm would claim their life
+            continue
         turns[-1]["lines"] = _answered_last(heard, parent)
         turns.append({"role": "assistant", "content": content, "ids": [m["id"] for m in ok]})
 
@@ -335,7 +339,7 @@ def build(project, speakers: Optional[list[str]] = None, max_len: int = DEFAULT_
     gap_ms = settings["split_gap_ms"]
     examples = []
     dropped = {"excluded": 0, "unattached": 0, "starts a topic": 0, "answers something older": 0,
-               "doesn't answer (judge)": 0, "short": 0, "too long": 0, "too many lines": 0, "links or media": 0, "answers a link or picture": 0, "no words": 0,
+               "doesn't answer (judge)": 0, "about their own life (judge)": 0, "short": 0, "too long": 0, "too many lines": 0, "links or media": 0, "answers a link or picture": 0, "no words": 0,
                "speaker labels": 0, "bots": 0, "repeated": 0, "capped": 0}
     with project.lock:
         convs = [dict(r) for r in conn.execute(
@@ -343,6 +347,8 @@ def build(project, speakers: Optional[list[str]] = None, max_len: int = DEFAULT_
         ).fetchall()]
         snap = conversations._snapshot(conn, convs)
         checks = {r[0]: r[1] for r in conn.execute("SELECT reply_ids, answers FROM reply_checks")}
+        personal = {r[0] for r in conn.execute("SELECT reply_ids FROM reply_checks WHERE personal = 1")}
+        asked_both = {r[0] for r in conn.execute("SELECT reply_ids FROM reply_checks WHERE personal IS NOT NULL")}
         people = _people(conn)
         # A reply line that starts like "Lenk:" or "Ohm:" is a transcript, not a message
         names = sorted({n for p in people.values() for n in [p["label"], *p["names"]] if n} | {TARGET_NAME},
@@ -385,14 +391,14 @@ def build(project, speakers: Optional[list[str]] = None, max_len: int = DEFAULT_
                     if speakers and target not in speakers:
                         continue
                     examples += _rotation(conv, runs, target, people, attached, system, budget, dropped,
-                                          parents, labels, seg, checks, repeats)
+                                          parents, labels, seg, checks, repeats, personal)
 
         pre_cap = _shares(examples)
         seed = hashlib.sha256(json.dumps([e["id"] for e in examples]).encode()).hexdigest()
         examples, dropped["capped"] = _cap(examples, settings["author_cap"], seed)
         # Chunks overlap, so a turn can be in two examples; count each once
         keys = {reply_key(ids) for e in examples for ids in e["turn_ids"]}
-        tally = {"checked": sum(k in checks for k in keys), "unchecked": sum(k not in checks for k in keys)}
+        tally = {"checked": sum(k in asked_both for k in keys), "unchecked": sum(k not in asked_both for k in keys)}
 
     lines = [json.dumps(e, ensure_ascii=False) for e in examples]
     sha = hashlib.sha256("\n".join(lines).encode()).hexdigest()
