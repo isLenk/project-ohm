@@ -292,7 +292,7 @@ export default function TrainModal({ onClose, onError, onFinished, onEvaluate }:
             ) : (
               !pre.simulate && <p className="text-[13px] text-[#E0B25C]">No NVIDIA GPU found on this machine.</p>
             )}
-            <div className="font-mono text-[11.5px] text-muted">rank 16 · alpha 32 · lr 2e-4 · 3 epochs · max len 2048 · QLoRA</div>
+            <div className="font-mono text-[11.5px] text-muted">rank 16 · alpha 32 · lr 2e-4 · 1 epoch · max len 2048 · QLoRA</div>
           </div>
         )}
 

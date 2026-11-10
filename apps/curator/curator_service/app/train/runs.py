@@ -20,7 +20,7 @@ FINAL = {"succeeded", "failed", "cancelled"}
 
 DEFAULT_CONFIG = {
     "method": "lora", "r": 16, "alpha": 32, "dropout": 0.05, "target_modules": "all-linear",
-    "lr": 2e-4, "epochs": 3, "max_len": export.DEFAULT_MAX_LEN, "batch_size": "auto", "grad_accum": "auto",
+    "lr": 2e-4, "epochs": 1, "max_len": export.DEFAULT_MAX_LEN, "batch_size": "auto", "grad_accum": "auto",
     "load_in_4bit": True, "seed": 1337, "speakers": None,
 }
 
