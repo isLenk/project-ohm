@@ -125,7 +125,8 @@ class OpenAIModel:
             if terms:
                 context.append("Words people here use, so you know what they mean:\n" + "\n".join(terms))
         if summary:
-            context.append(f"What's been going on in this chat: {summary}")
+            # ? As his own observation, else he thanks them for the summary
+            context.append(f"What you've seen going on in this chat lately: {summary}")
         if people:
             # Who the message is about: every name they go by and what's remembered about each (memory.people_in)
             context.append("People who came up, and what you know about them (only bring it up if it fits; "

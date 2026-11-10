@@ -112,7 +112,7 @@ def test_system_prompt_is_only_the_personality(chat):
     text = last["content"][0]["text"]
     assert text.startswith("Kyle: hll tonight?\nLenk: im in\n\n(You're hyped up right now.\n\n")
     assert text.endswith(")")
-    for block in ['Words people here use', 'What\'s been going on in this chat: Lenk and Kyle are planning a game.',
+    for block in ['Words people here use', 'What you\'ve seen going on in this chat lately: Lenk and Kyle are planning a game.',
                   "People who came up", "- Lenk hates mornings.", "You can see the screen"]:
         assert block in text, block
     assert text.count("Kyle plays hll.") == 1  # already under the person, so not again under memories

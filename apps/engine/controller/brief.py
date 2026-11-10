@@ -23,7 +23,8 @@ NOTE_MAX = 200             # a longer "note" is the model rambling, not a note
 SYSTEM = (
     "You read the last few minutes of a group chat and write two things, as JSON.\n\n"
     "\"summary\": 1-2 sentences on what's going on in the chat right now: the topics, who's doing what, "
-    "and the mood.\n\n"
+    "and the mood. It's for the bot, who is in the chat: what the people are on about, not what the bot said "
+    "or did.\n\n"
     "\"notes\": what's worth remembering long-term about the people in it. Each is "
     "{\"about\": the person's name, \"note\": one short third-person note}. A note can be about someone who "
     "spoke or someone they talk about.\n"
