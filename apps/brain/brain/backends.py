@@ -18,7 +18,7 @@ import time
 import requests
 
 CLI_TIMEOUT = 240         # seconds; a packed judge batch of 30 can take a couple of minutes
-CLI_PARALLEL = 3          # at most this many calls at once per CLI, so a subscription isn't rate limited
+CLI_PARALLEL = int(os.getenv("BRAIN_CLI_PARALLEL") or 3)  # calls at once per CLI, so a subscription isn't rate limited
 ADAPTERS_TTL_S = 15       # how long llama-server's adapter list is trusted
 CLAUDE_SYSTEM_MAX = 8000  # a longer system prompt goes on stdin; Windows command lines are capped at 32k
 

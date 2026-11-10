@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 import brain
+from brain import backends as brain_backends
 import requests
 
 from .. import gpu, llm
@@ -42,7 +43,7 @@ JUDGE_CTX = 16384
 JUDGE_SLOTS = 4        # requests the Qwen judge serves at once; JUDGE_CTX is split between them (4096 each)
 JUDGE_TEMPERATURE = 0  # verdicts, not replies
 PACK_SIZE = 30         # chats per judge call: Codex spends ~4 s and ~10k tokens a call however small it is
-PACK_WORKERS = 3       # calls at once, the most the brain lets one CLI run
+PACK_WORKERS = brain_backends.CLI_PARALLEL  # calls at once, the most the brain lets one CLI run
 SEED = 7
 VARIANTS = ["base", "adapter", "partial"]
 PROBES = [

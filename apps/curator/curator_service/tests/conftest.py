@@ -8,6 +8,7 @@ os.environ["CURATOR_MODELS_DIR"] = os.path.join(_DATA, "models")
 # Not the real llama.cpp next to the repo: tests must never start llama-server
 os.environ["LLAMA_CPP_DIR"] = os.path.join(_DATA, "llama.cpp")
 os.environ["CURATOR_TRAIN_SIMULATE"] = "1"
+os.environ["BRAIN_CLI_PARALLEL"] = "3"  # tests expect 3, whatever .env says
 os.environ.pop("CURATOR_TOKEN", None)
 os.environ["MEMORY_API_URL"] = ""
 os.environ["CURATOR_LLM_URL"] = "http://127.0.0.1:9/v1"  # nothing listens here
