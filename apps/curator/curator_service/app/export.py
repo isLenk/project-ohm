@@ -468,3 +468,24 @@ def preview(project, **kw) -> dict:
     return {"examples": len(data["examples"]), "conversations": data["conversations"], "by_author": data["by_author"],
             "after_cap": data["after_cap"], "dropped": data["dropped"], "sha256": data["sha256"], "checked": data["checked"],
             "sample": [e["messages"] for e in data["examples"][:3]]}
+
+
+def for_cloud(rows: list[dict], everyone: Optional[list] = None) -> list[dict]:
+    """Rows safe to upload: messages and a renumbered conversation id, names (but Ohm's) masked per conversation"""
+    import brain
+
+    everyone = [[n for n in p if (n or "").strip().lower() != TARGET_NAME.lower()]
+                for p in (brain.privacy.people() if everyone is None else everyone)]
+    if not any(everyone):
+        raise RuntimeError("No name list is loaded, so names can't be masked; nothing is sent.")
+    # Sorted, so held_out() picks the same conversations evaluate.py scores locally
+    convs = sorted({r["conversation_id"] for r in rows if r.get("conversation_id") is not None})
+    ids = {c: i for i, c in enumerate(convs, 1)}
+    masks, out = {}, []
+    for r in rows:
+        conv = r.get("conversation_id")
+        mask = masks.setdefault(conv, brain.privacy.Mask(everyone))
+        messages = [{**m, "content": mask.hide(m["content"]) if isinstance(m.get("content"), str) else m.get("content")}
+                    for m in r["messages"]]
+        out.append({"conversation_id": ids.get(conv), "messages": messages})
+    return out

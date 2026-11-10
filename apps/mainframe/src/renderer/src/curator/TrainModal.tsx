@@ -4,6 +4,28 @@ import { followJob, get, post, stream } from './api'
 import { REPLIES_AIM, REPLIES_LOW, cx, fmtDuration, pct } from './util'
 import { Loading } from '../components/Loader'
 
+/** From a cloud run's "cloud" events (train/cloud.py) */
+type Cloud = {
+  phase?: string
+  gpu?: string
+  price_hr?: number | null
+  url?: string
+  app_id?: string
+  state?: string | null
+  gpuUpAt?: number
+  stoppedAt?: number
+}
+
+const CLOUD_PHASES: Record<string, string> = {
+  building: 'Building the training environment on Modal (the first run takes a few minutes)',
+  waiting_gpu: 'Waiting for a cloud GPU',
+  gpu_up: 'Training on the cloud GPU',
+  sending_adapter: 'Sending the adapter back',
+  stopping: 'Stopping the cloud GPU',
+  stopped: 'Cloud GPU stopped. Modal confirms it, so nothing is billing.',
+  check: 'Couldn’t confirm the cloud GPU stopped. Open Modal and check the app is stopped.'
+}
+
 const STAGES = [
   ['export', 'Export approved threads to examples'],
   ['tokenize', 'Tokenize'],
@@ -28,6 +50,10 @@ type Preflight = {
   need_gb: number
   enough_vram: boolean
   active_run: { id: string } | null
+  /** Modal training (train/cloud.py) */
+  cloud: { ready: boolean; why: string | null; gpu: string }
+  /** Cloud runs need a name list to mask with */
+  names_known: boolean
 }
 
 type Run = {
@@ -60,6 +86,9 @@ export default function TrainModal({ onClose, onError, onFinished, onEvaluate }:
   const [now, setNow] = useState(Date.now())
   const [starting, setStarting] = useState(false)
   const [checking, setChecking] = useState<string | null>(null)
+  const [target, setTarget] = useState<'local' | 'cloud'>('local')
+  const [note, setNote] = useState<string | null>(null)
+  const [cloud, setCloud] = useState<Cloud>({})
 
   // Attach to a running run, or show the preflight.
   useEffect(() => {
@@ -94,7 +123,15 @@ export default function TrainModal({ onClose, onError, onFinished, onEvaluate }:
       } else if (name === 'done') {
         if (d?.eval_loss != null || d?.best_eval_loss != null)
           setEvalLoss((e) => ({ last: d.eval_loss ?? e.last, best: d.best_eval_loss ?? e.best }))
-      } else if (name === 'stage') setStageTimes((s) => ({ ...s, [d.stage]: d.elapsed_s }))
+      } else if (name === 'note') setNote(d.message)
+      else if (name === 'cloud')
+        setCloud((c) => ({
+          ...c,
+          ...d,
+          gpuUpAt: d.phase === 'gpu_up' ? d.at * 1000 : c.gpuUpAt,
+          stoppedAt: d.phase === 'stopping' ? d.at * 1000 : c.stoppedAt
+        }))
+      else if (name === 'stage') setStageTimes((s) => ({ ...s, [d.stage]: d.elapsed_s }))
       else if (name === 'end') {
         setEnded(d)
         onFinished()
@@ -126,7 +163,7 @@ export default function TrainModal({ onClose, onError, onFinished, onEvaluate }:
   const start = async () => {
     setStarting(true)
     try {
-      setRun(await post<Run>('/train', { stop_pids: stop }))
+      setRun(await post<Run>('/train', { stop_pids: target === 'cloud' ? [] : stop, config: { target } }))
     } catch (e) {
       onError(e)
     } finally {
@@ -261,7 +298,33 @@ export default function TrainModal({ onClose, onError, onFinished, onEvaluate }:
                 This model has no Hugging Face weights to train on. Set them under “Trains on” in the model menu.
               </p>
             )}
-            {pre.gpu ? (
+            <div className="flex items-center gap-3 border-t border-[#2f3037] pt-4 text-[13px]">
+              <span className="text-muted">Train on</span>
+              {(['local', 'cloud'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTarget(t)}
+                  className={cx('h-8 rounded-md border px-3 text-[12.5px]', target === t ? 'border-gray-300 bg-[#26272d] text-gray-100' : 'border-line text-gray-400 hover:bg-menu-hover')}
+                >
+                  {t === 'local' ? 'This PC' : `Cloud · ${pre.cloud?.gpu ?? 'Modal'}`}
+                </button>
+              ))}
+            </div>
+            {target === 'cloud' ? (
+              <div className="text-[13px] leading-relaxed">
+                {pre.cloud?.ready ? (
+                  <p className="text-muted">
+                    Trains on a rented {pre.cloud.gpu} on Modal, usually well under a dollar a run, billed by the second and stopped the moment it’s done. Ohm stays online.
+                    Only the messages go up, with everyone’s names and contact details swapped for stand-ins.
+                  </p>
+                ) : (
+                  <p className="text-[#E0B25C]">{pre.cloud?.why ?? 'Cloud training isn’t set up.'}</p>
+                )}
+                {!pre.names_known && (
+                  <p className="mt-2 text-[#E0B25C]">No name list is loaded, so names couldn’t be masked. Open the project or check the NAS.</p>
+                )}
+              </div>
+            ) : pre.gpu ? (
               <div className="border-t border-[#2f3037] pt-4">
                 <div className="flex justify-between text-[13px]">
                   <span>{pre.gpu.name}</span>
@@ -357,6 +420,40 @@ export default function TrainModal({ onClose, onError, onFinished, onEvaluate }:
                 </div>
               ))}
             </div>
+            {run.config?.target === 'cloud' && (
+              <div className="rounded-md border border-[#2f3037] px-3.5 py-3 text-[13px]">
+                <div className="flex items-center gap-2.5">
+                  {cloud.phase === 'stopped' ? (
+                    <LuCheck className="size-4 text-[#6CCB98]" />
+                  ) : cloud.phase === 'check' ? (
+                    <LuX className="size-4 text-[#E0B25C]" />
+                  ) : (
+                    <LuLoader className="size-4 animate-spin text-muted" />
+                  )}
+                  <span className={cx('flex-1', cloud.phase === 'check' && 'text-[#E0B25C]')}>
+                    {CLOUD_PHASES[cloud.phase ?? ''] ?? 'Starting the cloud run'}
+                  </span>
+                  {cloud.url && (
+                    <a href={cloud.url} target="_blank" rel="noreferrer" className="text-xs text-gray-300 underline underline-offset-2 hover:text-white">
+                      Open in Modal
+                    </a>
+                  )}
+                </div>
+                <div className="mt-1.5 pl-6.5 font-mono text-[11.5px] text-muted">
+                  {cloud.gpu ?? run.config?.cloud_gpu ?? 'GPU'}
+                  {cloud.gpuUpAt != null && (
+                    <>
+                      {' · GPU time '}
+                      {fmtDuration(Math.max(0, ((cloud.stoppedAt ?? now) - cloud.gpuUpAt) / 1000))}
+                      {cloud.price_hr != null &&
+                        ` · about ${((((cloud.stoppedAt ?? now) - cloud.gpuUpAt) / 3600000) * cloud.price_hr).toFixed(2)} so far`}
+                    </>
+                  )}
+                  {cloud.state && ` · Modal says: ${cloud.state}`}
+                </div>
+              </div>
+            )}
+            {note && <p className="text-xs leading-relaxed text-muted">{note}</p>}
             {ended?.status === 'succeeded' && (
               <p className="text-[13px] text-[#6CCB98]">The adapter is in the model list and set as active.</p>
             )}
@@ -367,6 +464,7 @@ export default function TrainModal({ onClose, onError, onFinished, onEvaluate }:
               </p>
             )}
             <div className="border-t border-[#2f3037] pt-3.5 font-mono text-[11.5px] text-muted">
+              {run.config.target === 'cloud' ? 'cloud · ' : ''}
               {run.example_count} examples · rank {run.config.r} · alpha {run.config.alpha} · lr {run.config.lr} · {run.config.epochs} epochs · max len {run.config.max_len}
             </div>
           </div>
@@ -388,7 +486,9 @@ export default function TrainModal({ onClose, onError, onFinished, onEvaluate }:
           {!run && pre && (
             <button
               onClick={start}
-              disabled={starting || !!checking || pre.export.examples === 0 || (!pre.trainable && !pre.simulate) || (!pre.simulate && !pre.gpu)}
+              disabled={starting || !!checking || pre.export.examples === 0 || (!pre.trainable && !pre.simulate) ||
+                (target === 'cloud' ? (!pre.cloud?.ready && !pre.simulate) || !pre.names_known : !pre.simulate && !pre.gpu)
+              }
               className="h-9 rounded-md bg-gray-100 px-3.5 text-[13px] font-semibold text-ink hover:bg-white disabled:opacity-40"
             >
               {starting ? 'Starting…' : pre.export.examples === 0 ? 'Approve a conversation first' : 'Start training'}

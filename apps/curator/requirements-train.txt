@@ -7,3 +7,4 @@ datasets
 transformers
 bitsandbytes
 accelerate
+modal  # cloud training client (train/cloud.py)

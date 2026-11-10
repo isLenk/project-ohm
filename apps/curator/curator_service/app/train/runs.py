@@ -1,6 +1,8 @@
 """Starts, follows and cancels LoRA training runs. The training itself runs in worker.py as a subprocess."""
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -8,6 +10,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Iterator, Optional
+
+import brain
 
 from .. import export, gpu
 from ..config import REPO_ROOT, RUNS_DIR, TRAIN_PYTHON, TRAIN_SIMULATE, TRAIN_VRAM_GB
@@ -22,7 +26,11 @@ DEFAULT_CONFIG = {
     "method": "lora", "r": 16, "alpha": 32, "dropout": 0.05, "target_modules": "all-linear",
     "lr": 2e-4, "epochs": 1, "max_len": export.DEFAULT_MAX_LEN, "batch_size": "auto", "grad_accum": "auto",
     "load_in_4bit": True, "seed": 1337, "speakers": None,
+    "target": "local",  # or "cloud" (Modal)
 }
+CANCEL_GRACE_S = 30  # for a cancelled cloud run to stop its Modal app
+CLOUD_TTL = 60  # seconds cloud_status() is cached
+_cloud_cache: tuple[float, dict] = (0.0, {})
 
 _procs: dict[str, subprocess.Popen] = {}
 
@@ -70,6 +78,29 @@ def get(registry, run_id: str) -> dict:
             "progress": progress, "losses": losses}
 
 
+def cloud_status() -> dict:
+    """Whether the training venv has modal and a token"""
+    global _cloud_cache
+    at, cached = _cloud_cache
+    if at and time.time() - at < CLOUD_TTL:
+        return cached
+    gpu_name = os.getenv("CURATOR_CLOUD_GPU", "L40S")
+    out = {"ready": False, "why": None, "gpu": gpu_name}
+    token = (Path.home() / ".modal.toml").exists() or bool(os.getenv("MODAL_TOKEN_ID"))
+    try:
+        has_modal = subprocess.run([TRAIN_PYTHON, "-c", "import modal"], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        has_modal = False
+    if not has_modal:
+        out["why"] = "Install modal into the training venv (apps/curator/README.md, Cloud training)."
+    elif not token:
+        out["why"] = "Run `modal token new` once to sign this PC in to Modal."
+    else:
+        out["ready"] = True
+    _cloud_cache = (time.time(), out)
+    return out
+
+
 def preflight(project, registry, config: dict) -> dict:
     """What the Train modal shows before starting: examples, VRAM, trainability."""
     act = registry.get("active", {}) or {}
@@ -83,6 +114,7 @@ def preflight(project, registry, config: dict) -> dict:
         "export": prev, "gpu": status, "need_gb": need,
         "enough_vram": TRAIN_SIMULATE or bool(status and status["free_gb"] >= need),
         "active_run": active(registry),
+        "cloud": cloud_status(), "names_known": bool(brain.privacy.people()),
     }
 
 
@@ -97,8 +129,13 @@ def start(project, registry, config: Optional[dict], stop_pids: list[int]) -> di
     if not base["hf_path"] and not TRAIN_SIMULATE:
         raise ApiError(409, "base_not_trainable",
                        "This model has no Hugging Face weights to train on. Set them in the model menu.")
+    cloud = config.get("target") == "cloud"
+    if cloud and not TRAIN_SIMULATE and not cloud_status()["ready"]:
+        raise ApiError(409, "cloud_not_ready", cloud_status()["why"] or "Cloud training isn't set up.")
+    if cloud:
+        stop_pids = []  # Ohm keeps running
     status = gpu.status()
-    if not TRAIN_SIMULATE:
+    if not TRAIN_SIMULATE and not cloud:
         if status is None:
             raise ApiError(409, "no_gpu", "No NVIDIA GPU found (nvidia-smi isn't available).")
         freed = sum(p["used_gb"] for p in status["processes"] if p["pid"] in stop_pids)
@@ -117,6 +154,16 @@ def start(project, registry, config: Optional[dict], stop_pids: list[int]) -> di
     with open(run_dir / "dataset.jsonl", "w", encoding="utf-8") as f:
         for e in data["examples"]:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    if cloud:
+        # The only file uploaded
+        try:
+            masked = export.for_cloud(data["examples"])
+        except RuntimeError as e:
+            shutil.rmtree(run_dir, ignore_errors=True)
+            raise ApiError(409, "no_names", f"{e} Open the project, or check the NAS is reachable.")
+        with open(run_dir / "cloud_dataset.jsonl", "w", encoding="utf-8") as f:
+            for e in masked:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
     (run_dir / "config.json").write_text(json.dumps({
         **config, "hf_path": base["hf_path"], "base_model_id": base["id"], "run_id": run_id,
         "examples": len(data["examples"]),
@@ -138,6 +185,8 @@ def start(project, registry, config: Optional[dict], stop_pids: list[int]) -> di
     cmd = [TRAIN_PYTHON, "-m", "curator_service.app.train.worker", "--run-dir", str(run_dir)]
     if TRAIN_SIMULATE:
         cmd.append("--simulate")
+    elif cloud:
+        cmd.append("--cloud")
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
     log = open(run_dir / "worker.log", "w", encoding="utf-8")
     proc = subprocess.Popen(cmd, cwd=REPO_ROOT / "apps" / "curator", stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
@@ -183,11 +232,26 @@ def _restart_services(registry, row: dict, adapter_id: Optional[str]) -> None:
     stopped = json.loads(row["stopped_services"])
     llama = next((s for s in stopped if s.get("is_llama")), None)
     if not llama:
+        if adapter_id and json.loads(row["config"] or "{}").get("target") == "cloud":
+            _load_into_running(registry, row["base_model_id"], adapter_id)
         return
     base = registry.base(row["base_model_id"])
     adapters = [a["gguf_path"] for a in registry.all("SELECT gguf_path FROM adapters WHERE base_model_id = ?", (base["id"],))]
     pid = gpu.start(llama, gpu.llama_command(llama["cmdline"], base["gguf_path"], adapters))
     if pid and gpu.wait_for_llama() and adapter_id:
+        gpu.apply_adapter(registry.adapter(adapter_id)["gguf_path"])
+
+
+def _load_into_running(registry, base_model_id: str, adapter_id: str) -> None:
+    """Restart the running llama-server with a cloud run's adapter, if it's on that model"""
+    llama = gpu.running_llama()
+    base = registry.base(base_model_id)
+    model = next((llama["cmdline"][i + 1] for i, a in enumerate(llama["cmdline"][:-1]) if a in ("-m", "--model")), None) if llama else None
+    if not model or Path(llama["cwd"], model).resolve() != Path(base["gguf_path"]).resolve():
+        return
+    adapters = [a["gguf_path"] for a in registry.all("SELECT gguf_path FROM adapters WHERE base_model_id = ?", (base["id"],))]
+    gpu.stop([llama["pid"]])
+    if gpu.start(llama, gpu.llama_command(llama["cmdline"], base["gguf_path"], adapters)) and gpu.wait_for_llama():
         gpu.apply_adapter(registry.adapter(adapter_id)["gguf_path"])
 
 
@@ -227,6 +291,12 @@ def cancel(registry, run_id: str) -> dict:
     emit(Path(row["run_dir"]), "cancelled", status="cancelled")
     proc = _procs.get(run_id)
     pid = proc.pid if proc else row["pid"]
+    if pid and gpu.psutil and json.loads(row["config"] or "{}").get("target") == "cloud":
+        # Let it stop its Modal app first; killed, the GPU runs until Modal notices
+        try:
+            gpu.psutil.Process(pid).wait(CANCEL_GRACE_S)
+        except (gpu.psutil.NoSuchProcess, gpu.psutil.TimeoutExpired):
+            pass
     if pid and gpu.psutil:
         try:
             p = gpu.psutil.Process(pid)

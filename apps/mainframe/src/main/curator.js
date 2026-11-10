@@ -89,6 +89,8 @@ export const CURATOR_SETTINGS = [
   'CURATOR_PYTHON',
   'CURATOR_TRAIN_VRAM_GB',
   'CURATOR_TRAIN_SIMULATE',
+  'CURATOR_CLOUD_GPU',
+  'CURATOR_CLOUD_TIMEOUT_MIN',
   // The Curator calls the brain too (curating, judging, labelling)
   ...BRAIN_KEYS
 ]

@@ -101,7 +101,9 @@ const SECTIONS = [
         'Fake runs, for testing without a GPU',
         'switch',
         ''
-      ]
+      ],
+      ['CURATOR_CLOUD_GPU', 'Cloud training GPU', 'Modal GPU for cloud runs: L40S, A100-80GB or H100 (faster, about the same per run)', 'text', 'L40S'],
+      ['CURATOR_CLOUD_TIMEOUT_MIN', 'Cloud run time limit (min)', 'Modal stops a cloud run after this long, whatever it is doing', 'text', '60']
     ]
   }
 ] as const

@@ -38,6 +38,39 @@ The constraint keeps pip from swapping CUDA torch for the CPU build.
 | `CURATOR_TRAIN_VRAM_GB` | 6 GB over the base model's GGUF size (~11 for E4B, ~14 for 12B) | VRAM a run needs before it starts. Measure it on the real card. |
 | `CURATOR_TRAIN_PYTHON` | `%APPDATA%\ohm-curator\train-venv` if it exists, else the service's Python | Python that runs training (needs `requirements-train.txt`) |
 | `CURATOR_TRAIN_SIMULATE` | | Set it to `1` to fake training runs, for working on the UI without a GPU |
+| `CURATOR_CLOUD_GPU` | `L40S` | Modal GPU for cloud training (`A100-80GB`, `H100`: faster, about the same per run) |
+| `CURATOR_CLOUD_TIMEOUT_MIN` | 60 | Modal stops a cloud run after this many minutes, whatever it is doing |
+
+## Cloud training
+
+The Train modal can train on a rented GPU on [Modal](https://modal.com) instead of this PC (`train/cloud.py`). Ohm
+stays online, a run usually costs well under a dollar, and Modal's free plan includes monthly credit.
+
+Once:
+
+1. Make a Modal account, then sign this PC in from the training venv (`modal` is already installed there; if not,
+   `...\python.exe -m pip install modal`):
+
+   ```
+   %APPDATA%\ohm-curator\train-venv\Scripts\python.exe -m modal token new
+   ```
+
+2. In Modal's settings, set a **spending limit**.
+
+Per run, pick **Cloud** under "Train on". What leaves the PC is `cloud_dataset.jsonl` (`export.for_cloud`): only the
+messages, with everyone's names and contact details masked by the brain's `privacy.py`, and the hyperparameters.
+The adapter comes back and is converted and loaded here, the same as a local run.
+
+The GPU stops as soon as training ends:
+
+- the run is an ephemeral Modal app, stopped when the worker leaves `app.run()` (finished, failed or cancelled);
+- Cancel stops the app at once (`modal app stop`), even while it's still downloading;
+- the function has a hard time limit (`CURATOR_CLOUD_TIMEOUT_MIN`), and Modal stops an ephemeral app whose PC went away;
+- containers shut down 2 s after the function returns (`scaledown_window=2`).
+
+The first run builds the environment and downloads the base model's weights into the Modal volume
+`ohm-curator-hf-cache` (~22 GB for the 12B, a few dollars a month to keep); later runs reuse both. Delete it with
+`modal volume delete ohm-curator-hf-cache` if you stop training in the cloud.
 
 ## Demo data and tests
 

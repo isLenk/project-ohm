@@ -1,5 +1,9 @@
+import json
+import re
 import time
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from curator_service.app import main
@@ -106,6 +110,52 @@ def test_models_and_simulated_training(tmp_path):
     assert "event: done" in body and "event: end" in body
     state.project.close()
     state.project = None
+
+
+def test_cloud_run_uploads_only_the_masked_dataset(tmp_path, monkeypatch):
+    path = make(tmp_path)
+    c = TestClient(main.app)
+    c.post("/project/open", json={"path": path})
+    gguf = tmp_path / "gemma-4-12b-it-Q5_K_M.gguf"
+    gguf.write_bytes(b"GGUF" + b"\0" * 1024)
+    base = main.get_registry().add_base(str(gguf))
+    c.put("/models/active", json={"base_model_id": base["id"]})
+    conv = min(c.get("/conversations").json()["conversations"], key=lambda x: x["first_ts"])
+    c.post(f"/conversations/{conv['id']}/approve", json={"confirm": True})
+    monkeypatch.setattr(main.runs, "cloud_status", lambda: {"ready": True, "why": None, "gpu": "L40S"})
+    monkeypatch.setattr(main.runs.gpu, "stop", lambda pids: pytest.fail("a cloud run mustn't stop Ohm's services"))
+
+    pre = c.get("/train/preflight").json()
+    assert pre["cloud"]["ready"] and pre["names_known"]
+    run = c.post("/train", json={"config": {"target": "cloud"}, "stop_pids": [123]}).json()
+    assert run["status"] == "running", run
+    run_dir = Path(main.get_registry().one("SELECT run_dir FROM train_runs WHERE id = ?", (run["id"],))["run_dir"])
+    sent = (run_dir / "cloud_dataset.jsonl").read_text(encoding="utf-8")
+    authors = state.project.all("SELECT id, name, display_name FROM authors WHERE is_bot = 0")
+    assert sent.strip()
+    for a in authors:
+        for secret in (a["id"], a["name"], a["display_name"]):
+            if secret and len(secret) >= 2:
+                assert not re.search(r"(?<!\w)" + re.escape(secret) + r"(?!\w)", sent, re.IGNORECASE), secret
+    assert all(set(json.loads(line)) == {"conversation_id", "messages"} for line in sent.splitlines())
+    deadline = time.time() + 60
+    while time.time() < deadline and c.get(f"/train/runs/{run['id']}").json()["status"] == "running":
+        time.sleep(0.5)
+    state.project.close()
+    state.project = None
+
+
+def test_cloud_run_needs_the_cloud_set_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(main.runs, "TRAIN_SIMULATE", False)
+    monkeypatch.setattr(main.runs, "cloud_status", lambda: {"ready": False, "why": "Run `modal token new`.", "gpu": "L40S"})
+    monkeypatch.setattr(main.runs, "active", lambda reg: None)
+    reg = main.get_registry()
+    gguf = tmp_path / "gemma-4-12b-it-Q5_K_M.gguf"
+    gguf.write_bytes(b"GGUF" + b"\0" * 1024)
+    reg.put("active", {"base_model_id": reg.add_base(str(gguf))["id"], "adapter_id": None})
+    with pytest.raises(main.ApiError) as e:
+        main.runs.start(object(), reg, {"target": "cloud"}, [])
+    assert e.value.code == "cloud_not_ready" and "modal token new" in e.value.message
 
 
 def test_llm_controls_without_llama(tmp_path, monkeypatch):

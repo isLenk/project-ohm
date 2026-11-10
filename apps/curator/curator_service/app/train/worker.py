@@ -106,6 +106,23 @@ def simulate(run_dir: Path, rep: Reporter, cfg: dict) -> None:
 
 
 def train(run_dir: Path, rep: Reporter, cfg: dict) -> None:
+    peft_dir, callback = fit(run_dir, rep, cfg)
+    if peft_dir is None:
+        return
+    finish(run_dir, rep, cfg, peft_dir, callback.loss, callback.eval_loss, callback.best_eval_loss)
+
+
+def finish(run_dir: Path, rep: Reporter, cfg: dict, peft_dir: Path, loss, eval_loss, best_eval_loss, **extra) -> None:
+    """Convert the adapter to GGUF (on this PC, even for cloud runs) and report done"""
+    rep.progress("save", 0.4, force=True)
+    gguf = convert(peft_dir, cfg, run_dir)
+    rep.progress("save", 1.0, force=True)
+    rep.emit("done", status="succeeded", adapter_gguf=str(gguf), peft_dir=str(peft_dir), final_loss=loss,
+             eval_loss=eval_loss, best_eval_loss=best_eval_loss, elapsed_s=rep.elapsed(), **extra)
+
+
+def fit(run_dir: Path, rep: Reporter, cfg: dict):
+    """Train and save run_dir/peft. Returns (peft dir or None if cancelled, callback)"""
     from unsloth import FastModel  # import first: Unsloth patches transformers on import
     from datasets import Dataset
     from transformers import TrainerCallback
@@ -211,18 +228,13 @@ def train(run_dir: Path, rep: Reporter, cfg: dict) -> None:
             torch.cuda.empty_cache()
             rep.emit("note", message=f"Out of memory at batch size {bs}; retrying smaller.")
     if _cancelled(run_dir):
-        return
+        return None, callback
 
     rep.stage("save")
     peft_dir = run_dir / "peft"
     model.save_pretrained(str(peft_dir))
     tokenizer.save_pretrained(str(peft_dir))
-    rep.progress("save", 0.4, force=True)
-    gguf = convert(peft_dir, cfg, run_dir)
-    rep.progress("save", 1.0, force=True)
-    rep.emit("done", status="succeeded", adapter_gguf=str(gguf), peft_dir=str(peft_dir),
-             final_loss=callback.loss, eval_loss=callback.eval_loss, best_eval_loss=callback.best_eval_loss,
-             elapsed_s=rep.elapsed())
+    return peft_dir, callback
 
 
 def convert(peft_dir: Path, cfg: dict, run_dir: Path) -> Path:
@@ -240,6 +252,20 @@ def convert(peft_dir: Path, cfg: dict, run_dir: Path) -> Path:
     return out
 
 
+CLOUD_TOKENS_PER_S = 1500  # cautious guess for a 12B on an L40S
+
+
+def cloud_timeout_min(run_dir: Path, cfg: dict) -> int:
+    """Cloud time limit: 3x the estimate plus 20 min, at least CURATOR_CLOUD_TIMEOUT_MIN"""
+    floor = int(os.getenv("CURATOR_CLOUD_TIMEOUT_MIN") or 60)
+    try:
+        tokens = (run_dir / "cloud_dataset.jsonl").stat().st_size / 4  # ~4 characters a token
+    except OSError:
+        return floor
+    minutes = tokens * int(cfg.get("epochs") or 3) / CLOUD_TOKENS_PER_S / 60
+    return max(floor, math.ceil(3 * minutes + 20))
+
+
 def _cancelled(run_dir: Path) -> bool:
     try:
         tail = (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()[-5:]
@@ -252,11 +278,17 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True, type=Path)
     ap.add_argument("--simulate", action="store_true")
+    ap.add_argument("--cloud", action="store_true", help="train on a cloud GPU (train/cloud.py)")
     a = ap.parse_args()
     cfg = json.loads((a.run_dir / "config.json").read_text())
     rep = Reporter(a.run_dir)
     try:
-        (simulate if a.simulate else train)(a.run_dir, rep, cfg)
+        if a.cloud:
+            os.environ["CURATOR_CLOUD_TIMEOUT_MIN"] = str(cloud_timeout_min(a.run_dir, cfg))
+            from . import cloud  # reads the time limit on import
+            cloud.run(a.run_dir, rep, cfg)
+        else:
+            (simulate if a.simulate else train)(a.run_dir, rep, cfg)
     except Exception as e:  # anything: report it, the manager marks the run failed
         import traceback
 
