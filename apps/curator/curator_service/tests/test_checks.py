@@ -41,7 +41,8 @@ def judge(monkeypatch):
     return use
 
 
-def test_judge_verdicts_leave_non_answers_out_of_training(project, judge):
+def test_judge_verdicts_leave_non_answers_out_of_training(project, judge, monkeypatch):
+    monkeypatch.setattr(export, "MAX_REPLY_LINES", 4)  # "Mb I was out" is 3 lines
     with project.tx() as conn:
         conversations.approve(conn, 1, confirm=True)
     before = export.build(project)

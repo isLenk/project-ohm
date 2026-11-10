@@ -226,7 +226,7 @@ def _replies(snap: dict, bots: set) -> dict[str, int]:
             continue
         ok = [m for m in ok if parents.get(m["id"]) == parent or parents.get(m["id"]) in ids]
         text = "\n".join(m["content_text"] for m in ok).strip()
-        if not text or len(text) > export.MAX_REPLY_CHARS:
+        if not text or len(text) > export.MAX_REPLY_CHARS or text.count("\n") + 1 > export.MAX_REPLY_LINES:
             continue
         norm = text.lower().strip(" .!?")
         if (norm in export.SHORT_REPLIES or len(norm) < 2) and export._frac(ok[0]["id"]) >= export.KEEP_SHORT:

@@ -202,7 +202,8 @@ def test_search_operators(project):
 
 
 # ── export ──────────────────────────────────────────────────────────────────
-def test_export_replays_each_person_as_ohm(project):
+def test_export_replays_each_person_as_ohm(project, monkeypatch):
+    monkeypatch.setattr(export, "MAX_REPLY_LINES", 4)  # KaptainDoosh's "Mb I was out" is 3 lines
     with project.tx() as conn:
         conversations.approve(conn, 1, confirm=True)
     data = export.build(project)
@@ -225,7 +226,8 @@ def test_export_replays_each_person_as_ohm(project):
         e["assistant_turns"] for e in data["examples"])
 
 
-def test_export_trains_only_replies_to_the_last_line(project):
+def test_export_trains_only_replies_to_the_last_line(project, monkeypatch):
+    monkeypatch.setattr(export, "MAX_REPLY_LINES", 4)  # KaptainDoosh's "Mb I was out" is 3 lines
     with project.tx() as conn:
         conversations.approve(conn, 1, confirm=True)
         # KaptainDoosh's roll call answers ELEVIST from before KaptainDoosh's own "Mb I was out" turn
@@ -265,7 +267,8 @@ def test_export_carries_parent_into_a_later_conversation(project):
     assert kaptain["messages"][-1]["content"] == "pulling up now"
 
 
-def test_export_starts_over_after_a_long_silence(project):
+def test_export_starts_over_after_a_long_silence(project, monkeypatch):
+    monkeypatch.setattr(export, "MAX_REPLY_LINES", 4)  # KaptainDoosh's "Mb I was out" is 3 lines
     with project.tx() as conn:
         conversations.approve(conn, 1, confirm=True)
         conn.execute("UPDATE meta SET value = ? WHERE key = 'split_gap_ms'", (json.dumps(30 * 60_000),))
@@ -275,6 +278,18 @@ def test_export_starts_over_after_a_long_silence(project):
     assert late["segment"] > 0
     assert late["messages"][1]["content"] == "unanticipatedinflation: we running barotrauma this night? @Ohm"
     assert all("Baro could hit" not in m["content"] for m in late["messages"])
+
+
+def test_export_drops_replies_over_two_lines(project):
+    with project.tx() as conn:
+        conversations.approve(conn, 1, confirm=True)
+    data = export.build(project)
+    # KaptainDoosh's "Mb I was out" is 3 lines
+    assert not any(m["content"].startswith("Mb I was out") for e in data["examples"] for m in e["messages"]
+                   if m["role"] == "assistant")
+    assert data["dropped"]["too many lines"] == 1
+    assert all(m["content"].count("\n") < export.MAX_REPLY_LINES for e in data["examples"] for m in e["messages"]
+               if m["role"] == "assistant")
 
 
 def test_export_drops_links_pings_and_transcripts(project):

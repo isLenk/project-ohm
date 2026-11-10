@@ -35,7 +35,7 @@ SHORT_REPLIES = {"lol", "lmao", "lmfao", "ok", "okay", "k", "kk", "ya", "ye", "y
                  "same", "nah", "no", "yes", "mhm", "💀", "😂"}
 KEEP_SHORT = 0.1         # share of short replies kept as targets, so the model still says "lol" sometimes
 MAX_REPLY_CHARS = 600    # longer replies are pastes or rants, not chat
-MAX_REPLY_LINES = 4      # longer bursts teach run-on turns that never hand back
+MAX_REPLY_LINES = 2      # longer bursts teach run-on turns that never hand back
 OVERLAP_PAIRS = 2        # user/assistant pairs repeated at the start of the next chunk
 CHARS_PER_TOKEN = 3      # conservative for chat text; the worker still drops anything over max_len
 DEFAULT_MAX_LEN = 2048
