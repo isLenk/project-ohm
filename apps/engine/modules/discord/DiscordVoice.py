@@ -142,9 +142,11 @@ class DiscordVoice:
                     mood.interrupted()
                     print("[voice] Interrupted, answering that instead")
                 else:
-                    # She hadn't started talking yet, so they were still mid-thought: answer it all together
+                    # She hadn't started talking yet, so they were still mid-thought: answer it all together.
+                    # ? One line each, newest last, like training data, so the newest gets answered
                     print("[voice] More speech before she answered, restarting with all of it")
-                    said_by = {u: f"{previous.get(u, '')} {said_by.get(u, '')}".strip() for u in {**previous, **said_by}}
+                    said_by = {u: "\n".join(t for t in (previous.get(u, ""), said_by.get(u, "")) if t).strip()
+                               for u in {**previous, **said_by}}
 
             # ? Runs in the background so this loop can keep listening and interrupt it
             self.current_prompt = said_by
