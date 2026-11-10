@@ -40,6 +40,21 @@ OVERLAP_PAIRS = 2        # user/assistant pairs repeated at the start of the nex
 CHARS_PER_TOKEN = 3      # conservative for chat text; the worker still drops anything over max_len
 DEFAULT_MAX_LEN = 2048
 URL = re.compile(r"https?://\S+")
+LINK_ONLY = re.compile(r"^\s*(?:<?https?://\S+>?\s*)+$")
+GIF_SITES = re.compile(r"tenor\.com|giphy\.com|\.gif\b", re.IGNORECASE)
+
+
+def _seen_as(text: str) -> str:
+    """A lone link or gif as a note, since Ohm can't open it"""
+    if LINK_ONLY.match(text or ""):
+        return "(sent a gif)" if GIF_SITES.search(text) else "(sent a link)"
+    return text
+
+
+def _unseeable(m) -> bool:
+    """Blank (sticker, attachment) or only a link"""
+    text = (m["content_text"] or "").strip()
+    return not text or bool(LINK_ONLY.match(text))
 
 
 def system_prompt(character: str = CHARACTER) -> str:
@@ -139,7 +154,9 @@ def _render(lines: list[tuple[str, dict]], people: dict, repl) -> str:
     out: list[str] = []
     prev = None
     for author, m in lines:
-        text = repl(m["content_text"])
+        if not (m["content_text"] or "").strip():
+            continue  # sticker or attachment alone
+        text = repl(_seen_as(m["content_text"]))
         out.append(text if author == prev else f"{people[author]['label']}: {text}")
         prev = author
     return "\n".join(out)
@@ -202,6 +219,9 @@ def _rotation(conv: dict, runs: list[dict], target: str, people: dict, attached:
         on = [m for m in ok if parents.get(m["id"]) == parent or parents.get(m["id"]) in mine]
         dropped["answers something older"] += len(ok) - len(on)
         ok = on
+        if _unseeable(next(m for _, m in heard if m["id"] == parent)):
+            dropped["answers a link or picture"] += len(ok)  # he can't see it
+            continue
         who = said[parent]
         names = people[who]["names"] + [people[who]["label"]] if who in people else []
         lines = []
@@ -211,6 +231,9 @@ def _rotation(conv: dict, runs: list[dict], target: str, people: dict, attached:
                 lines.append(line)
         content = repl("\n".join(lines)).strip()
         if not content:
+            continue
+        if not re.search(r"\w", content):
+            dropped["no words"] += 1  # "-_-", "??", emoji alone
             continue
         norm = content.lower().strip(" .!?")
         if (norm in SHORT_REPLIES or len(norm) < 2) and _frac(ok[0]["id"]) >= KEEP_SHORT:
@@ -300,7 +323,7 @@ def build(project, speakers: Optional[list[str]] = None, max_len: int = DEFAULT_
     gap_ms = settings["split_gap_ms"]
     examples = []
     dropped = {"excluded": 0, "unattached": 0, "starts a topic": 0, "answers something older": 0,
-               "doesn't answer (judge)": 0, "short": 0, "too long": 0, "too many lines": 0, "links or media": 0,
+               "doesn't answer (judge)": 0, "short": 0, "too long": 0, "too many lines": 0, "links or media": 0, "answers a link or picture": 0, "no words": 0,
                "speaker labels": 0, "bots": 0, "capped": 0}
     with project.lock:
         convs = [dict(r) for r in conn.execute(

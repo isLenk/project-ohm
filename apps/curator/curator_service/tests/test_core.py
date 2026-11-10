@@ -456,3 +456,19 @@ def test_curator_questions_go_to_the_base_model(monkeypatch):
         {"choices": [{"message": {"content": "ok"}}]}))
     assert llm.chat("sys", "hi") == "ok"
     assert sent[0]["lora"] == [{"id": 0, "scale": 0.0}, {"id": 1, "scale": 0.0}]
+
+
+def test_export_cleans_up_what_ohm_cannot_see(project):
+    with project.tx() as conn:
+        conversations.approve(conn, 1, confirm=True)
+        msgs = [r["id"] for r in conn.execute("SELECT id FROM messages ORDER BY ts")]
+        # an earlier line becomes a lone gif, another a sticker with no text
+        conn.execute("UPDATE messages SET content_text = 'https://tenor.com/view/cat-123' WHERE id = ?", (msgs[1],))
+        conn.execute("UPDATE messages SET content_text = '' WHERE id = ?", (msgs[2],))
+    data = export.build(project)
+    users = [m["content"] for e in data["examples"] for m in e["messages"] if m["role"] == "user"]
+    assert not any("tenor.com" in u for u in users)
+    assert any("(sent a gif)" in u for u in users) or data["dropped"]["answers a link or picture"]
+    assert not any(line.rstrip().endswith(":") for u in users for line in u.splitlines())  # no empty "Name:" lines
+    assert export._seen_as("https://example.com/x") == "(sent a link)" and export._seen_as("look https://x.y") == "look https://x.y"
+    assert export._unseeable({"content_text": "  "}) and not export._unseeable({"content_text": "yo"})
