@@ -15,3 +15,5 @@ class Task:
     reasoning: str | None = None # "low" | "medium" | "high" for backends that have it (codex); None = backend default
     items: int = 0               # how many items pack() numbered into it, for the log
     images: list[str] = ()       # pictures to show with `user`: file paths or data URLs (codex, local, openrouter)
+    private: bool = True         # mask names for cloud backends (privacy.py)
+    people: list = ()            # extra people for this task, on top of privacy.people()

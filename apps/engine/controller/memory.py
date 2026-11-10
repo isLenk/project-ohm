@@ -15,6 +15,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import brain
 import requests
 from dotenv import load_dotenv
 
@@ -409,3 +410,6 @@ def format_memories(memories: list[dict]) -> str:
 
 
 memory = MemoryClient()
+
+# Mask known names before a cloud model sees them
+brain.privacy.add_people(lambda: [person_names(u) for u in memory.users()])

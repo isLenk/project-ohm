@@ -19,8 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import (conversations, embeddings, export, feed, gpu, importer, jobs, llm, memories, model_links, reflect, search,
-               terms, threads)
+from . import (conversations, embeddings, export, feed, gpu, importer, jobs, llm, memories, model_links, names, reflect,
+               search, terms, threads)
 from .config import MODELS_DIR, PORT, TRAIN_SIMULATE
 from .errors import ApiError
 from .project import Project, require_project, state
@@ -28,6 +28,8 @@ from .registry import get_registry
 from .train import checks, evaluate, runs
 
 TOKEN = os.getenv("CURATOR_TOKEN", "")
+
+names.register()  # names the brain masks for cloud models
 
 app = FastAPI(title="Ohm Curator", version="1")
 app.add_middleware(

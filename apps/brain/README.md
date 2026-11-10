@@ -92,6 +92,26 @@ Anything with a screenshot, or text that shouldn't leave the PC, gets `Task(...,
 every cloud backend for that call. The one exception is the `screen` role, which only runs when the owner turned
 it on. `BRAIN_LOCAL_ONLY=1` skips every cloud backend for everything, that one included.
 
+**Names never go to a cloud backend** (`privacy.py`). Before `run()` hands a Task to anything but `local` or
+`qwen`, its system prompt and user text are masked:
+
+- Every name a known person goes by (display name, handle, preferred name, aliases) becomes one made-up first
+  name, drawn fresh for every call, so two calls can't be linked by a stand-in.
+- Emails, links, Discord ids, old-style Discord tags (`name#1234`), IP addresses and phone numbers become
+  `[email-1]`, `[link-1]`, `[id-1]`, `[tag-1]`, `[ip-1]`, `[phone-1]`.
+- The answer comes back with the real names and originals put back, parsed JSON included, so briefs and
+  memory notes name the right people.
+
+The apps say who's known with `brain.privacy.add_people(fn)`: the engine registers the NAS's users
+(`controller/memory.py`), the Curator the open project's human authors plus the NAS's users (`app/names.py`).
+**While no list has anybody in it, cloud backends are skipped** and the role falls through to `local`/`qwen`, so a
+NAS that's down can't let real names out. `Task(..., people=[[...]])` adds people for one call. Only
+`Task(..., private=False)` goes out unmasked; it's for text with nobody's details in it (`python -m brain try`).
+
+What it can't catch: someone mentioned who isn't in any list (add their names as aliases on the Memories
+page), and pictures (`images`), which are sent as they are. Cloud training goes through the same masking:
+`export.for_cloud()` in the Curator, with stand-ins drawn per conversation.
+
 ## Logs
 
 Every call prints `[brain] <role> via <backend>: <ms> ms`, and when `MEMORY_API_URL` is set, posts a row to the

@@ -3,7 +3,7 @@ import json
 import pytest
 
 from brain import Task, last_backend, needs_gpu_swap, pack, run, run_many, run_packed, unpack
-from brain import config
+from brain import config, privacy
 from brain.backends import parse_claude, parse_codex, strict
 from brain.router import parse
 
@@ -39,7 +39,13 @@ def fakes(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "MEMORY_API_URL", "")
     backends = {}
     monkeypatch.setattr(config, "backend", lambda name: backends.get(name))
+    people(monkeypatch, [["Lenk", "lenk_"]])  # cloud needs a name list
     return backends
+
+
+def people(monkeypatch, everyone):
+    monkeypatch.setattr(privacy, "_sources", [lambda: everyone])
+    monkeypatch.setattr(privacy, "_cache", (0.0, []))
 
 
 def test_falls_back_in_order(fakes, monkeypatch):

@@ -5,13 +5,14 @@ into one Task whose answer is {"answers": [{"n": 1, ...}, ...]}, unpack() lines 
 items, and run_packed() does both and re-asks anything missing once, in smaller batches.
 """
 
+import dataclasses
 import json
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config, log
+from . import config, log, privacy
 from .task import Task
 
 RETRY_DIVISOR = 3       # missing answers are asked again in batches this many times smaller
@@ -24,13 +25,15 @@ TYPES = {"object": dict, "array": list, "string": str, "integer": int, "number":
          "boolean": bool, "null": type(None)}
 
 
-def skip_reason(name: str, local_only: bool = False):
+def skip_reason(name: str, local_only: bool = False, private: bool = True, people: list = ()):
     """Why backend `name` can't be used right now, or None when it can."""
     b = config.backend(name)
     if b is None:
         return "not a backend"
     if config.is_cloud(name) and (local_only or config.local_only()):
         return "local only"
+    if config.is_cloud(name) and private and not (people or privacy.people()):
+        return "no name list to hide names with"
     if name in config.PAID and config.over_cap():
         return "over today's spend cap"
     ready = getattr(b, "ready", None)
@@ -44,18 +47,25 @@ def run(task: Task):
     started = time.perf_counter()
     _local.backend = None
     for name in config.chain(task.role):
-        why = skip_reason(name, task.local_only)
+        why = skip_reason(name, task.local_only, task.private, task.people)
         if why:
             if why == "not a backend":
                 print(f"[brain] '{name}' in BRAIN_ROLE_{task.role.upper()} isn't a backend")
+            elif why.startswith("no name list"):
+                _warn_once(f"[brain] {name} skipped for {task.role}: no name list is loaded, so names couldn't be hidden")
             continue
         b = config.backend(name)
         t = time.perf_counter()
+        # ? Names never go to the cloud (privacy.py)
+        mask = privacy.Mask([*privacy.people(), *task.people]) if config.is_cloud(name) and task.private else None
         try:
-            text = b.complete(task)
+            sent = dataclasses.replace(task, system=mask.hide(task.system), user=mask.hide(task.user)) if mask else task
+            text = b.complete(sent)
             answer = parse(text, task.schema) if task.schema else text
             if answer is None:
                 raise ValueError(f"the answer doesn't fit the schema: {text[:120]!r}")
+            if mask:
+                text, answer = mask.reveal(text), mask.reveal_value(answer)
         except Exception as e:
             print(f"[brain] {name} failed for {task.role}: {e}")
             continue
@@ -67,6 +77,15 @@ def run(task: Task):
         return answer
     log.report(task, None, round((time.perf_counter() - started) * 1000), False)
     return None
+
+
+_warned: set = set()
+
+
+def _warn_once(message: str):
+    if message not in _warned:
+        _warned.add(message)
+        print(message)
 
 
 def last_backend():

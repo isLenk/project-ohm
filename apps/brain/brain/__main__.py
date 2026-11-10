@@ -18,8 +18,9 @@ def main(argv):
     if len(argv) >= 3 and argv[0] == "try":
         role, text = argv[1], " ".join(argv[2:])
         for name in config.chain(role):
-            print(f"  {name}: {skip_reason(name) or 'usable'}")
-        answer = run(Task(role, "Answer briefly.", text, max_tokens=100))
+            print(f"  {name}: {skip_reason(name, private=False) or 'usable'}")
+        # Test text, nobody's details to mask
+        answer = run(Task(role, "Answer briefly.", text, max_tokens=100, private=False))
         print(answer if answer is not None else "(no backend answered)")
         return 0 if answer is not None else 1
     print(__doc__)
