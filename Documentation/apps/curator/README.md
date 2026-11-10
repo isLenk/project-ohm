@@ -1,0 +1,1 @@
+--8<-- "apps/curator/README.md"

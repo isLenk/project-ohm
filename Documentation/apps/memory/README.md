@@ -1,0 +1,1 @@
+--8<-- "apps/memory/README.md"

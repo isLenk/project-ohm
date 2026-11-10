@@ -1,0 +1,156 @@
+/* Skin that matches islenk.github.io (tokens taken from its src/index.css). */
+@import url("https://fonts.googleapis.com/css2?family=Inria+Serif:wght@400;700&display=swap");
+
+:root {
+	--lenk-blue: #6498d5;
+	--lenk-serif: "Inria Serif", "Jacques Francois", ui-serif, Georgia, serif;
+}
+
+/* Dark: the portfolio's default */
+[data-md-color-scheme="slate"] {
+	--lenk-surface: #222228;
+
+	--md-default-bg-color: #18181b;
+	--md-default-bg-color--light: rgba(24, 24, 27, 0.7);
+	--md-default-fg-color: #ffffff;
+	--md-default-fg-color--light: #9090a4;
+	--md-default-fg-color--lighter: rgba(255, 255, 255, 0.32);
+	--md-default-fg-color--lightest: rgba(255, 255, 255, 0.1);
+
+	--md-primary-fg-color: #151517;
+	--md-primary-fg-color--light: #151517;
+	--md-primary-fg-color--dark: #151517;
+	--md-primary-bg-color: #ffffff;
+	--md-primary-bg-color--light: #9090a4;
+
+	--md-accent-fg-color: var(--lenk-blue);
+	--md-typeset-color: rgba(255, 255, 255, 0.87);
+	--md-typeset-a-color: #fcd34d;
+
+	--md-code-bg-color: #222228;
+	--md-code-fg-color: #e4e4e7;
+
+	--md-footer-bg-color: #151517;
+	--md-footer-bg-color--dark: #0c0c0d;
+	--md-footer-fg-color: #ffffff;
+	--md-footer-fg-color--light: #9090a4;
+	--md-footer-fg-color--lighter: rgba(255, 255, 255, 0.32);
+}
+
+/* Light: the portfolio's .light overrides */
+[data-md-color-scheme="default"] {
+	--lenk-surface: #e4e4e7;
+
+	--md-default-bg-color: #fafafa;
+	--md-default-bg-color--light: rgba(250, 250, 250, 0.7);
+	--md-default-fg-color: #18181b;
+	--md-default-fg-color--light: #52525b;
+	--md-default-fg-color--lighter: rgba(24, 24, 27, 0.32);
+	--md-default-fg-color--lightest: rgba(24, 24, 27, 0.1);
+
+	--md-primary-fg-color: #f4f4f5;
+	--md-primary-fg-color--light: #f4f4f5;
+	--md-primary-fg-color--dark: #f4f4f5;
+	--md-primary-bg-color: #18181b;
+	--md-primary-bg-color--light: #52525b;
+
+	--md-accent-fg-color: var(--lenk-blue);
+	--md-typeset-color: #18181b;
+	/* The portfolio's amber is unreadable on white, so links go a shade darker here. */
+	--md-typeset-a-color: #b45309;
+
+	--md-code-bg-color: #f4f4f5;
+	--md-code-fg-color: #18181b;
+
+	--md-footer-bg-color: #f4f4f5;
+	--md-footer-bg-color--dark: #e4e4e7;
+	--md-footer-fg-color: #18181b;
+	--md-footer-fg-color--light: #52525b;
+	--md-footer-fg-color--lighter: rgba(24, 24, 27, 0.32);
+}
+
+/* Header: flat, same ground as the page, hairline instead of a shadow */
+.md-header,
+.md-header--shadow {
+	box-shadow: none;
+	border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.md-header__button.md-logo {
+	padding: 0.4rem 0.5rem;
+}
+
+.lenk-logo {
+	font-family: var(--lenk-serif);
+	font-weight: 700;
+	font-size: 0.9rem;
+	white-space: nowrap;
+}
+
+.md-header__button.md-logo:hover {
+	opacity: 1;
+	color: var(--lenk-blue);
+}
+
+.md-search__form {
+	background-color: var(--lenk-surface);
+	border: 1px solid var(--md-default-fg-color--lightest);
+	border-radius: 0.375rem;
+}
+
+.md-search__form:hover {
+	background-color: var(--lenk-surface);
+	border-color: var(--lenk-blue);
+}
+
+/* Headings in the portfolio's serif */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+	font-family: var(--lenk-serif);
+	font-weight: 700;
+	letter-spacing: 0.025em;
+	color: var(--md-default-fg-color);
+}
+
+.md-typeset a:hover {
+	color: #f59e0b;
+}
+
+/* Sidebar: blue for hover and the current page, like the portfolio nav */
+.md-nav__link:hover,
+.md-nav__link--active,
+.md-nav__item .md-nav__link--active {
+	color: var(--lenk-blue);
+}
+
+.md-typeset code,
+.md-typeset pre > code {
+	border-radius: 0.375rem;
+}
+
+.md-typeset table:not([class]) {
+	border: 1px solid var(--md-default-fg-color--lightest);
+	border-radius: 0.375rem;
+	box-shadow: none;
+}
+
+.md-typeset table:not([class]) th {
+	background-color: var(--lenk-surface);
+}
+
+/* Sidebar: more room between links and between sections (desktop only; the mobile drawer has its own layout) */
+@media screen and (min-width: 76.25em) {
+	.md-sidebar--primary .md-nav__link {
+		margin-top: 0.95em;
+	}
+
+	.md-sidebar--primary .md-nav__item--section {
+		margin: 2.4em 0 0;
+	}
+
+	.md-sidebar--primary .md-nav__item--section > .md-nav__link {
+		margin-bottom: 1.1em;
+		letter-spacing: 0.04em;
+	}
+}

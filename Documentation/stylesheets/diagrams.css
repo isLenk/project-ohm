@@ -1,0 +1,109 @@
+/* Inline SVG diagrams (see architecture.md). Colours follow the site's light/dark scheme. */
+[data-md-color-scheme="slate"] {
+	--od-live: #6498d5;
+	--od-mem: #88d564;
+	--od-bg: #f59e0b;
+	--od-ctl: #e5737f;
+	--od-box: #1f1f22;
+	--od-inner: #2a2a31;
+}
+
+[data-md-color-scheme="default"] {
+	--od-live: #2f6fb8;
+	--od-mem: #3f8f1f;
+	--od-bg: #b45309;
+	--od-ctl: #a3202f;
+	--od-box: #ffffff;
+	--od-inner: #f4f4f5;
+}
+
+.ohm-diagram {
+	margin: 1.5em 0;
+	overflow-x: auto;
+}
+
+.ohm-diagram svg {
+	display: block;
+	width: 100%;
+	min-width: 760px;
+	height: auto;
+	font-family: var(--md-text-font-family);
+}
+
+.ohm-diagram .od-box {
+	fill: var(--od-box);
+	stroke: var(--md-default-fg-color--lighter);
+	stroke-width: 1.2;
+}
+
+.ohm-diagram .od-inner {
+	fill: var(--od-inner);
+	stroke: var(--md-default-fg-color--lightest);
+	stroke-width: 1;
+}
+
+.ohm-diagram .od-t {
+	font-size: 13.5px;
+	font-weight: 600;
+	fill: var(--md-default-fg-color);
+}
+
+.ohm-diagram .od-s {
+	font-size: 12px;
+	fill: var(--md-default-fg-color--light);
+}
+
+.ohm-diagram .od-l {
+	font-size: 11px;
+	fill: var(--md-default-fg-color--light);
+}
+
+.ohm-diagram .od-live,
+.ohm-diagram .od-mem,
+.ohm-diagram .od-bg,
+.ohm-diagram .od-ctl {
+	fill: none;
+}
+
+.ohm-diagram .od-live {
+	stroke: var(--od-live);
+	stroke-width: 1.8;
+}
+
+.ohm-diagram .od-mem {
+	stroke: var(--od-mem);
+	stroke-width: 1.8;
+}
+
+.ohm-diagram .od-bg {
+	stroke: var(--od-bg);
+	stroke-width: 1.6;
+	stroke-dasharray: 6 4;
+}
+
+.ohm-diagram .od-ctl {
+	stroke: var(--od-ctl);
+	stroke-width: 1.4;
+	stroke-dasharray: 2 4;
+}
+
+.ohm-diagram .od-m-live {
+	fill: var(--od-live);
+}
+
+.ohm-diagram .od-m-mem {
+	fill: var(--od-mem);
+}
+
+.ohm-diagram .od-m-bg {
+	fill: var(--od-bg);
+}
+
+.ohm-diagram .od-m-ctl {
+	fill: var(--od-ctl);
+}
+
+/* Mermaid: let wide sequence diagrams scroll instead of shrinking to unreadable */
+.md-typeset .mermaid {
+	overflow-x: auto;
+}

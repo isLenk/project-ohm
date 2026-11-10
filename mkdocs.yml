@@ -1,0 +1,87 @@
+site_name: Ohm Documentation
+docs_dir: Documentation
+# The TTS API owns port 8000, so the preview uses another one.
+dev_addr: 127.0.0.1:8900
+
+# Source files that shouldn't be copied into the site
+exclude_docs: |
+  *.psd
+  *.drawio
+
+theme:
+  name: material
+  custom_dir: overrides
+  font:
+    text: Inter
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.sections
+    - content.code.copy
+
+extra:
+  # The logo in the header leads back to the project's page on the portfolio.
+  homepage: https://islenk.github.io/#/projects/ohm-virtual-assistant
+
+extra_css:
+  - stylesheets/portfolio.css
+  - stylesheets/diagrams.css
+
+extra_javascript:
+  - javascripts/theme-sync.js
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  # ```mermaid blocks are drawn as diagrams
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  # --8<-- "path" pulls in a file from the repo, used for the app READMEs
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Architecture: architecture.md
+  - How a reply is made: turn.md
+  - Interface: Interface/README.md
+  - Curator:
+      - Overview: Curator/README.md
+      - Terminology: Curator/terminology.md
+      - Data model: Curator/data-model.md
+      - API: Curator/api.md
+      - Memories: Curator/memories.md
+      - Search: Curator/search.md
+      - Import: Curator/import.md
+      - Threading: Curator/threading.md
+      - Reflection: Curator/reflection.md
+      - Training: Curator/training.md
+      - Running the service: apps/curator/README.md
+  - Services:
+      - Brain: apps/brain/README.md
+      - Memory service: apps/memory/README.md
+      - Ohm Lite: apps/lite/README.md
+  - Project:
+      - Dev Notes: DevNotes.md
+      - Writing these docs: writing-docs.md
