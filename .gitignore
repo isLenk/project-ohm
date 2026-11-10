@@ -28,3 +28,6 @@ apps/curator/unsloth_compiled_cache/
 
 # TTS engine benchmark output (apps/tts/bench)
 /apps/tts/bench/out/
+
+# Ohm Lite on the NAS: Codex sign-in and spend file
+/apps/lite/data

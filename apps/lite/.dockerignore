@@ -1,0 +1,4 @@
+# Not part of the image: the sign-in and saved receipts (root-owned on the NAS), and the secrets
+data
+.env
+__pycache__

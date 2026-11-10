@@ -1,0 +1,6 @@
+discord.py>=2.7
+pillow>=11
+ddgs>=9.16
+# What the brain package needs
+requests
+python-dotenv
