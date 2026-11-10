@@ -25,3 +25,6 @@ __pycache__/
 apps/mainframe/*.db
 apps/tts/voices/
 apps/curator/unsloth_compiled_cache/
+
+# TTS engine benchmark output (apps/tts/bench)
+/apps/tts/bench/out/
