@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
+  LuCheck,
   LuChevronDown,
   LuExternalLink,
   LuFile,
@@ -36,6 +37,16 @@ const toIcon = async (file: File) => {
 }
 
 const IMPORT = '__import'
+
+// Deep compare for the editor: ignores status, null/''/missing are equal
+const empty = (v) => v == null || v === ''
+const same = (a, b) => {
+  if (empty(a) && empty(b)) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) return a === b
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+  keys.delete('status')
+  return [...keys].every((k) => same(a[k], b[k]))
+}
 const fileName = (path: string) => path.split(/[\\/]/).pop()
 
 // Chatterbox won't clone from less than this (and only listens to the first ~10 seconds)
@@ -59,6 +70,8 @@ const Characters = () => {
   const [draft, setDraft] = useState(null) // the character open in the editor
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
+  // Last save result, shown beside Save
+  const [saveStatus, setSaveStatus] = useState<{ id: string; error?: string } | null>(null)
   const [voices, setVoices] = useState<string[]>(null) // clips in apps/tts/voices
   const voiceInput = useRef<HTMLInputElement>(null)
 
@@ -209,8 +222,15 @@ const Characters = () => {
   const saveDraft = () =>
     run('Saving…', async (relabel) => {
       const before = characters.find((c) => c.id === draft.id)
-      const saved = await save({ ...draft, status: before?.status })
+      let saved
+      try {
+        saved = await save({ ...draft, status: before?.status })
+      } catch (e) {
+        setNote('')
+        return setSaveStatus({ id: draft.id, error: message(e) })
+      }
       setDraft(saved)
+      setSaveStatus({ id: saved.id })
       const ids = (c) => `${c?.model?.base_model_id ?? ''}|${c?.model?.adapter_id ?? ''}`
       const inPlay = before?.status === 'Active'
       const switched = inPlay && ids(before) !== ids(saved) ? await switchModel(saved, relabel) : ''
@@ -221,7 +241,7 @@ const Characters = () => {
           ? (await switchVoice(saved, relabel)) ||
             `${saved.name}'s new voice is used from their next reply (within 30 seconds).`
           : ''
-      setNote(['Saved.', switched, voiced].filter(Boolean).join(' '))
+      setNote([switched, voiced].filter(Boolean).join(' '))
     })
 
   const pickBase = async (value) => {
@@ -295,7 +315,10 @@ const Characters = () => {
   const adapters = (models?.adapters ?? []).filter(
     (a) => a.base_model_id === draft?.model?.base_model_id
   )
-  const inPlay = characters.find((c) => c.id === draft?.id)?.status === 'Active'
+  const stored = characters.find((c) => c.id === draft?.id)
+  const inPlay = stored?.status === 'Active'
+  const dirty = !!draft && !same(draft, stored)
+  const status = saveStatus?.id === draft?.id ? saveStatus : null
 
   return (
     <>
@@ -644,8 +667,21 @@ const Characters = () => {
                 <LuTrash2 /> Delete
               </button>
               <span className="flex-1" />
-              <button onClick={saveDraft} className="btn btn-primary">
-                Save changes
+              <span role="status" className="min-w-0 truncate text-[12.5px]">
+                {status?.error ? (
+                  <span className="text-bad" title={status.error}>
+                    Not saved: {status.error}
+                  </span>
+                ) : dirty ? (
+                  <span className="text-warn">Unsaved changes</span>
+                ) : status ? (
+                  <span className="flex items-center gap-1.5 text-good">
+                    <LuCheck /> Saved
+                  </span>
+                ) : null}
+              </span>
+              <button onClick={saveDraft} disabled={!dirty} className="btn btn-primary">
+                {dirty ? 'Save changes' : 'Saved'}
               </button>
             </div>
           </aside>
