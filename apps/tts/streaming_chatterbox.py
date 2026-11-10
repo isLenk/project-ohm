@@ -29,6 +29,7 @@ from RealtimeTTS import ChatterboxEngine, ChatterboxVoice
 from RealtimeTTS.engines.base_engine import BaseEngine
 from chatterbox.tts_turbo import punc_norm, S3GEN_SIL
 from chatterbox.models.s3gen.s3gen import S3Token2Mel
+from spoken import spoken
 
 SPEECH_VOCAB = 6561          # tokens >= this are special (start/stop) and can't be vocoded
 SAMPLES_PER_TOKEN = 960      # 25 tokens/s at 24 kHz
@@ -235,6 +236,10 @@ class StreamingChatterboxEngine(ChatterboxEngine):
     def synthesize(self, text: str, sentence_count: int = 0) -> bool:
         BaseEngine.synthesize(self, text, sentence_count)
         if self.stop_synthesis_event.is_set():
+            return True
+        # Slang said as words (spoken.py)
+        text = spoken(text)
+        if not text.strip():
             return True
         try:
             if self.voice is not None and self.voice.audio_prompt_path:
