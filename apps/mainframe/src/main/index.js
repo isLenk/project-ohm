@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain,  Tray, Menu, nativeImage  } from 'electron'
 import { join } from 'path'
 import { optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -26,10 +26,19 @@ import { health } from './health.js'
 import { nasCall } from './nas.js'
 import { getSettings, saveSettings, setting } from './settings.js'
 import { brainStatus, installTool, openSignIn } from './brain.js'
+import trayIconPath from "../../build/icon.ico?asset"
+
+if (!app.requestSingleInstanceLock()) { app.quit() } // Singleton
+else { app.on('second-instance', showWindow)}
+
+// Detatched to module level so I can have it on taskbar
+let mainWindow=null
+let quitting=false
+let tray=null
 
 function createWindow() {
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 1024,
@@ -55,6 +64,11 @@ function createWindow() {
     mainWindow.show()
   })
 
+  mainWindow.on('close', (event) => {
+    if (quitting) return // OK Actually close
+    event.preventDefault()
+    mainWindow.hide() // Hide this bbg but let other stuff continue doing its thang~
+  })
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -69,14 +83,39 @@ function createWindow() {
   }
 }
 
+function showWindow() {
+  if (!mainWindow) createWindow()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function createTray() {
+  tray = new Tray(nativeImage.createFromPath(trayIconPath))
+  tray.setToolTip('Ohm')
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {label: 'Open', click: showWindow},
+    { type: 'separator' },
+    { label: 'Quit', click: () => { quitting=true; app.quit()} }
+  ]))
+  tray.on('click', showWindow)
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
+
+
   // Windows groups taskbar buttons by this id. It matches appId in electron-builder.yml and the
   // id on the Ohm launcher shortcut, so the window joins the pinned launcher. Set directly rather
   // than through electronApp.setAppUserModelId, which swaps in electron.exe's path in dev.
   if (process.platform === 'win32') app.setAppUserModelId('com.ohm.app')
+
+
+
+  app.on('before-quit', () => { quitting= true})
+
+  app.on('window-all-closed', () => {}) // Still in tray, do nothing
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
@@ -191,6 +230,8 @@ app.whenReady().then(() => {
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+
+  createTray()
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common
