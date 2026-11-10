@@ -14,7 +14,7 @@ from modules.vision import screen
 from controller import addressee, brief, modules
 from controller.memory import memory, person_names, HISTORY_LIMIT, HISTORY_MINUTES
 from controller.wrappers.openai import NO_CHECKS
-from utils import latency
+from utils import WebSearch, latency
 from config.constants import strip_voice_tags
 from utils.Vision import message_images, picture_note
 from utils.VoiceTags import VoiceTagFilter
@@ -124,8 +124,9 @@ class DiscordClient(discord.Client):
                 m["content"] = strip_leading_label(m["content"], labels)
         return [m for m in recent if m["content"]]
 
-    def make_stream_response(self, said_by, channel):
-        """Start a voice reply to what people said. said_by: {discord user: what they said}."""
+    def make_stream_response(self, said_by, channel, on_search=None):
+        """Start a voice reply to what people said. said_by: {discord user: what they said}.
+        on_search(): called when the reply has to wait on a web search."""
         turn = Turn(self, channel, "voice", said_by)
         said = " ".join(said_by.values())
         memories = memory.relevant_memories(self.character, said)
@@ -135,6 +136,8 @@ class DiscordClient(discord.Client):
         # One call: search? screen? who for?
         checks = self.checks_for(turn.line, self.history(turn.channel_id))
         latency.mark("pre_checks")
+        if checks["search"] and on_search and not WebSearch.answered(checks["search"]):
+            on_search()
         shot, seen = self.look_at_screen(said, checks)
         turn.prompt(turn.line, memories, people, screen=shot, seen=seen, checks=checks)
         return turn
@@ -149,10 +152,11 @@ class DiscordClient(discord.Client):
             print(f"[vision] Looking at the screen. {seen}")
         return shot, seen
 
-    def make_idle_stream(self, channel, about_screen=False, region=None):
+    def make_idle_stream(self, channel, about_screen=False, region=None, on_search=None):
         """Start something Ohm says on his own when the call has gone quiet.
         about_screen: something new came up on the screen (modules/vision/watch.py), so talk about that.
-        region: where on the screen it came up, so the screenshot shows just that (watch.changed_region)."""
+        region: where on the screen it came up, so the screenshot shows just that (watch.changed_region).
+        on_search: unused, matches make_stream_response."""
         turn = Turn(self, channel, "voice")
         present = [self.speaker_name(m) for m in getattr(channel, "members", []) if not m.bot]
         shot, seen = screen.look(region)  # (None, "") unless the vision module is on

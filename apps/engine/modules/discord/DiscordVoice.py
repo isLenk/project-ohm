@@ -352,9 +352,12 @@ class DiscordVoice:
         """Generate a reply with make_turn(*args) and play it as it streams in"""
         # ? One continuous source per response: chunks are played as soon as they
         # arrive instead of being batched into separate ffmpeg clips
+        filled = {"played": False}  # a filler line went out first
+
         def on_start():
             latency.mark("playback")
-            latency.report()
+            if not filled["played"]:  # else report on the reply's own audio
+                latency.report()
 
         source = StreamingPCMSource(in_rate=24000, on_start=on_start)
         self.current_source = source
@@ -362,11 +365,31 @@ class DiscordVoice:
         def on_done(error):
             if error: print(f"Playback error: {error}")
 
-        async def fn_push(chunk):
-            latency.mark("first_tts_audio")
+        def play(chunk):
             source.feed(chunk)
             if not self.talking():
                 self.vc.play(source, after=on_done)
+
+        async def fn_push(chunk):
+            latency.mark("first_tts_audio")
+            if filled["played"]:
+                latency.report()
+            play(chunk)
+
+        loop = asyncio.get_running_loop()
+
+        def play_filler(clip):
+            if self.current_source is not source:  # cut off
+                return
+            latency.mark("filler")
+            filled["played"] = True
+            play(clip)
+
+        def searching():
+            """Play a filler line while a web search runs (called from make_turn's thread)"""
+            clip = self.tts_module.filler()
+            if clip:
+                loop.call_soon_threadsafe(play_filler, clip)
 
         latency.mark("bot_got_text")
         turn = None
@@ -374,7 +397,7 @@ class DiscordVoice:
         # is never seen here, so it has to close its own LLM stream once it exists
         pending = {"cancelled": False, "turn": None}
         def make():
-            pending["turn"] = t = make_turn(*args)
+            pending["turn"] = t = make_turn(*args, on_search=searching)
             if pending["cancelled"]:
                 t.discard()
             return t
@@ -406,5 +429,7 @@ class DiscordVoice:
                 pending["cancelled"] = True
                 if pending["turn"] is not None:
                     pending["turn"].discard()
+            if self.tts_module.fillers_stale():  # voice changed
+                self.discord_client.add_task(self.tts_module.prepare_fillers)
 
         print("-" *  20)

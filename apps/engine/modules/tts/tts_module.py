@@ -1,4 +1,5 @@
 import os
+import random
 import time
 import requests
 from dotenv import load_dotenv
@@ -16,6 +17,11 @@ from controller.memory import memory, voice_engine, voice_file
 ENDPOINT = "http://localhost:7851/api/tts-generate-streaming"
 VOICE_TTL = 30          # seconds before the character's voice is re-read from the NAS
 PRELOAD_FOR = 180       # seconds to keep trying to reach a TTS server that's still loading its model
+# Said while a reply waits on a web search. Pre-made audio: the TTS holds back a lone sentence
+# ? ~1.5-2s each, long enough to cover most searches
+SEARCH_FILLERS = ("one sec, lemme look.", "hold on, lemme check.", "lemme look that up real quick.",
+                  "gimme a sec, lemme see.")
+FILLER_TIMEOUT = 30     # seconds per filler clip
 TAGS = {"chatterbox": True, "kokoro": False}  # engines that can do [sigh] etc.
 
 load_dotenv()
@@ -33,6 +39,9 @@ class TTSModule:
         self._voice = getattr(model, "voice", None)  # clip or Kokoro preset, None = default
         self._engine = getattr(model, "voice_engine", None) or "chatterbox"
         self._voice_at = time.monotonic()
+        self._fillers = (None, [])  # ((engine, voice), [PCM])
+        self._last_filler = None
+        self._making_fillers = False
 
     def voice(self) -> str:
         """The character's voice ("" for the default), re-read with the engine from the NAS every VOICE_TTL. Blocking."""
@@ -79,12 +88,61 @@ class TTSModule:
                             detail = (await r.json(content_type=None) or {}).get("detail", r.reason)
                             print(f"[tts] Couldn't load {self.name}'s {engine} voice {voice}: {detail}. "
                                   "Replies use its default voice.")
-                        return
+                    break
                 except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
                     if time.monotonic() >= deadline:
                         print(f"[tts] TTS server isn't up at {TTS_URL}; {self.name}'s voice loads with their first reply.")
                         return
                 await asyncio.sleep(3)
+        await self.prepare_fillers()
+
+    async def prepare_fillers(self):
+        """Make the SEARCH_FILLERS clips in the current voice"""
+        if self._making_fillers:
+            return
+        self._making_fillers = True
+        try:
+            voice = await asyncio.to_thread(self.voice)
+            engine = self._engine
+            clips = []
+            for line in SEARCH_FILLERS:
+                try:
+                    clip = await asyncio.wait_for(self._synthesize(line, voice, engine), FILLER_TIMEOUT)
+                except Exception as e:
+                    print(f"[tts] Couldn't make the filler line {line!r}: {e!r}")
+                    continue
+                if clip:
+                    clips.append(clip)
+            self._fillers = ((engine, voice), clips)
+            if clips:
+                print(f"[tts] {len(clips)} filler lines ready for web searches")
+        finally:
+            self._making_fillers = False
+
+    async def _synthesize(self, text: str, voice: str, engine: str = "chatterbox") -> bytes:
+        """`text` as raw PCM"""
+        audio = bytearray()
+        async with websockets.connect(self._url(voice, engine), max_size=None) as ws:
+            await ws.send(text)
+            await ws.send("END")
+            while (message := await ws.recv()) != "END":
+                if isinstance(message, bytes):
+                    audio += message
+        return bytes(audio)
+
+    def filler(self) -> bytes | None:
+        """A random filler clip, never the same twice in a row; None until made for this voice"""
+        clips = self._fillers[1]
+        if self.fillers_stale() or not clips:
+            return None
+        options = [c for c in clips if c is not self._last_filler] or clips
+        self._last_filler = random.choice(options)
+        return self._last_filler
+
+    def fillers_stale(self) -> bool:
+        """The fillers are in an old voice or engine"""
+        made_in = self._fillers[0]
+        return made_in is not None and made_in != (self._engine, self._voice or "")
 
     async def get_request_stream(self, text):
         url = f"{TTS_URL}/api/v1/tts/feed_input"
