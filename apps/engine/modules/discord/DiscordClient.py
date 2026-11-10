@@ -14,7 +14,7 @@ from modules.vision import screen
 from controller import addressee, brief, modules
 from controller.memory import memory, person_names, HISTORY_LIMIT, HISTORY_MINUTES
 from controller.wrappers.openai import NO_CHECKS
-from utils import WebSearch, latency
+from utils import WebSearch, latency, trace
 from config.constants import strip_voice_tags
 from utils.Vision import message_images, picture_note
 from utils.VoiceTags import VoiceTagFilter
@@ -129,12 +129,10 @@ class DiscordClient(discord.Client):
         on_search(): called when the reply has to wait on a web search."""
         turn = Turn(self, channel, "voice", said_by)
         said = " ".join(said_by.values())
-        memories = memory.relevant_memories(self.character, said)
-        if memories:
-            print(f"[memory] recalled: {[m['content'] for m in memories]}")
+        memories = recall(self.character, said)
         people = self.people_in(said)
         # One call: search? screen? who for?
-        checks = self.checks_for(turn.line, self.history(turn.channel_id))
+        checks = traced_checks(self, turn.line, self.history(turn.channel_id))
         latency.mark("pre_checks")
         if checks["search"] and on_search and not WebSearch.answered(checks["search"]):
             on_search()
@@ -145,11 +143,17 @@ class DiscordClient(discord.Client):
     def look_at_screen(self, said, checks=None) -> tuple[str | None, str]:
         """(a screenshot, the line saying what's on it) if the vision module is on and `said` is about the screen,
         else (None, ""). checks: the reply's pre_checks(), so the screen question isn't asked a second time."""
-        if not screen.on() or not said.strip() or not (checks or self.model.pre_checks(said))["screen"]:
+        if not screen.on():
+            trace.stage("screen", "skipped", "vision off")
             return None, ""
+        if not said.strip() or not (checks or self.model.pre_checks(said))["screen"]:
+            trace.stage("screen", "skipped", "not about the screen")
+            return None, ""
+        trace.stage("screen", "running", "looking")
         shot, seen = screen.look()
         if shot:
             print(f"[vision] Looking at the screen. {seen}")
+        trace.stage("screen", "done" if shot else "failed", seen or "no screenshot", log=seen or None)
         return shot, seen
 
     def make_idle_stream(self, channel, about_screen=False, region=None, on_search=None):
@@ -160,6 +164,9 @@ class DiscordClient(discord.Client):
         turn = Turn(self, channel, "voice")
         present = [self.speaker_name(m) for m in getattr(channel, "members", []) if not m.bot]
         shot, seen = screen.look(region)  # (None, "") unless the vision module is on
+        trace.stage("screen", "done" if shot else "skipped", seen if shot else "vision off", log=seen or None)
+        for name in ("memory", "checks", "search"):
+            trace.stage(name, "skipped", "nobody asked anything")
         idea = ("comment on what's on the screen you can see" if shot and about_screen else
                 "comment on what's on the screen you can see, follow up on what you were just talking about, "
                 "or ask someone something" if shot else
@@ -245,17 +252,28 @@ class DiscordClient(discord.Client):
         """Text reply to `message`: (what to send to Discord, contains_intent). Empty if there's nothing to say.
         images: the pictures attached to it, as data URLs (utils/Vision.message_images)."""
         said = picture_note(self.incoming_text(message), len(images or []))
+        trace.begin("text", {self.speaker_name(message.author): said}, self.character,
+                    note=f"#{getattr(message.channel, 'name', 'chat')}")
         turn = Turn(self, message.channel, "text", {message.author: said})
-        memories = memory.relevant_memories(self.character, said)
+        memories = recall(self.character, said)
         people = self.people_in(said, message.mentions)
         history = self.history(turn.channel_id)
-        checks = self.checks_for(turn.line, history)
+        checks = traced_checks(self, turn.line, history)
         shot, seen = self.look_at_screen(self.incoming_text(message), checks)
-        response, contains_intent = self.model.generate_text(
-            turn.line, related_memories=memories, history=history, stop=turn.labels(history), people=people,
-            images=images or None, screen=shot, seen=seen, checks=checks, summary=brief.current(turn.channel_id),
-            aside=self.aside(turn.line, history, checks),
-        )
+        trace.stage("prompt", "done", f"{len(history)} lines of history", turn=turn.trace_id)
+        trace.stage("llm", "running", str(getattr(self.model.model, "model", "")), turn=turn.trace_id)
+        try:
+            response, contains_intent = self.model.generate_text(
+                turn.line, related_memories=memories, history=history, stop=turn.labels(history), people=people,
+                images=images or None, screen=shot, seen=seen, checks=checks, summary=brief.current(turn.channel_id),
+                aside=self.aside(turn.line, history, checks),
+            )
+        except Exception as e:
+            trace.stage("llm", "failed", str(e)[:60], log=repr(e), turn=turn.trace_id)
+            trace.end("failed", repr(e), turn=turn.trace_id)
+            raise
+        trace.stage("llm", "done", f"{len(response)} chars", turn=turn.trace_id)
+        trace.reply(response, turn=turn.trace_id)
 
         # One reply: no leading "Ohm:", and nothing past where he starts writing other people's lines
         response = clean_reply(response, self.model.name, turn.speakers)
@@ -266,6 +284,7 @@ class DiscordClient(discord.Client):
         response, turn.reply = outgoing_mentions(response, members, reply_to=message.author)
 
         turn.commit()
+        trace.end("done", turn=turn.trace_id)
         return response, contains_intent
     
     async def on_message(self, message, source="message"):
@@ -322,6 +341,35 @@ class DiscordClient(discord.Client):
                 print(f'Intent: {intent}')
 
 
+# Traced reply steps (utils/trace.py)
+
+def recall(character: str, said: str) -> list[dict]:
+    trace.stage("memory", "running", "searching memories")
+    started = time.perf_counter()
+    memories = memory.relevant_memories(character, said)
+    ms = (time.perf_counter() - started) * 1000
+    if memories:
+        print(f"[memory] recalled: {[m['content'] for m in memories]}")
+    trace.stage("memory", "done", f"{len(memories)} hit{'s' if len(memories) != 1 else ''} · {ms:.0f} ms")
+    for m in memories:
+        trace.log("memory", m.get("content", ""))
+    return memories
+
+
+def traced_checks(client, line: str, history: list) -> dict:
+    trace.stage("checks", "running", "search? screen? who for?")
+    started = time.perf_counter()
+    checks = client.checks_for(line, history)
+    ms = (time.perf_counter() - started) * 1000
+    trace.stage("checks", "done", f"{ms:.0f} ms · to {checks.get('to') or 'anyone'}",
+                log=f"search={checks.get('search')!r} screen={checks.get('screen')} to={checks.get('to')!r}")
+    if checks.get("search"):
+        trace.stage("search", "running", checks["search"])
+    else:
+        trace.stage("search", "skipped", "no query")
+    return checks
+
+
 class Turn:
     """One exchange in a conversation: what people said, then Ohm's reply.
 
@@ -339,6 +387,8 @@ class Turn:
         self.line = "\n".join(f"{client.speaker_name(u)}: {t}" for u, t in self.said_by.items())
         self.speakers = [client.model.name]  # labels the reply is cut at, see labels()
         self.reply = ""
+        self.trace_id = trace.current_id()
+        self._chunk_count = 0
         self._stream = None
         self._chunks = iter(())
         self._finished = False
@@ -366,11 +416,19 @@ class Turn:
         # ? In voice, a hard cap so a "how do I..." question can't turn into a minute-long lecture
         limit = {"max_tokens": VOICE_MAX_TOKENS, "voice": True, "tags": self.voice_tags} if self.source == "voice" else {}
         history = self.client.history(self.channel_id)
-        self._stream = self.client.model.generate_stream_text(
-            text, related_memories=memories, history=history, stop=self.labels(history), people=people,
-            screen=screen, seen=seen, checks=checks, summary=brief.current(self.channel_id), **limit,
-            aside=self.client.aside(self.line, history, checks) if self.said_by else None,
-        )
+        trace.stage("prompt", "done", f"{len(history)} lines of history" + (" · screenshot" if screen else ""),
+                    turn=self.trace_id)
+        trace.stage("llm", "running", str(getattr(self.client.model.model, "model", "")), turn=self.trace_id)
+        try:
+            self._stream = self.client.model.generate_stream_text(
+                text, related_memories=memories, history=history, stop=self.labels(history), people=people,
+                screen=screen, seen=seen, checks=checks, summary=brief.current(self.channel_id), **limit,
+                aside=self.client.aside(self.line, history, checks) if self.said_by else None,
+            )
+        except Exception as e:
+            trace.stage("llm", "failed", str(e)[:60], log=repr(e), turn=self.trace_id)
+            trace.end("failed", repr(e), turn=self.trace_id)
+            raise
         self._chunks = iter(self._stream)
 
     def __iter__(self):
@@ -382,6 +440,7 @@ class Turn:
         try:
             chunk = next(self._chunks)
         except StopIteration:
+            trace.stage("llm", "done", f"{self._chunk_count} chunks", turn=self.trace_id)
             # Whatever the filter was still holding back (an unclosed *..)
             rest = self._tags.flush() if self._tags else ""
             rest = self._at.feed(rest) if self._at else rest
@@ -390,13 +449,19 @@ class Turn:
             chunk, self._last = self._last.model_copy(deep=True), None
             chunk.choices[0].delta.content = rest
             self.reply += rest
+            trace.reply(self.reply, turn=self.trace_id)
             return chunk
+        except Exception as e:
+            trace.stage("llm", "failed", str(e)[:60], log=repr(e), turn=self.trace_id)
+            raise
+        self._chunk_count += 1
         if chunk.choices and chunk.choices[0].delta.content:
             if self._tags:
                 # ? Rewrite the chunk in place so the TTS and the saved reply both get the cleaned text
                 chunk.choices[0].delta.content = self._at.feed(self._tags.feed(chunk.choices[0].delta.content))
                 self._last = chunk
             self.reply += chunk.choices[0].delta.content
+            trace.reply(self.reply, turn=self.trace_id)
         return chunk
 
     def _stop(self):
@@ -413,12 +478,14 @@ class Turn:
         return True
 
     def discard(self):
-        self._stop()
+        if self._stop():
+            trace.stage("commit", "skipped", "thrown away", turn=self.trace_id)
 
     def commit(self):
         """Save this exchange to the conversation, the NAS, and long-term memory (once)."""
         if not self._stop():
             return
+        trace.stage("commit", "running", "saving", turn=self.trace_id)
         client, now = self.client, time.time()
         convo = client.conversation(self.channel_id)
 
@@ -443,3 +510,5 @@ class Turn:
                 client.character, "assistant", reply,
                 source=self.source, guild_id=self.guild_id, channel_id=self.channel_id,
             )
+        trace.stage("commit", "done", "saved to the NAS" if reply else "nothing said to save",
+                    log=f"reply: {reply}" if reply else None, turn=self.trace_id)

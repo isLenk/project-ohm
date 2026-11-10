@@ -10,6 +10,7 @@ import random
 from modules.discord.utils.RTTSSink import CustomSpeechRecognitionSink
 from modules.discord.utils.StreamingPCMSource import StreamingPCMSource
 import utils.latency as latency
+import utils.trace as trace
 import logging
 from modules.mood.mood import mood
 from modules.vision import watch
@@ -125,10 +126,12 @@ class DiscordVoice:
                     action = classify_interruption(" ".join(said_by.values()), self.discord_client.model.name)
                     if action == "ignore":
                         print("[voice] Backchannel, still talking")
+                        trace.log("playback", f"backchannel ({' '.join(said_by.values())[:40]}), kept talking")
                         if self.vc.is_paused(): self.vc.resume()
                         continue
                     if action == "stop":
                         mood.shushed()
+                        trace.end("cut", "told to stop")
                         await self.interrupt()
                         print("[voice] Told to stop")
                         continue
@@ -136,6 +139,7 @@ class DiscordVoice:
                 if not was_talking and self.current_turn is not None:
                     # Nobody heard that reply, so don't keep it in the conversation
                     self.current_turn.discard()
+                trace.end("cut", "talked over" if was_talking else "more speech before the reply, restarting")
                 await self.interrupt()
                 if was_talking:
                     # Talking over her shuts her up, then she answers what they said
@@ -150,6 +154,8 @@ class DiscordVoice:
 
             # ? Runs in the background so this loop can keep listening and interrupt it
             self.current_prompt = said_by
+            trace.begin("voice", {self.discord_client.speaker_name(u): t for u, t in said_by.items()},
+                        self.discord_client.character, note=f"{len(said_by)} speaker{'s' if len(said_by) != 1 else ''}")
             self.response_task = asyncio.create_task(self.on_text(said_by))
 
     def talking(self) -> bool:
@@ -164,6 +170,7 @@ class DiscordVoice:
     def on_speech(self, user):
         """Someone has been talking for a bit (BARGE_IN_MS) and hasn't finished yet. If he's talking,
         pause him right away instead of waiting for their transcript; listen_worker decides what to do once it arrives."""
+        trace.hearing(self.discord_client.speaker_name(user), self.discord_client.character)
         if not (self.vc and self.vc.is_playing()):
             return
         self.vc.pause()
@@ -187,6 +194,7 @@ class DiscordVoice:
 
     async def interrupt(self):
         """Stop the current reply: cancel generation (LLM + TTS) and cut the audio"""
+        trace.end("cut", "interrupted")  # no-op if already ended
         task, self.response_task = self.response_task, None
         if task is not None and not task.done():
             task.cancel()
@@ -324,6 +332,8 @@ class DiscordVoice:
         """Say something on his own because the call has gone quiet (about_screen: about something new on the screen,
         region: where on it, see watch.changed_region)"""
         print("\n", "-" * 20, "\n[voice] Quiet for a while, saying something")
+        trace.begin("idle", None, self.discord_client.character,
+                    note="something new on the screen" if about_screen else "quiet for a while")
         await self._speak(self.discord_client.make_idle_stream, self.vc.channel, about_screen, region)
 
     async def idle_worker(self):
@@ -353,9 +363,12 @@ class DiscordVoice:
         # ? One continuous source per response: chunks are played as soon as they
         # arrive instead of being batched into separate ffmpeg clips
         filled = {"played": False}  # a filler line went out first
+        tid = trace.current_id()  # callbacks may outlive this turn
+        trace.stage("turn", "running", "making the reply", turn=tid)
 
         def on_start():
             latency.mark("playback")
+            trace.stage("playback", "running", "playing", turn=tid)
             if not filled["played"]:  # else report on the reply's own audio
                 latency.report()
 
@@ -364,6 +377,7 @@ class DiscordVoice:
 
         def on_done(error):
             if error: print(f"Playback error: {error}")
+            trace.stage("playback", "failed" if error else "done", str(error)[:60] if error else "played", turn=tid)
 
         def play(chunk):
             source.feed(chunk)
@@ -372,6 +386,7 @@ class DiscordVoice:
 
         async def fn_push(chunk):
             latency.mark("first_tts_audio")
+            trace.stage("tts", "running", "audio coming in", turn=tid)
             if filled["played"]:
                 latency.report()
             play(chunk)
@@ -382,6 +397,7 @@ class DiscordVoice:
             if self.current_source is not source:  # cut off
                 return
             latency.mark("filler")
+            trace.log("tts", "said a \"one sec\" line while the search runs", turn=tid)
             filled["played"] = True
             play(clip)
 
@@ -406,6 +422,7 @@ class DiscordVoice:
             # Connect to TTS at the same time instead of after
             async def connect_tts():
                 # In the character's voice (ws_url may ask the NAS for it, so off the event loop)
+                trace.stage("tts", "running", "connecting", turn=tid)
                 return await websockets.connect(await asyncio.to_thread(self.tts_module.ws_url))
 
             turn, websocket = await asyncio.gather(
@@ -414,9 +431,14 @@ class DiscordVoice:
             )
             self.current_turn = turn
             latency.mark("llm_stream_open")
+            trace.stage("turn", "done", "reply started", turn=tid)
+            trace.stage("tts", "running", "websocket open", turn=tid)
             await self.tts_module.ws_thread_manager(websocket, turn, fn_push, raw=True)
+            trace.stage("tts", "done", "all audio in", turn=tid)
         except Exception as e:
             print(f"Error connecting to TTS WebSocket: {e}")
+            trace.stage("tts", "failed", str(e)[:60], log=repr(e), turn=tid)
+            trace.end("failed", repr(e), turn=tid)
         finally:
             source.finish()
             # Save the exchange (a no-op if it was discarded for a restart). If he got cut off,
@@ -429,6 +451,7 @@ class DiscordVoice:
                 pending["cancelled"] = True
                 if pending["turn"] is not None:
                     pending["turn"].discard()
+            trace.end("done", turn=tid)
             if self.tts_module.fillers_stale():  # voice changed
                 self.discord_client.add_task(self.tts_module.prepare_fillers)
 

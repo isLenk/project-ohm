@@ -7,6 +7,7 @@ import { nas } from './nas.js'
 import { appDir } from './python.js'
 import { saveSettings, setting } from './settings.js'
 import { restartTTS } from './tts.js'
+import { recordTurn } from './turns.js'
 
 const api = express()
 api.use(express.json())
@@ -192,6 +193,19 @@ api.post('/api/searches', (req, res) => {
     { character, said, query, results, error, ms, at: new Date() },
     (err) => (err ? res.status(500).json({ message: err.message }) : res.status(201).json({}))
   )
+})
+
+/* A whole turn, stage by stage (utils/trace.py), for the Pipeline tab
+    POST /api/turns
+    body { id, kind, character, speakers, said, status, started_at, ended_at, stages, marks, reply }
+*/
+api.post('/api/turns', (req, res) => {
+  try {
+    recordTurn(req.body)
+    res.status(201).json({})
+  } catch (e) {
+    res.status(400).json({ message: e.message })
+  }
 })
 
 api.post('/api/send', (req, res) => {

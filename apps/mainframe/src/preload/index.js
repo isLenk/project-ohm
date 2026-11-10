@@ -17,6 +17,7 @@ const api = {
   addLog: (log_type, message) => ipcRenderer.invoke('println', log_type, message),
   getLogs: async (count) => await ipcRenderer.invoke('get-logs', count),
   getSearches: (character, count) => ipcRenderer.invoke('get-searches', character, count),
+  getTurns: (count) => ipcRenderer.invoke('get-turns', count),
   curatorConfig: () => ipcRenderer.invoke('curator-config'),
 
   listModules: () => ipcRenderer.invoke('list-modules'),

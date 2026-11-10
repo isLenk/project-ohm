@@ -14,7 +14,7 @@ from controller.adapters import Adapters
 from controller.memory import format_people, memory
 from modules.mood.mood import mood
 from modules.vision import describe as describe_module, screen as screen_module
-from utils import WebSearch
+from utils import WebSearch, trace
 
 GLOSSARY_HISTORY = 6  # recent messages also checked for terms, so a reply to earlier slang still gets it
 CHECK_MIN_WORDS = 3   # "lol", "ok sure" never need a search or a look at the screen, so they skip the check
@@ -257,8 +257,14 @@ class OpenAIModel:
         if not query:
             return None
         started = time.perf_counter()
+        trace.stage("search", "running", query)
         results, error = WebSearch.search(query)
-        WebSearch.report(self.slug, prompt, query, results, error, round((time.perf_counter() - started) * 1000))
+        ms = round((time.perf_counter() - started) * 1000)
+        WebSearch.report(self.slug, prompt, query, results, error, ms)
+        trace.stage("search", "failed" if error else "done",
+                    str(error)[:60] if error else f"{len(results)} results · {ms} ms", log=f"query: {query}")
+        for r in results[:5]:
+            trace.log("search", f"{r.get('title', '')} — {r.get('href', '')}")
         return WebSearch.as_text(results)
 
     def generate_stream_text(self, prompt, user="user", related_memories=None, history=None, checks=None,

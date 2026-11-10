@@ -116,3 +116,29 @@ body {
 .loader-in {
   animation: loader-in 160ms ease-out 180ms both;
 }
+
+/* Pipeline tab: running edge and stage */
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+
+.flow-dash {
+  stroke-dasharray: 6 6;
+  animation: flow-dash 900ms linear infinite;
+}
+
+@keyframes stage-live {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(196, 102, 74, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(196, 102, 74, 0.1);
+  }
+}
+
+.stage-live {
+  animation: stage-live 1.6s ease-in-out infinite;
+}

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import Pipeline from '../components/Pipeline'
 import { get } from '../curator/api'
 import {
   OHM_COLOR,
@@ -36,6 +37,7 @@ const Dashboard = () => {
   const { active } = useCharacters()
   const engine = useEngine()
   const [days, setDays] = useState<number>(7)
+  const [view, setView] = useState<'overview' | 'pipeline'>('overview')
   const [tab, setTab] = useState<'people' | 'convs' | 'search'>('people')
   const [person, setPerson] = useState<string | null>(null)
   const [logTab, setLogTab] = useState('all')
@@ -94,9 +96,22 @@ const Dashboard = () => {
   const change = s && s.heard_before ? (s.heard - s.heard_before) / s.heard_before : null
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className={`flex flex-col ${view === 'pipeline' ? 'h-full' : 'min-h-full'}`}>
       <header className="app-titlebar flex min-h-11 flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-6 py-2">
         <h1 className="text-[15px] font-semibold">Dashboard</h1>
+        <div role="tablist" aria-label="View" className="flex gap-4.5 self-stretch">
+          {(['overview', 'pipeline'] as const).map((v) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={view === v}
+              onClick={() => setView(v)}
+              className="tab h-11 capitalize"
+            >
+              {v}
+            </button>
+          ))}
+        </div>
         {active && (
           <Link
             to="/characters"
@@ -122,7 +137,7 @@ const Dashboard = () => {
         <div
           role="tablist"
           aria-label="Range"
-          className="flex gap-0.5 rounded-md border border-edge p-0.5"
+          className={`flex gap-0.5 rounded-md border border-edge p-0.5 ${view === 'pipeline' ? 'invisible' : ''}`}
         >
           {RANGES.map(([label, d]) => (
             <button
@@ -138,6 +153,11 @@ const Dashboard = () => {
         </div>
       </header>
 
+      {view === 'pipeline' ? (
+        <div className="flex min-h-0 flex-1 flex-col px-6 pt-4 pb-6">
+          <Pipeline />
+        </div>
+      ) : (
       <div className="flex flex-1 flex-col gap-4 px-6 pt-4 pb-6">
         <section
           aria-label="Key numbers"
@@ -453,6 +473,7 @@ const Dashboard = () => {
           </section>
         </div>
       </div>
+      )}
     </div>
   )
 }

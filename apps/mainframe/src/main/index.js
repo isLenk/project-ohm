@@ -26,6 +26,7 @@ import { health } from './health.js'
 import { nasCall } from './nas.js'
 import { getSettings, saveSettings, setting } from './settings.js'
 import { brainStatus, installTool, openSignIn } from './brain.js'
+import { listTurns } from './turns.js'
 import trayIconPath from "../../build/icon.ico?asset"
 
 if (!app.requestSingleInstanceLock()) { app.quit() } // Singleton
@@ -201,6 +202,8 @@ app.whenReady().then(() => {
   ipcMain.handle('add-log', (event, log_type, message) => {
     addLog(log_type, message)
   })
+
+  ipcMain.handle('get-turns', (event, count = 30) => listTurns(count))
 
   ipcMain.handle('get-searches', async (event, character, count = 100) => {
     const docs = await find(searchesDB, character ? { character } : {}, { at: -1 })

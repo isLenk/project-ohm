@@ -14,6 +14,7 @@ declare global {
       openDialog: (method: string, params: any) => Promise<any>
       getLogs: (count?: number) => Promise<any[]>
       getSearches: (character?: string, count?: number) => Promise<any[]>
+      getTurns: (count?: number) => Promise<any[]>
       curatorConfig: () => Promise<{ url: string; token: string }>
 
       listModules: () => Promise<any[]>
