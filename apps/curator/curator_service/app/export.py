@@ -13,6 +13,7 @@ A replayed reply only teaches what the bot can actually do (training.md, section
   bot answers the last line it sees (a topic start, or a reply to something older, teaches it to ignore you)
 - no leading @mention of the person being answered: the bot replies with a Discord reply, which pings them
 - at most MAX_REPLY_LINES lines, and none that look like another speaker's "Name:" line
+- a reply said over REPEAT_CAP times ("bruh") kept about REPEAT_CAP times, so it's no stock answer
 - a silence over split_gap_ms starts over: what comes after it only sees what it replies to
 """
 
@@ -21,6 +22,7 @@ import json
 import random
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +36,7 @@ TARGET_NAME = "Ohm"
 SHORT_REPLIES = {"lol", "lmao", "lmfao", "ok", "okay", "k", "kk", "ya", "ye", "yea", "yeah", "yep", "fr", "true",
                  "same", "nah", "no", "yes", "mhm", "💀", "😂"}
 KEEP_SHORT = 0.1         # share of short replies kept as targets, so the model still says "lol" sometimes
+REPEAT_CAP = 5           # times a common reply ("bruh") is trained at most
 MAX_REPLY_CHARS = 600    # longer replies are pastes or rants, not chat
 MAX_REPLY_LINES = 2      # longer bursts teach run-on turns that never hand back
 OVERLAP_PAIRS = 2        # user/assistant pairs repeated at the start of the next chunk
@@ -101,6 +104,11 @@ def _segments(msgs: list, gap_ms: int) -> list[list]:
             out.append([])
         out[-1].append(m)
     return out
+
+
+def said_as(text: str) -> str:
+    """Normalized reply text for REPEAT_CAP"""
+    return " ".join(re.sub(r"[^\w\s]", " ", (text or "").lower()).split())
 
 
 def _frac(*parts: str) -> float:
@@ -178,7 +186,7 @@ def _answered_last(heard: list[tuple[str, dict]], parent: str) -> list[tuple[str
 
 def _rotation(conv: dict, runs: list[dict], target: str, people: dict, attached: dict, system: str,
               budget: int, dropped: dict, parents: dict, labels: re.Pattern, segment: int = 0,
-              checks: Optional[dict] = None) -> list[dict]:
+              checks: Optional[dict] = None, repeats: Optional[dict] = None) -> list[dict]:
     """One conversation replayed as `target`: their replies become Ohm's turns.
 
     parents: {message id: id of the message its reply arrow points to, None for a topic start}.
@@ -238,6 +246,10 @@ def _rotation(conv: dict, runs: list[dict], target: str, people: dict, attached:
         norm = content.lower().strip(" .!?")
         if (norm in SHORT_REPLIES or len(norm) < 2) and _frac(ok[0]["id"]) >= KEEP_SHORT:
             dropped["short"] += 1
+            continue
+        times = (repeats or {}).get(said_as(content), 0)
+        if times > REPEAT_CAP and _frac(ok[0]["id"], "repeat") >= REPEAT_CAP / times:
+            dropped["repeated"] += 1
             continue
         if len(content) > MAX_REPLY_CHARS:
             dropped["too long"] += 1
@@ -324,7 +336,7 @@ def build(project, speakers: Optional[list[str]] = None, max_len: int = DEFAULT_
     examples = []
     dropped = {"excluded": 0, "unattached": 0, "starts a topic": 0, "answers something older": 0,
                "doesn't answer (judge)": 0, "short": 0, "too long": 0, "too many lines": 0, "links or media": 0, "answers a link or picture": 0, "no words": 0,
-               "speaker labels": 0, "bots": 0, "capped": 0}
+               "speaker labels": 0, "bots": 0, "repeated": 0, "capped": 0}
     with project.lock:
         convs = [dict(r) for r in conn.execute(
             "SELECT * FROM conversations WHERE approved_at IS NOT NULL AND archived_at IS NULL ORDER BY first_ts"
@@ -336,6 +348,8 @@ def build(project, speakers: Optional[list[str]] = None, max_len: int = DEFAULT_
         names = sorted({n for p in people.values() for n in [p["label"], *p["names"]] if n} | {TARGET_NAME},
                        key=len, reverse=True)
         labels = re.compile(r"(?im)^\s*(?:" + "|".join(re.escape(n) for n in names) + r")\s*:")
+        repeats = Counter(said_as(m["content_text"]) for conv in convs for m in snap[conv["id"]]["messages"]
+                       if not m["excluded"])
         for conv in convs:
             units = snap[conv["id"]]["units"]
             attached = {m["id"]: u["link"] is not None for u in units for m in u["messages"]}
@@ -371,7 +385,7 @@ def build(project, speakers: Optional[list[str]] = None, max_len: int = DEFAULT_
                     if speakers and target not in speakers:
                         continue
                     examples += _rotation(conv, runs, target, people, attached, system, budget, dropped,
-                                          parents, labels, seg, checks)
+                                          parents, labels, seg, checks, repeats)
 
         pre_cap = _shares(examples)
         seed = hashlib.sha256(json.dumps([e["id"] for e in examples]).encode()).hexdigest()
