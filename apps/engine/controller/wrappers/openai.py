@@ -29,6 +29,7 @@ class OpenAIModel:
     max_tokens: int
     temperature: float
     top_p: float
+    repeat_penalty: float  # llama-server's, 1 = off
 
     memory: str
 
@@ -57,9 +58,14 @@ class OpenAIModel:
         self.adapters = Adapters(model, endpoint, fetch_character=memory.get_character)
 
     def _extra_body(self, base=False):
-        """{"lora": [...]} for one request; base=True runs it on the plain base model."""
+        """llama-server-only fields: lora (base=True for the plain base model) and repeat_penalty"""
+        body = {}
         lora = self.adapters.lora(base=base)
-        return {"lora": lora} if lora is not None else None
+        if lora is not None:
+            body["lora"] = lora
+        if getattr(self, "repeat_penalty", None):
+            body["repeat_penalty"] = float(self.repeat_penalty)
+        return body or None
 
     def get_intent(self, prompt, responses: list):
         # Get the intent from the user's response

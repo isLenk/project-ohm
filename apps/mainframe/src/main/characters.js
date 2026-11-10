@@ -28,12 +28,21 @@ function toUi(row) {
     picture: ui.picture || 'default.png',
     icon: ui.icon || 'star',
     model: ui.model || {},
+    // Top-level configs keys, passed to llama-server
+    sampling: Object.fromEntries(SAMPLING.map((k) => [k, row.configs?.[k] ?? null])),
     voice: row.voice || {}
   }
 }
 
+const SAMPLING = ['temperature', 'repeat_penalty']
+
 function uiConfigs(c) {
+  // Numbers only: PATCH merges, so an empty field keeps the NAS value
+  const sampling = Object.fromEntries(
+    Object.entries(c.sampling || {}).filter(([k, v]) => SAMPLING.includes(k) && typeof v === 'number' && !isNaN(v))
+  )
   return {
+    ...sampling,
     ui: {
       created: c.created,
       status: c.status,

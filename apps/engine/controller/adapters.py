@@ -35,10 +35,22 @@ def curator_data_dir() -> Path:
     return Path(os.getenv("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "ohm-curator"
 
 
+DEFAULT_SCALE = 1.0
+
+
+def lora_scale(value) -> float:
+    """LoRA strength (configs.ui.model.lora_scale), clamped to 0-1; junk = 1"""
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return DEFAULT_SCALE
+
+
 def ui_model(row: Optional[dict]) -> dict:
-    """{"base_model_id", "adapter_id"} from a NAS character row (configs.ui.model); None where unset."""
+    """{"base_model_id", "adapter_id", "lora_scale"} from a NAS character row (configs.ui.model)"""
     model = (((row or {}).get("configs") or {}).get("ui") or {}).get("model") or {}
-    return {"base_model_id": model.get("base_model_id"), "adapter_id": model.get("adapter_id")}
+    return {"base_model_id": model.get("base_model_id"), "adapter_id": model.get("adapter_id"),
+            "lora_scale": lora_scale(model.get("lora_scale", DEFAULT_SCALE))}
 
 
 def norm_path(path: str, windows: bool = sys.platform == "win32") -> str:
@@ -47,10 +59,10 @@ def norm_path(path: str, windows: bool = sys.platform == "win32") -> str:
     return path.lower() if windows else path
 
 
-def lora_list(loaded: list[dict], path: Optional[str]) -> list[dict]:
-    """A request's "lora" field: every loaded adapter, 1.0 for the one at `path`, 0 for the rest."""
+def lora_list(loaded: list[dict], path: Optional[str], scale: float = DEFAULT_SCALE) -> list[dict]:
+    """A request's "lora" field: `scale` for the adapter at `path`, 0 for the rest"""
     want = norm_path(path) if path else None
-    return [{"id": a["id"], "scale": 1.0 if want and norm_path(a.get("path", "")) == want else 0.0}
+    return [{"id": a["id"], "scale": scale if want and norm_path(a.get("path", "")) == want else 0.0}
             for a in loaded]
 
 
@@ -83,6 +95,7 @@ class Adapters:
         self.root = endpoint.rstrip("/").removesuffix("/v1")  # /lora-adapters lives at the server root
         self._fetch = fetch_character  # slug -> NAS row (or None), to notice adapter changes
         self._ids = {k: character.get(k) for k in ("base_model_id", "adapter_id")}
+        self._ids["lora_scale"] = lora_scale(character.get("lora_scale", DEFAULT_SCALE))
         self._paths = None  # {"adapter": gguf, "base": gguf}, resolved from _ids
         self._checked_at = 0.0
         self._server = {}   # GET path -> (fetched at, json or None)
@@ -102,7 +115,7 @@ class Adapters:
                             f"[adapters] {self.name}'s adapter isn't loaded in llama-server ({path}). "
                             "Restart llama-server from the Curator/Characters page; until then replies use the base model.")
             path = None
-        return lora_list(loaded, path)
+        return lora_list(loaded, path, self._ids.get("lora_scale", DEFAULT_SCALE))
 
     def _character_paths(self) -> dict:
         """The character's adapter and base gguf paths, re-read from the NAS every CHARACTER_TTL."""

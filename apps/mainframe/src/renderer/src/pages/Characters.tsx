@@ -528,6 +528,73 @@ const Characters = () => {
                 </span>
               </label>
 
+              {draft.model?.adapter_id && (
+                <label className="flex flex-col gap-1.5 text-[12.5px] text-soft">
+                  <span className="flex justify-between">
+                    <span>LoRA strength</span>
+                    <span className="font-mono text-gray-100">
+                      {(draft.model?.lora_scale ?? 1).toFixed(2)}
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={draft.model?.lora_scale ?? 1}
+                    onChange={(e) => editModel({ lora_scale: Number(e.target.value) })}
+                    className="accent-gray-200"
+                  />
+                  <span className="text-xs text-muted">
+                    Lower keeps more of the base model’s sense: it answers what was said more often,
+                    with less of the group’s voice. Applies from the next reply, no restart.
+                  </span>
+                </label>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                {(
+                  [
+                    [
+                      'temperature',
+                      'Temperature',
+                      '0.8',
+                      'How loose replies are. 1 is the engine’s default; 0.8 is steadier.'
+                    ],
+                    [
+                      'repeat_penalty',
+                      'Repetition penalty',
+                      '1.1',
+                      'Stops a reply looping (“u / u / u”). 1 is off.'
+                    ]
+                  ] as const
+                ).map(([key, label, placeholder, help]) => (
+                  <label key={key} className="flex flex-col gap-1.5 text-[12.5px] text-soft">
+                    <span>{label}</span>
+                    <input
+                      type="number"
+                      step={0.05}
+                      min={0}
+                      max={2}
+                      placeholder={placeholder}
+                      value={draft.sampling?.[key] ?? ''}
+                      onChange={(e) =>
+                        edit({
+                          sampling: {
+                            ...draft.sampling,
+                            [key]: e.target.value === '' ? null : Number(e.target.value)
+                          }
+                        })
+                      }
+                      className="h-9 rounded-md border border-edge bg-transparent px-2.5 font-mono text-[13px] text-gray-100"
+                    />
+                    <span className="text-xs text-muted">
+                      {help} Takes effect when the engine restarts.
+                    </span>
+                  </label>
+                ))}
+              </div>
+
               <div className="flex flex-col gap-1.5 text-[12.5px] text-soft">
                 <span>
                   Curator save file <span className="text-muted">(optional)</span>

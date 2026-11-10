@@ -132,3 +132,13 @@ def test_a_voice_without_tags_isnt_told_about_them(chat, monkeypatch):
     plain = chat.create("Lenk: ugh", voice=True, glossary=False, tags=False)["messages"]
     assert "no tags in square brackets" in plain[0]["content"]
     assert "[sigh]" not in plain[0]["content"] and "lean toward" not in plain[-1]["content"]
+
+
+def test_repeat_penalty_goes_to_llama_server():
+    m = OpenAIModel.__new__(OpenAIModel)
+    m.adapters = type("A", (), {"lora": lambda self, base=False: [{"id": 0, "scale": 1.0}]})()
+    assert m._extra_body() == {"lora": [{"id": 0, "scale": 1.0}]}  # unset: not sent
+    m.repeat_penalty = 1.1
+    assert m._extra_body() == {"lora": [{"id": 0, "scale": 1.0}], "repeat_penalty": 1.1}
+    m.adapters = type("A", (), {"lora": lambda self, base=False: None})()
+    assert m._extra_body() == {"repeat_penalty": 1.1}

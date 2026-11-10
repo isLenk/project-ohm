@@ -145,10 +145,19 @@ def test_norm_path():
 
 
 def test_ui_model_handles_missing_fields():
-    assert ui_model(None) == {"base_model_id": None, "adapter_id": None}
-    assert ui_model({"configs": {"ui": {"model": {}}}}) == {"base_model_id": None, "adapter_id": None}
+    empty = {"base_model_id": None, "adapter_id": None, "lora_scale": 1.0}
+    assert ui_model(None) == empty
+    assert ui_model({"configs": {"ui": {"model": {}}}}) == empty
     row = {"configs": {"ui": {"model": {"base_model_id": "b", "adapter_id": "a"}}}}
-    assert ui_model(row) == {"base_model_id": "b", "adapter_id": "a"}
+    assert ui_model(row) == {"base_model_id": "b", "adapter_id": "a", "lora_scale": 1.0}
+
+
+def test_lora_strength_per_character():
+    row = {"configs": {"ui": {"model": {"base_model_id": "b", "adapter_id": "a", "lora_scale": 0.6}}}}
+    assert ui_model(row)["lora_scale"] == 0.6
+    # clamped
+    assert adapters.lora_scale(3) == 1.0 and adapters.lora_scale(-1) == 0.0 and adapters.lora_scale("x") == 1.0
+    assert lora_list(LOADED, LOADED[1]["path"], 0.6) == [{"id": 0, "scale": 0.0}, {"id": 1, "scale": 0.6}]
 
 
 def make_registry(tmp_path):
@@ -190,6 +199,19 @@ def test_adapters_follow_the_character(tmp_path, monkeypatch, capsys):
     assert picker.lora()[1]["scale"] == 1.0  # still cached
     picker._checked_at -= adapters.CHARACTER_TTL
     assert picker.lora() == [{"id": 0, "scale": 0.0}, {"id": 1, "scale": 0.0}]
+
+
+def test_lora_strength_follows_the_characters_page(tmp_path, monkeypatch):
+    monkeypatch.setenv("CURATOR_DATA_DIR", str(make_registry(tmp_path).parent))
+    model = {"base_model_id": "base", "adapter_id": "ad-b", "lora_scale": 0.6}
+    rows = {"ohm": {"configs": {"ui": {"model": model}}}}
+    picker = Adapters({"slug": "ohm", "name": "Ohm", **model}, "http://127.0.0.1:5000/v1", fetch_character=rows.get)
+    fake_server(picker, LOADED)
+    assert picker.lora() == [{"id": 0, "scale": 0.0}, {"id": 1, "scale": 0.6}]
+    # picked up after the TTL
+    rows["ohm"] = {"configs": {"ui": {"model": {**model, "lora_scale": 0.4}}}}
+    picker._checked_at -= adapters.CHARACTER_TTL
+    assert picker.lora()[1]["scale"] == 0.4
 
 
 def test_adapter_not_loaded_warns_once_and_uses_base(tmp_path, monkeypatch, capsys):
