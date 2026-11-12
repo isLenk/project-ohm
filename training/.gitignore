@@ -1,0 +1,5 @@
+# Chat exports and generated datasets contain other people's messages. Never commit them.
+data/
+out/
+raw/
+__pycache__/
